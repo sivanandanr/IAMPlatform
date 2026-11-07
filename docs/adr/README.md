@@ -34,6 +34,7 @@ Template: [ADR_TEMPLATE.md](ADR_TEMPLATE.md). Open questions are tracked in [../
 | [0021](ADR-0021-messaging-library.md) | Messaging library | Proposed | P0-010 |
 | [0022](ADR-0022-test-and-architecture-test-tooling.md) | Test and architecture-test tooling | Partly accepted (backend) | S1-02, S1-09 |
 | [0023](ADR-0023-local-oidc-provider-and-cache.md) | Local OIDC provider and cache distribution | Proposed | S1-03, S1-05 |
+| [0024](ADR-0024-ci-platform-github-actions.md) | CI platform — GitHub Actions for PR checks | Accepted (owner) | S1-04 |
 
 ## Approval record
 | ADR | Approver (name, role) | Date | Decision |
@@ -41,3 +42,4 @@ Template: [ADR_TEMPLATE.md](ADR_TEMPLATE.md). Open questions are tracked in [../
 | 0011 | sivanandanr (repository owner) | 2026-11-07 | Accepted: CLAUDE.md 13 modules + Lifecycle. Independent architect review pending |
 | 0020 | sivanandanr (repository owner) | 2026-11-07 | Accepted: hand-written dispatch, manual mapping, FluentValidation |
 | 0022 | sivanandanr (repository owner) | 2026-11-07 | Partly accepted: xUnit v3 + Shouldly, reflection-based architecture tests |
+| 0024 | sivanandanr (repository owner) | 2026-11-08 | Accepted: GitHub Actions; gitleaks CLI, CodeQL, vulnerable-package gate. DevOps/Security review pending |
