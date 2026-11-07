@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-All ADRs below are **Proposed**. None is Accepted until a named human approver records approval and date in the ADR. Agents may draft and recommend; they never mark an ADR Accepted (CLAUDE.md: never self-approve).
+ADRs are **Proposed** unless the approval record below says otherwise. None is Accepted until a named human approver records approval and date in the ADR. Agents may draft and recommend; they never mark an ADR Accepted (CLAUDE.md: never self-approve).
 
 Template: [ADR_TEMPLATE.md](ADR_TEMPLATE.md). Open questions are tracked in [../architecture/DECISION_LOG.md](../architecture/DECISION_LOG.md); risks in [../architecture/RISK_REGISTER.md](../architecture/RISK_REGISTER.md).
 
@@ -21,7 +21,7 @@ Template: [ADR_TEMPLATE.md](ADR_TEMPLATE.md). Open questions are tracked in [../
 ## Phase 0 Sprint 1 decisions
 | ADR | Title | Status | Blocks |
 |---|---|---|---|
-| [0011](ADR-0011-module-list-and-naming.md) | Module list and naming | Proposed | S1-02 |
+| [0011](ADR-0011-module-list-and-naming.md) | Module list and naming | Accepted (owner) | S1-02 |
 | [0012](ADR-0012-browser-session-bff.md) | Browser session model — BFF | Proposed | S1-05 |
 | [0013](ADR-0013-yarp-gateway-placement.md) | YARP gateway placement | Proposed | S1-05 |
 | [0014](ADR-0014-tenancy-model.md) | Tenancy model | Proposed (business decision) | S1-06 |
@@ -30,12 +30,14 @@ Template: [ADR_TEMPLATE.md](ADR_TEMPLATE.md). Open questions are tracked in [../
 | [0017](ADR-0017-persistence-layout-and-conventions.md) | Persistence layout and dual-provider conventions | Proposed | S1-06 |
 | [0018](ADR-0018-audit-atomicity-and-append-only-store.md) | Audit atomicity and append-only store | Proposed | S1-07 |
 | [0019](ADR-0019-first-party-angular-ui-library.md) | First-party Angular UI library and AG Grid wrapper | Proposed | S1-09 |
-| [0020](ADR-0020-in-process-mediator-validation-mapping.md) | In-process dispatch, validation and mapping libraries | Proposed | S1-02 |
+| [0020](ADR-0020-in-process-mediator-validation-mapping.md) | In-process dispatch, validation and mapping libraries | Accepted (owner) | S1-02 |
 | [0021](ADR-0021-messaging-library.md) | Messaging library | Proposed | P0-010 |
-| [0022](ADR-0022-test-and-architecture-test-tooling.md) | Test and architecture-test tooling | Proposed | S1-02, S1-09 |
+| [0022](ADR-0022-test-and-architecture-test-tooling.md) | Test and architecture-test tooling | Partly accepted (backend) | S1-02, S1-09 |
 | [0023](ADR-0023-local-oidc-provider-and-cache.md) | Local OIDC provider and cache distribution | Proposed | S1-03, S1-05 |
 
 ## Approval record
 | ADR | Approver (name, role) | Date | Decision |
 |---|---|---|---|
-| — | — | — | — |
+| 0011 | sivanandanr (repository owner) | 2026-11-07 | Accepted: CLAUDE.md 13 modules + Lifecycle. Independent architect review pending |
+| 0020 | sivanandanr (repository owner) | 2026-11-07 | Accepted: hand-written dispatch, manual mapping, FluentValidation |
+| 0022 | sivanandanr (repository owner) | 2026-11-07 | Partly accepted: xUnit v3 + Shouldly, reflection-based architecture tests |

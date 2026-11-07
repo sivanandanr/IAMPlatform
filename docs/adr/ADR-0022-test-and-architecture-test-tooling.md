@@ -1,5 +1,5 @@
 # ADR-0022: Test, assertion and architecture-test tooling
-Status: Proposed — blocking (S1-02, S1-09) | Date: 2026-11-07 | Decision owners: QA lead, Lead Solution Architect, Frontend Architect; licence approval by procurement/legal (named approvers TBD)
+Status: Partially accepted — backend unit/architecture tooling accepted by repository owner (sivanandanr, 2026-11-07); frontend, integration and load tooling still Proposed | Date: 2026-11-07 | Decision owners: QA lead, Lead Solution Architect, Frontend Architect; licence approval by procurement/legal
 
 Source: Blueprint v1.0 §3 (xUnit, "FluentAssertions-equivalent", Testcontainers, Playwright, k6; "Avoid unnecessary license dependencies"); CLAUDE.md dependency rule. Decision log DL-018. Drafted by Claude Code (S1-01); not approved.
 
@@ -15,7 +15,11 @@ Backend unit/integration/architecture tests, frontend component/E2E/a11y tests, 
 - Load: k6 (AGPL-3.0 — legal review) / alternatives.
 
 ## Decision and rationale
-**Not decided.** Recommendations: xUnit + Shouldly or AwesomeAssertions; architecture rules via plain reflection first (ArchUnitNET if richer rules needed); Testcontainers; Vitest; Playwright; axe-core. k6 subject to legal review of AGPL use in CI (not distributed).
+**Decided for backend (repository owner, 2026-11-07):** xUnit v3 + Shouldly; architecture tests via plain reflection over assembly references (no package). Licences (Apache-2.0 / BSD) to be verified when added; versions pinned centrally.
+
+**Still open:** Testcontainers (S1-06), Vitest / Playwright / axe-core (S1-09), k6.
+
+Original recommendations: xUnit + Shouldly or AwesomeAssertions; architecture rules via plain reflection first (ArchUnitNET if richer rules needed); Testcontainers; Vitest; Playwright; axe-core. k6 subject to legal review of AGPL use in CI (not distributed).
 
 ## Security and privacy impact
 Test fixtures synthetic only. Test containers must not use production credentials.

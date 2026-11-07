@@ -1,5 +1,5 @@
 # ADR-0011: Module list and naming
-Status: Proposed — **blocking** (S1-02) | Date: 2026-11-07 | Decision owners: Lead Solution Architect, Functional Lead / Product owner (named approvers TBD)
+Status: Accepted by repository owner (sivanandanr, 2026-11-07, via Claude Code session) — independent Lead Solution Architect review pending | Date: 2026-11-07 | Decision owners: Lead Solution Architect, Functional Lead / Product owner
 
 Source: CLAUDE.md "Stack and boundaries"; Blueprint v1.0 §4, §5, §6. Decision log DL-002. Drafted by Claude Code (S1-01); not approved.
 
@@ -19,7 +19,14 @@ The authoritative sources disagree:
 3. Merged: CLAUDE.md list + Lifecycle (14).
 
 ## Decision and rationale
-**Not decided.** Reviewers' recommendation: option 1 — it matches the blueprint's own schema list (§6) better than blueprint §5, and uses "Request" (CLAUDE.md, blueprint §4/§6) rather than "AccessRequest".
+**Decided (repository owner, 2026-11-07): option 3 — CLAUDE.md 13 modules + Lifecycle (14 modules).**
+
+Identity, Organization, Catalog, Account, Policy, Workflow, Request, Provisioning, Governance, Audit, Integration, Notification, Administration, **Lifecycle**.
+- Naming: "Request" (not "AccessRequest").
+- `configuration` schema owned by Administration.
+- Lifecycle owns joiner/mover/leaver orchestration (access impact plans, FR-BR-101/104); it consumes Identity and Policy through Contracts and does not write their tables. Its schema `lifecycle` is new relative to blueprint §6.
+
+Reviewers had recommended option 1; the owner chose to keep Lifecycle as a separate module.
 
 ## Security and privacy impact
 Module = schema = DB identity boundary (ADR-0017); fewer, larger modules widen each identity's write scope.

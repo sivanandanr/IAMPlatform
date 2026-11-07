@@ -1,5 +1,5 @@
 # ADR-0020: In-process dispatch, validation and mapping libraries
-Status: Proposed — blocking (S1-02) | Date: 2026-11-07 | Decision owners: Lead Solution Architect; licence approval by procurement/legal (named approvers TBD)
+Status: Accepted by repository owner (sivanandanr, 2026-11-07, via Claude Code session) — licence verification of FluentValidation pending | Date: 2026-11-07 | Decision owners: Lead Solution Architect; licence approval by procurement/legal
 
 Source: CLAUDE.md ("Ask before changing dependency versions or adding paid/licensed packages"); BACKEND_INPUT_VALIDATION.md. Decision log DL-018. Drafted by Claude Code (S1-01); not approved.
 
@@ -12,7 +12,10 @@ Vertical-slice commands/queries need dispatch, validation and DTO mapping. Sever
 - Mapping: manual mapping / Mapster (MIT — verify) / AutoMapper (commercial).
 
 ## Decision and rationale
-**Not decided.** Recommendation: hand-written dispatch and manual mapping (no licence risk; explicit mass-assignment control); FluentValidation if approved, otherwise built-in validation.
+**Decided (repository owner, 2026-11-07):**
+- Dispatch: hand-written handlers invoked from endpoints (no MediatR).
+- Mapping: manual mapping (no AutoMapper / Mapster).
+- Validation: **FluentValidation**, run through an endpoint filter on every endpoint. Licence (believed Apache-2.0) to be verified when the package is added; exact version pinned in `Directory.Packages.props`.
 
 ## Security and privacy impact
 Manual mapping makes field allowlists explicit (mass-assignment protection). Validation pipeline is mandatory on every endpoint (SEC-S1-11).
