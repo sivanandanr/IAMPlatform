@@ -1,0 +1,63 @@
+# IAM Platform root .gitignore
+# Source: .gitignore.fragment (starter) + S1-00 security review additions (SEC-S1-15, F2).
+# Hygiene only: this is NOT a secret-scanning control. CI secret scanning (gitleaks or equivalent) is required.
+
+# --- Environment / local settings ---
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+**/appsettings.Production.json
+**/appsettings.*.local.json
+**/appsettings.local.json
+*.user
+**/secrets/
+
+# --- Keys, certificates, keystores, password stores ---
+*.pfx
+*.p12
+*.key
+*.pem
+*.jks
+*.keystore
+*.snk
+*.kdbx
+
+# --- Database files, backups and dumps ---
+*.bak
+*.bacpac
+*.dacpac
+*.dump
+*.backup
+*.sql.gz
+*.mdf
+*.ldf
+*.ndf
+
+# --- Executables / installers (never belong in the repo) ---
+*.exe
+*.msi
+
+# --- .NET build output ---
+**/bin/
+**/obj/
+.vs/
+TestResults/
+*.trx
+coverage/
+**/coverage/
+*.coverage
+*.coveragexml
+
+# --- Frontend build output ---
+**/node_modules/
+**/.angular/
+**/dist/
+**/playwright-report/
+**/test-results/
+
+# --- Logs and OS noise ---
+*.log
+logs/
+Thumbs.db
+.DS_Store

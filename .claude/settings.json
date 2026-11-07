@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/.env)",
+      "Read(./**/.env.*)",
+      "Read(./**/appsettings.Production.json)",
+      "Read(./**/secrets/**)",
+      "Read(./**/*.pfx)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Read(./**/*.kdbx)",
+      "Read(./**/settings.local.json)",
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)",
+      "Bash(docker compose down -v*)",
+      "Bash(dotnet ef database drop*)",
+      "Bash(rm -rf *)"
+    ]
+  }
+}

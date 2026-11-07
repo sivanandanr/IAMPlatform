@@ -1,0 +1,20 @@
+# Merge into root .gitignore
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+**/appsettings.Production.json
+**/secrets/
+*.pfx
+*.p12
+*.key
+*.pem
+*.kdbx
+*.bak
+*.bacpac
+*.dump
+*.sql.gz
+**/bin/
+**/obj/
+**/node_modules/
+**/.angular/
