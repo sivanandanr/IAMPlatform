@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "iam.buildingblocks.abstractions": {
+        "type": "Project"
+      },
+      "iam.modules.identity.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Identity.Contracts": "[1.0.0, )",
+          "IAM.Modules.Identity.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.identity.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.identity.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      }
+    }
+  }
+}

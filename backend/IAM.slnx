@@ -1,0 +1,116 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="../global.json" />
+    <File Path="../Directory.Build.props" />
+    <File Path="../Directory.Packages.props" />
+    <File Path="../NuGet.config" />
+    <File Path="../.editorconfig" />
+  </Folder>
+  <Folder Name="/src/BuildingBlocks/">
+    <Project Path="src/BuildingBlocks/IAM.BuildingBlocks.Abstractions/IAM.BuildingBlocks.Abstractions.csproj" />
+  </Folder>
+  <Folder Name="/src/Host/">
+    <Project Path="src/Host/IAM.Api/IAM.Api.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Identity/">
+    <Project Path="src/Modules/Identity/IAM.Modules.Identity.Contracts/IAM.Modules.Identity.Contracts.csproj" />
+    <Project Path="src/Modules/Identity/IAM.Modules.Identity.Domain/IAM.Modules.Identity.Domain.csproj" />
+    <Project Path="src/Modules/Identity/IAM.Modules.Identity.Application/IAM.Modules.Identity.Application.csproj" />
+    <Project Path="src/Modules/Identity/IAM.Modules.Identity.Infrastructure/IAM.Modules.Identity.Infrastructure.csproj" />
+    <Project Path="src/Modules/Identity/IAM.Modules.Identity.Endpoints/IAM.Modules.Identity.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Organization/">
+    <Project Path="src/Modules/Organization/IAM.Modules.Organization.Contracts/IAM.Modules.Organization.Contracts.csproj" />
+    <Project Path="src/Modules/Organization/IAM.Modules.Organization.Domain/IAM.Modules.Organization.Domain.csproj" />
+    <Project Path="src/Modules/Organization/IAM.Modules.Organization.Application/IAM.Modules.Organization.Application.csproj" />
+    <Project Path="src/Modules/Organization/IAM.Modules.Organization.Infrastructure/IAM.Modules.Organization.Infrastructure.csproj" />
+    <Project Path="src/Modules/Organization/IAM.Modules.Organization.Endpoints/IAM.Modules.Organization.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Catalog/">
+    <Project Path="src/Modules/Catalog/IAM.Modules.Catalog.Contracts/IAM.Modules.Catalog.Contracts.csproj" />
+    <Project Path="src/Modules/Catalog/IAM.Modules.Catalog.Domain/IAM.Modules.Catalog.Domain.csproj" />
+    <Project Path="src/Modules/Catalog/IAM.Modules.Catalog.Application/IAM.Modules.Catalog.Application.csproj" />
+    <Project Path="src/Modules/Catalog/IAM.Modules.Catalog.Infrastructure/IAM.Modules.Catalog.Infrastructure.csproj" />
+    <Project Path="src/Modules/Catalog/IAM.Modules.Catalog.Endpoints/IAM.Modules.Catalog.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Account/">
+    <Project Path="src/Modules/Account/IAM.Modules.Account.Contracts/IAM.Modules.Account.Contracts.csproj" />
+    <Project Path="src/Modules/Account/IAM.Modules.Account.Domain/IAM.Modules.Account.Domain.csproj" />
+    <Project Path="src/Modules/Account/IAM.Modules.Account.Application/IAM.Modules.Account.Application.csproj" />
+    <Project Path="src/Modules/Account/IAM.Modules.Account.Infrastructure/IAM.Modules.Account.Infrastructure.csproj" />
+    <Project Path="src/Modules/Account/IAM.Modules.Account.Endpoints/IAM.Modules.Account.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Policy/">
+    <Project Path="src/Modules/Policy/IAM.Modules.Policy.Contracts/IAM.Modules.Policy.Contracts.csproj" />
+    <Project Path="src/Modules/Policy/IAM.Modules.Policy.Domain/IAM.Modules.Policy.Domain.csproj" />
+    <Project Path="src/Modules/Policy/IAM.Modules.Policy.Application/IAM.Modules.Policy.Application.csproj" />
+    <Project Path="src/Modules/Policy/IAM.Modules.Policy.Infrastructure/IAM.Modules.Policy.Infrastructure.csproj" />
+    <Project Path="src/Modules/Policy/IAM.Modules.Policy.Endpoints/IAM.Modules.Policy.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Workflow/">
+    <Project Path="src/Modules/Workflow/IAM.Modules.Workflow.Contracts/IAM.Modules.Workflow.Contracts.csproj" />
+    <Project Path="src/Modules/Workflow/IAM.Modules.Workflow.Domain/IAM.Modules.Workflow.Domain.csproj" />
+    <Project Path="src/Modules/Workflow/IAM.Modules.Workflow.Application/IAM.Modules.Workflow.Application.csproj" />
+    <Project Path="src/Modules/Workflow/IAM.Modules.Workflow.Infrastructure/IAM.Modules.Workflow.Infrastructure.csproj" />
+    <Project Path="src/Modules/Workflow/IAM.Modules.Workflow.Endpoints/IAM.Modules.Workflow.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Request/">
+    <Project Path="src/Modules/Request/IAM.Modules.Request.Contracts/IAM.Modules.Request.Contracts.csproj" />
+    <Project Path="src/Modules/Request/IAM.Modules.Request.Domain/IAM.Modules.Request.Domain.csproj" />
+    <Project Path="src/Modules/Request/IAM.Modules.Request.Application/IAM.Modules.Request.Application.csproj" />
+    <Project Path="src/Modules/Request/IAM.Modules.Request.Infrastructure/IAM.Modules.Request.Infrastructure.csproj" />
+    <Project Path="src/Modules/Request/IAM.Modules.Request.Endpoints/IAM.Modules.Request.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Provisioning/">
+    <Project Path="src/Modules/Provisioning/IAM.Modules.Provisioning.Contracts/IAM.Modules.Provisioning.Contracts.csproj" />
+    <Project Path="src/Modules/Provisioning/IAM.Modules.Provisioning.Domain/IAM.Modules.Provisioning.Domain.csproj" />
+    <Project Path="src/Modules/Provisioning/IAM.Modules.Provisioning.Application/IAM.Modules.Provisioning.Application.csproj" />
+    <Project Path="src/Modules/Provisioning/IAM.Modules.Provisioning.Infrastructure/IAM.Modules.Provisioning.Infrastructure.csproj" />
+    <Project Path="src/Modules/Provisioning/IAM.Modules.Provisioning.Endpoints/IAM.Modules.Provisioning.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Governance/">
+    <Project Path="src/Modules/Governance/IAM.Modules.Governance.Contracts/IAM.Modules.Governance.Contracts.csproj" />
+    <Project Path="src/Modules/Governance/IAM.Modules.Governance.Domain/IAM.Modules.Governance.Domain.csproj" />
+    <Project Path="src/Modules/Governance/IAM.Modules.Governance.Application/IAM.Modules.Governance.Application.csproj" />
+    <Project Path="src/Modules/Governance/IAM.Modules.Governance.Infrastructure/IAM.Modules.Governance.Infrastructure.csproj" />
+    <Project Path="src/Modules/Governance/IAM.Modules.Governance.Endpoints/IAM.Modules.Governance.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Audit/">
+    <Project Path="src/Modules/Audit/IAM.Modules.Audit.Contracts/IAM.Modules.Audit.Contracts.csproj" />
+    <Project Path="src/Modules/Audit/IAM.Modules.Audit.Domain/IAM.Modules.Audit.Domain.csproj" />
+    <Project Path="src/Modules/Audit/IAM.Modules.Audit.Application/IAM.Modules.Audit.Application.csproj" />
+    <Project Path="src/Modules/Audit/IAM.Modules.Audit.Infrastructure/IAM.Modules.Audit.Infrastructure.csproj" />
+    <Project Path="src/Modules/Audit/IAM.Modules.Audit.Endpoints/IAM.Modules.Audit.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Integration/">
+    <Project Path="src/Modules/Integration/IAM.Modules.Integration.Contracts/IAM.Modules.Integration.Contracts.csproj" />
+    <Project Path="src/Modules/Integration/IAM.Modules.Integration.Domain/IAM.Modules.Integration.Domain.csproj" />
+    <Project Path="src/Modules/Integration/IAM.Modules.Integration.Application/IAM.Modules.Integration.Application.csproj" />
+    <Project Path="src/Modules/Integration/IAM.Modules.Integration.Infrastructure/IAM.Modules.Integration.Infrastructure.csproj" />
+    <Project Path="src/Modules/Integration/IAM.Modules.Integration.Endpoints/IAM.Modules.Integration.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Notification/">
+    <Project Path="src/Modules/Notification/IAM.Modules.Notification.Contracts/IAM.Modules.Notification.Contracts.csproj" />
+    <Project Path="src/Modules/Notification/IAM.Modules.Notification.Domain/IAM.Modules.Notification.Domain.csproj" />
+    <Project Path="src/Modules/Notification/IAM.Modules.Notification.Application/IAM.Modules.Notification.Application.csproj" />
+    <Project Path="src/Modules/Notification/IAM.Modules.Notification.Infrastructure/IAM.Modules.Notification.Infrastructure.csproj" />
+    <Project Path="src/Modules/Notification/IAM.Modules.Notification.Endpoints/IAM.Modules.Notification.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Administration/">
+    <Project Path="src/Modules/Administration/IAM.Modules.Administration.Contracts/IAM.Modules.Administration.Contracts.csproj" />
+    <Project Path="src/Modules/Administration/IAM.Modules.Administration.Domain/IAM.Modules.Administration.Domain.csproj" />
+    <Project Path="src/Modules/Administration/IAM.Modules.Administration.Application/IAM.Modules.Administration.Application.csproj" />
+    <Project Path="src/Modules/Administration/IAM.Modules.Administration.Infrastructure/IAM.Modules.Administration.Infrastructure.csproj" />
+    <Project Path="src/Modules/Administration/IAM.Modules.Administration.Endpoints/IAM.Modules.Administration.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Lifecycle/">
+    <Project Path="src/Modules/Lifecycle/IAM.Modules.Lifecycle.Contracts/IAM.Modules.Lifecycle.Contracts.csproj" />
+    <Project Path="src/Modules/Lifecycle/IAM.Modules.Lifecycle.Domain/IAM.Modules.Lifecycle.Domain.csproj" />
+    <Project Path="src/Modules/Lifecycle/IAM.Modules.Lifecycle.Application/IAM.Modules.Lifecycle.Application.csproj" />
+    <Project Path="src/Modules/Lifecycle/IAM.Modules.Lifecycle.Infrastructure/IAM.Modules.Lifecycle.Infrastructure.csproj" />
+    <Project Path="src/Modules/Lifecycle/IAM.Modules.Lifecycle.Endpoints/IAM.Modules.Lifecycle.Endpoints.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/IAM.Architecture.Tests/IAM.Architecture.Tests.csproj" />
+  </Folder>
+</Solution>

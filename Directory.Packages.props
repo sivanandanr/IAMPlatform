@@ -1,0 +1,16 @@
+<Project>
+  <!--
+    Central package versions. Every package and version here requires approval
+    (CLAUDE.md: ask before changing dependency versions or adding paid/licensed packages; Decision Log DL-018).
+    Licence recorded from the package nuspec at time of adding.
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+  <ItemGroup Label="Testing (ADR-0022, approved 2026-11-07)">
+    <!-- Runs on Microsoft.Testing.Platform (global.json "test.runner"); no VSTest adapter packages needed. -->
+    <PackageVersion Include="xunit.v3" Version="4.0.2" />                        <!-- Apache-2.0 -->
+    <PackageVersion Include="Shouldly" Version="4.3.0" />                        <!-- BSD-3-Clause -->
+  </ItemGroup>
+</Project>

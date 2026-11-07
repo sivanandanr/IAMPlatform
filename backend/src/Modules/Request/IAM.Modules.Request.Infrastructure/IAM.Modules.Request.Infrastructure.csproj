@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\BuildingBlocks\IAM.BuildingBlocks.Abstractions\IAM.BuildingBlocks.Abstractions.csproj" />
+    <ProjectReference Include="..\IAM.Modules.Request.Application\IAM.Modules.Request.Application.csproj" />
+    <ProjectReference Include="..\IAM.Modules.Request.Domain\IAM.Modules.Request.Domain.csproj" />
+    <ProjectReference Include="..\IAM.Modules.Request.Contracts\IAM.Modules.Request.Contracts.csproj" />
+  </ItemGroup>
+</Project>

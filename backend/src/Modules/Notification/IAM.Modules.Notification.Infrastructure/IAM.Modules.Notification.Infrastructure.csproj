@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\BuildingBlocks\IAM.BuildingBlocks.Abstractions\IAM.BuildingBlocks.Abstractions.csproj" />
+    <ProjectReference Include="..\IAM.Modules.Notification.Application\IAM.Modules.Notification.Application.csproj" />
+    <ProjectReference Include="..\IAM.Modules.Notification.Domain\IAM.Modules.Notification.Domain.csproj" />
+    <ProjectReference Include="..\IAM.Modules.Notification.Contracts\IAM.Modules.Notification.Contracts.csproj" />
+  </ItemGroup>
+</Project>

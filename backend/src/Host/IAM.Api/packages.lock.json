@@ -1,0 +1,542 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "iam.buildingblocks.abstractions": {
+        "type": "Project"
+      },
+      "iam.modules.account.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Account.Contracts": "[1.0.0, )",
+          "IAM.Modules.Account.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.account.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.account.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.account.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Account.Application": "[1.0.0, )",
+          "IAM.Modules.Account.Contracts": "[1.0.0, )",
+          "IAM.Modules.Account.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.account.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Account.Application": "[1.0.0, )",
+          "IAM.Modules.Account.Contracts": "[1.0.0, )",
+          "IAM.Modules.Account.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.administration.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
+          "IAM.Modules.Administration.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.administration.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.administration.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.administration.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Administration.Application": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
+          "IAM.Modules.Administration.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.administration.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Administration.Application": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
+          "IAM.Modules.Administration.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.audit.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Audit.Contracts": "[1.0.0, )",
+          "IAM.Modules.Audit.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.audit.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.audit.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.audit.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Audit.Application": "[1.0.0, )",
+          "IAM.Modules.Audit.Contracts": "[1.0.0, )",
+          "IAM.Modules.Audit.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.audit.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Audit.Application": "[1.0.0, )",
+          "IAM.Modules.Audit.Contracts": "[1.0.0, )",
+          "IAM.Modules.Audit.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.catalog.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Catalog.Contracts": "[1.0.0, )",
+          "IAM.Modules.Catalog.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.catalog.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.catalog.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.catalog.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Catalog.Application": "[1.0.0, )",
+          "IAM.Modules.Catalog.Contracts": "[1.0.0, )",
+          "IAM.Modules.Catalog.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.catalog.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Catalog.Application": "[1.0.0, )",
+          "IAM.Modules.Catalog.Contracts": "[1.0.0, )",
+          "IAM.Modules.Catalog.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.governance.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Governance.Contracts": "[1.0.0, )",
+          "IAM.Modules.Governance.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.governance.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.governance.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.governance.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Governance.Application": "[1.0.0, )",
+          "IAM.Modules.Governance.Contracts": "[1.0.0, )",
+          "IAM.Modules.Governance.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.governance.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Governance.Application": "[1.0.0, )",
+          "IAM.Modules.Governance.Contracts": "[1.0.0, )",
+          "IAM.Modules.Governance.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.identity.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Identity.Contracts": "[1.0.0, )",
+          "IAM.Modules.Identity.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.identity.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.identity.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.identity.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Identity.Application": "[1.0.0, )",
+          "IAM.Modules.Identity.Contracts": "[1.0.0, )",
+          "IAM.Modules.Identity.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.identity.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Identity.Application": "[1.0.0, )",
+          "IAM.Modules.Identity.Contracts": "[1.0.0, )",
+          "IAM.Modules.Identity.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.integration.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Integration.Contracts": "[1.0.0, )",
+          "IAM.Modules.Integration.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.integration.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.integration.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.integration.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Integration.Application": "[1.0.0, )",
+          "IAM.Modules.Integration.Contracts": "[1.0.0, )",
+          "IAM.Modules.Integration.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.integration.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Integration.Application": "[1.0.0, )",
+          "IAM.Modules.Integration.Contracts": "[1.0.0, )",
+          "IAM.Modules.Integration.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.lifecycle.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Lifecycle.Contracts": "[1.0.0, )",
+          "IAM.Modules.Lifecycle.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.lifecycle.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.lifecycle.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.lifecycle.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Lifecycle.Application": "[1.0.0, )",
+          "IAM.Modules.Lifecycle.Contracts": "[1.0.0, )",
+          "IAM.Modules.Lifecycle.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.lifecycle.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Lifecycle.Application": "[1.0.0, )",
+          "IAM.Modules.Lifecycle.Contracts": "[1.0.0, )",
+          "IAM.Modules.Lifecycle.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.notification.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Notification.Contracts": "[1.0.0, )",
+          "IAM.Modules.Notification.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.notification.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.notification.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.notification.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Notification.Application": "[1.0.0, )",
+          "IAM.Modules.Notification.Contracts": "[1.0.0, )",
+          "IAM.Modules.Notification.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.notification.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Notification.Application": "[1.0.0, )",
+          "IAM.Modules.Notification.Contracts": "[1.0.0, )",
+          "IAM.Modules.Notification.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.organization.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Organization.Contracts": "[1.0.0, )",
+          "IAM.Modules.Organization.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.organization.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.organization.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.organization.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Organization.Application": "[1.0.0, )",
+          "IAM.Modules.Organization.Contracts": "[1.0.0, )",
+          "IAM.Modules.Organization.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.organization.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Organization.Application": "[1.0.0, )",
+          "IAM.Modules.Organization.Contracts": "[1.0.0, )",
+          "IAM.Modules.Organization.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.policy.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Policy.Contracts": "[1.0.0, )",
+          "IAM.Modules.Policy.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.policy.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.policy.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.policy.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Policy.Application": "[1.0.0, )",
+          "IAM.Modules.Policy.Contracts": "[1.0.0, )",
+          "IAM.Modules.Policy.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.policy.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Policy.Application": "[1.0.0, )",
+          "IAM.Modules.Policy.Contracts": "[1.0.0, )",
+          "IAM.Modules.Policy.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.provisioning.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Provisioning.Contracts": "[1.0.0, )",
+          "IAM.Modules.Provisioning.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.provisioning.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.provisioning.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.provisioning.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Provisioning.Application": "[1.0.0, )",
+          "IAM.Modules.Provisioning.Contracts": "[1.0.0, )",
+          "IAM.Modules.Provisioning.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.provisioning.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Provisioning.Application": "[1.0.0, )",
+          "IAM.Modules.Provisioning.Contracts": "[1.0.0, )",
+          "IAM.Modules.Provisioning.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.request.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Request.Contracts": "[1.0.0, )",
+          "IAM.Modules.Request.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.request.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.request.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.request.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Request.Application": "[1.0.0, )",
+          "IAM.Modules.Request.Contracts": "[1.0.0, )",
+          "IAM.Modules.Request.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.request.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Request.Application": "[1.0.0, )",
+          "IAM.Modules.Request.Contracts": "[1.0.0, )",
+          "IAM.Modules.Request.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.workflow.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Workflow.Contracts": "[1.0.0, )",
+          "IAM.Modules.Workflow.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.workflow.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.workflow.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.workflow.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Workflow.Application": "[1.0.0, )",
+          "IAM.Modules.Workflow.Contracts": "[1.0.0, )",
+          "IAM.Modules.Workflow.Infrastructure": "[1.0.0, )"
+        }
+      },
+      "iam.modules.workflow.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Workflow.Application": "[1.0.0, )",
+          "IAM.Modules.Workflow.Contracts": "[1.0.0, )",
+          "IAM.Modules.Workflow.Domain": "[1.0.0, )"
+        }
+      }
+    }
+  }
+}

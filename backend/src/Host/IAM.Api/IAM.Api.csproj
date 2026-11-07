@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- Composition root. References module Endpoints projects only (ADR-0001). -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\Modules\Identity\IAM.Modules.Identity.Endpoints\IAM.Modules.Identity.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Organization\IAM.Modules.Organization.Endpoints\IAM.Modules.Organization.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Catalog\IAM.Modules.Catalog.Endpoints\IAM.Modules.Catalog.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Account\IAM.Modules.Account.Endpoints\IAM.Modules.Account.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Policy\IAM.Modules.Policy.Endpoints\IAM.Modules.Policy.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Workflow\IAM.Modules.Workflow.Endpoints\IAM.Modules.Workflow.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Request\IAM.Modules.Request.Endpoints\IAM.Modules.Request.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Provisioning\IAM.Modules.Provisioning.Endpoints\IAM.Modules.Provisioning.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Governance\IAM.Modules.Governance.Endpoints\IAM.Modules.Governance.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Audit\IAM.Modules.Audit.Endpoints\IAM.Modules.Audit.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Integration\IAM.Modules.Integration.Endpoints\IAM.Modules.Integration.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Notification\IAM.Modules.Notification.Endpoints\IAM.Modules.Notification.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Administration\IAM.Modules.Administration.Endpoints\IAM.Modules.Administration.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Lifecycle\IAM.Modules.Lifecycle.Endpoints\IAM.Modules.Lifecycle.Endpoints.csproj" />
+  </ItemGroup>
+</Project>
