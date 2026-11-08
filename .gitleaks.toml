@@ -1,0 +1,24 @@
+# gitleaks configuration (ADR-0024 secret scan). Keeps every default rule; each allowlist entry below excuses one
+# exact, reviewed false positive and nothing else. Adding an entry changes a security gate: it needs review by the
+# Security Architect, a reason and a reference, like any other security-sensitive change.
+title = "IAM Platform gitleaks configuration"
+
+[extend]
+useDefault = true
+
+# 1. generic-api-key fires on the "key" inside "valkey" and treats the container image tag as a key value.
+#    Reviewed 2026-11-08: it is the public image reference in ADR-0023 / compose.yaml, not a secret.
+[[allowlists]]
+description = "Valkey container image reference (public image tag, not a secret)"
+targetRules = ["generic-api-key"]
+regexTarget = "match"
+regexes = ['''valkey:[0-9]+\.[0-9]+\.[0-9]+-alpine[0-9.]+''']
+
+# 2. A deliberately fake, unsigned JWT ({"alg":"RS256"}.{"sub":"1234567890"}.signature) that the S1-07 audit tests
+#    use to prove the validator refuses tokens. It authenticates nothing. Limited to that one test file.
+[[allowlists]]
+description = "Fake JWT fixture in the audit validator tests"
+targetRules = ["jwt"]
+paths = ['''^backend/tests/IAM\.Persistence\.Tests/Audit/AuditEventValidatorTests\.cs$''']
+regexTarget = "match"
+regexes = ['''eyJhbGciOiJSUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.c2lnbmF0dXJl''']
