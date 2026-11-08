@@ -7,6 +7,7 @@
 --   iam_bootstrap.migrator_login     DDL role that owns the module schemas (NOSUPERUSER, NOCREATEROLE, NOCREATEDB)
 --   iam_bootstrap.migrator_password
 --   iam_bootstrap.app_login          runtime role for this module: SELECT/INSERT/UPDATE/DELETE on its own schema only
+--                                    (nothing on tables for schema 'audit', which is append-only: see grant-audit-role.sql, ADR-0018)
 --   iam_bootstrap.app_password
 -- Identifiers are validated against an allowlist pattern and quoted with format(%I); passwords use format(%L).
 DO $bootstrap$
@@ -46,9 +47,20 @@ BEGIN
 
     -- Application: data access on its own schema only, including tables the migrator creates later.
     EXECUTE format('GRANT USAGE ON SCHEMA %I TO %I', v_schema, v_app);
-    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO %I', v_schema, v_app);
-    EXECUTE format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO %I', v_schema, v_app);
-    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I', v_migrator, v_schema, v_app);
-    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT USAGE, SELECT ON SEQUENCES TO %I', v_migrator, v_schema, v_app);
+    -- The audit schema is append-only (ADR-0018): no table, sequence or default privileges at all, so the audit login
+    -- cannot touch the migration history or any future audit table. It reads and appends only through the
+    -- iam_audit_reader and iam_audit_writer roles (grant-audit-role.sql), which the migration grants on
+    -- audit.audit_event alone. Re-running this script also takes back grants an older version gave.
+    IF v_schema = 'audit' THEN
+        EXECUTE format('REVOKE ALL ON ALL TABLES IN SCHEMA %I FROM %I', v_schema, v_app);
+        EXECUTE format('REVOKE ALL ON ALL SEQUENCES IN SCHEMA %I FROM %I', v_schema, v_app);
+        EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I REVOKE ALL ON TABLES FROM %I', v_migrator, v_schema, v_app);
+        EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I REVOKE ALL ON SEQUENCES FROM %I', v_migrator, v_schema, v_app);
+    ELSE
+        EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO %I', v_schema, v_app);
+        EXECUTE format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO %I', v_schema, v_app);
+        EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I', v_migrator, v_schema, v_app);
+        EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT USAGE, SELECT ON SEQUENCES TO %I', v_migrator, v_schema, v_app);
+    END IF;
 END
 $bootstrap$;

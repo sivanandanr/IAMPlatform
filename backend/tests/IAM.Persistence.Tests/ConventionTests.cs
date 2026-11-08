@@ -1,5 +1,8 @@
 using System.Reflection;
 using IAM.BuildingBlocks.Persistence;
+using IAM.Modules.Audit.Contracts;
+using IAM.Modules.Audit.Infrastructure;
+using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Persistence.Tests.Probe;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -104,6 +107,92 @@ public sealed class ConventionTests
         context.Database.GetMigrations().ShouldNotBeEmpty();
         context.Database.HasPendingModelChanges().ShouldBeFalse(
             $"the {provider} migrations are out of date: add a reviewed migration for each provider (ADR-0003)");
+    }
+
+    [Theory]
+    [InlineData(DatabaseProvider.SqlServer)]
+    [InlineData(DatabaseProvider.PostgreSql)]
+    public void AuditMigrationsMatchTheModel(DatabaseProvider provider)
+    {
+        using var context = TestSupport.CreateAudit(provider, TestSupport.OfflineConnectionString(provider));
+        context.Database.GetMigrations().ShouldNotBeEmpty();
+        context.Database.HasPendingModelChanges().ShouldBeFalse(
+            $"the {provider} audit migrations are out of date: add a reviewed migration for each provider (ADR-0003)");
+    }
+
+    /// <summary>S1-07: the audit table is append-only, so it has no Modified*/Version columns and a time-leading key.</summary>
+    [Theory]
+    [InlineData(DatabaseProvider.SqlServer, "AuditEvent", "datetimeoffset(6)")]
+    [InlineData(DatabaseProvider.PostgreSql, "audit_event", "timestamp(6) with time zone")]
+    public void AuditEventIsAppendOnly(DatabaseProvider provider, string table, string timestampType)
+    {
+        using var context = TestSupport.CreateAudit(provider, TestSupport.OfflineConnectionString(provider));
+        var row = context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(AuditEventRow))!;
+
+        row.IsAppendOnlyTable().ShouldBeTrue();
+        row.GetTableName().ShouldBe(table);
+        row.GetSchema().ShouldBe("audit");
+        foreach (var name in new[] { AuditColumns.CreatedAtUtc, AuditColumns.CreatedBy, AuditColumns.ModifiedAtUtc, AuditColumns.ModifiedBy, AuditColumns.Version })
+        {
+            row.FindProperty(name).ShouldBeNull($"append-only rows are never modified, so they have no {name} column");
+        }
+
+        row.FindPrimaryKey()!.Properties.Select(p => p.Name).ShouldBe([nameof(AuditEventRow.RecordedAtUtc), nameof(AuditEventRow.Id)]);
+        row.FindProperty(nameof(AuditEventRow.Id))!.ValueGenerated.ShouldBe(ValueGenerated.Never);
+        row.FindProperty(nameof(AuditEventRow.Seq))!.ValueGenerated.ShouldBe(ValueGenerated.OnAdd);
+        row.FindProperty(nameof(AuditEventRow.RecordedAtUtc))!.GetColumnType().ShouldBe(timestampType);
+        row.FindProperty(nameof(AuditEventRow.Action))!.GetCollation().ShouldBe(CodeCollations.For(provider));
+        row.FindProperty(nameof(AuditEventRow.RowHash))!.GetMaxLength().ShouldBe(64);
+    }
+
+    /// <summary>The writer's hand-built INSERT must name exactly the model's columns except the database-assigned Seq.</summary>
+    [Theory]
+    [InlineData(DatabaseProvider.SqlServer)]
+    [InlineData(DatabaseProvider.PostgreSql)]
+    public void TheWriterInsertMatchesTheModel(DatabaseProvider provider)
+    {
+        using var context = TestSupport.CreateAudit(provider, TestSupport.OfflineConnectionString(provider));
+        var row = context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(AuditEventRow))!;
+        var modelColumns = row.GetProperties()
+            .Where(p => p.Name != nameof(AuditEventRow.Seq))
+            .Select(p => p.GetColumnName())
+            .OrderBy(c => c, StringComparer.Ordinal)
+            .ToList();
+        var writerColumns = AuditWriter.InsertColumns
+            .Select(c => provider == DatabaseProvider.PostgreSql ? IamModelConventions.ToSnakeCase(c) : c)
+            .OrderBy(c => c, StringComparer.Ordinal)
+            .ToList();
+
+        writerColumns.ShouldBe(modelColumns);
+        var sql = AuditWriter.InsertSql(provider);
+        foreach (var column in modelColumns)
+        {
+            sql.ShouldContain(provider == DatabaseProvider.SqlServer ? $"[{column}]" : $"\"{column}\"");
+        }
+
+        sql.ShouldNotContain(provider == DatabaseProvider.SqlServer ? "[Seq]" : "\"seq\"");
+        Should.Throw<ArgumentOutOfRangeException>(() => AuditWriter.InsertSql((DatabaseProvider)99));
+    }
+
+    [Fact]
+    public void InvalidActionRegistrationsFailWhenTheCatalogIsBuilt()
+    {
+        Should.Throw<InvalidOperationException>(() => new AuditActionCatalog([new AuditActionRegistration("Not Valid")]));
+        new AuditActionCatalog([new AuditActionRegistration("identity.session.started")]).Actions.ShouldContain("identity.session.started");
+    }
+
+    [Theory]
+    [InlineData(EntityState.Modified)]
+    [InlineData(EntityState.Deleted)]
+    public void TheInterceptorRefusesToChangeAppendOnlyRows(EntityState state)
+    {
+        using var context = TestSupport.CreateAudit(
+            DatabaseProvider.PostgreSql,
+            TestSupport.OfflineConnectionString(DatabaseProvider.PostgreSql),
+            new AuditingSaveChangesInterceptor(TimeProvider.System, new FixedActor("tester")));
+        context.Entry(new AuditEventRow { Id = Guid.CreateVersion7(), RecordedAtUtc = DateTimeOffset.UtcNow }).State = state;
+
+        Should.Throw<InvalidOperationException>(() => context.SaveChanges()).Message.ShouldContain("append-only");
     }
 
     [Theory]

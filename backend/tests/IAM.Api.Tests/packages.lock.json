@@ -835,6 +835,7 @@
         "type": "Project",
         "dependencies": {
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
           "IAM.Modules.Audit.Application": "[1.0.0, )",
           "IAM.Modules.Audit.Contracts": "[1.0.0, )",
           "IAM.Modules.Audit.Domain": "[1.0.0, )"
@@ -1263,6 +1264,7 @@
         "type": "Project",
         "dependencies": {
           "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.Modules.Audit.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Identity.Infrastructure": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
@@ -1271,6 +1273,7 @@
         "type": "Project",
         "dependencies": {
           "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.Modules.Audit.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Identity.Infrastructure": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore.SqlServer": "[10.0.14, )"
         }

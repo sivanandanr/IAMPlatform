@@ -1,4 +1,5 @@
 using IAM.BuildingBlocks.Persistence;
+using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
 using IAM.Persistence.PostgreSql;
 using IAM.Persistence.SqlServer;
@@ -38,6 +39,18 @@ internal static class TestSupport
         var options = new DbContextOptionsBuilder<IdentityDbContext>();
         ProviderFor(provider).Configure(options, connectionString, IdentityDbContext.SchemaName);
         return new IdentityDbContext(options.Options);
+    }
+
+    public static AuditDbContext CreateAudit(DatabaseProvider provider, string connectionString, AuditingSaveChangesInterceptor? interceptor = null)
+    {
+        var options = new DbContextOptionsBuilder<AuditDbContext>();
+        ProviderFor(provider).Configure(options, connectionString, AuditDbContext.SchemaName);
+        if (interceptor is not null)
+        {
+            options.AddInterceptors(interceptor);
+        }
+
+        return new AuditDbContext(options.Options);
     }
 
     public static IEnumerable<Exception> Flatten(Exception ex)

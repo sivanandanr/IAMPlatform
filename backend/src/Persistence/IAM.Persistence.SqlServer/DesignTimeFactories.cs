@@ -1,3 +1,4 @@
+using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
@@ -17,5 +18,15 @@ internal sealed class IdentityDesignTimeFactory : IDesignTimeDbContextFactory<Id
         var options = new DbContextOptionsBuilder<IdentityDbContext>();
         new SqlServerDatabaseProvider().Configure(options, PlaceholderConnectionString, IdentityDbContext.SchemaName);
         return new IdentityDbContext(options.Options);
+    }
+}
+
+internal sealed class AuditDesignTimeFactory : IDesignTimeDbContextFactory<AuditDbContext>
+{
+    public AuditDbContext CreateDbContext(string[] args)
+    {
+        var options = new DbContextOptionsBuilder<AuditDbContext>();
+        new SqlServerDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, AuditDbContext.SchemaName);
+        return new AuditDbContext(options.Options);
     }
 }

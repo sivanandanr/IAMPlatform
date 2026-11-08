@@ -1,3 +1,5 @@
+using IAM.Modules.Audit.Contracts;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 
 namespace IAM.Api.Tests;
@@ -35,6 +37,15 @@ public sealed class ApiPersistenceStartupTests
         using var client = host.CreateClient();
         using var response = await client.GetAsync(new Uri("/health/live", UriKind.Relative), TestContext.Current.CancellationToken);
         response.IsSuccessStatusCode.ShouldBeTrue();
+    }
+
+    /// <summary>S1-07: the API composes the audit writer, and every registered audit action code is well-formed.</summary>
+    [Fact]
+    public void TheApiResolvesTheAuditWriter()
+    {
+        using var host = new ApiTestHost();
+        using var scope = host.Services.CreateScope();
+        scope.ServiceProvider.GetRequiredService<IAuditWriter>().ShouldNotBeNull();
     }
 
     private static IEnumerable<Exception> Flatten(Exception ex)

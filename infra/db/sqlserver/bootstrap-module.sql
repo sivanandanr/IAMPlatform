@@ -6,6 +6,7 @@
 --   @MigratorLogin     DDL principal that owns the module schemas (not sysadmin, not db_owner)
 --   @MigratorPassword
 --   @AppLogin          runtime principal for this module: SELECT/INSERT/UPDATE/DELETE on its own schema only
+--                      (nothing schema-wide when @Schema is 'audit', which is append-only: see grant-audit-role.sql, ADR-0018)
 --   @AppPassword
 -- Identifiers are validated against an allowlist pattern and quoted with QUOTENAME. CREATE LOGIN does not accept
 -- parameters, so passwords are quoted with QUOTENAME(@password, char(39)) inside dynamic SQL.
@@ -64,7 +65,14 @@ BEGIN
 END;
 
 -- Application: data access on its own schema only. No DDL, no other schemas.
-SET @sql = N'GRANT SELECT, INSERT, UPDATE, DELETE ON SCHEMA::' + QUOTENAME(@Schema) + N' TO ' + QUOTENAME(@AppLogin) + N';';
+-- The audit schema is append-only (ADR-0018): no schema-wide grant at all, so the audit login cannot touch the
+-- migration history or any future audit table. It reads and appends only through the iam_audit_reader and
+-- iam_audit_writer roles (grant-audit-role.sql), which the migration grants on audit.AuditEvent alone. Re-running
+-- this script also takes back grants an older version gave.
+IF @Schema = N'audit'
+    SET @sql = N'REVOKE SELECT, INSERT, UPDATE, DELETE ON SCHEMA::' + QUOTENAME(@Schema) + N' FROM ' + QUOTENAME(@AppLogin) + N';';
+ELSE
+    SET @sql = N'GRANT SELECT, INSERT, UPDATE, DELETE ON SCHEMA::' + QUOTENAME(@Schema) + N' TO ' + QUOTENAME(@AppLogin) + N';';
 EXEC sys.sp_executesql @sql;
 
 -- Row versioning for READ COMMITTED (ADR-0017). Rolls back other connections' open transactions; run in a quiet window.

@@ -6,7 +6,8 @@ namespace IAM.BuildingBlocks.Persistence;
 /// <summary>
 /// Sets the audit and concurrency columns from the server-side actor and clock (ADR-0017):
 /// inserts get Created*/Modified* and Version 1; updates get Modified* and Version + 1, and any attempt to change
-/// Created* is discarded. Saving without an actor fails, and so does inserting an empty Guid key.
+/// Created* is discarded. Saving without an actor fails, and so does inserting an empty Guid key
+/// or updating or deleting a row of an append-only table.
 /// </summary>
 public sealed class AuditingSaveChangesInterceptor(TimeProvider clock, IAuditActorAccessor actorAccessor) : SaveChangesInterceptor
 {
@@ -35,6 +36,14 @@ public sealed class AuditingSaveChangesInterceptor(TimeProvider clock, IAuditAct
         }
 
         context.ChangeTracker.DetectChanges();
+        var appendOnlyChange = context.ChangeTracker.Entries()
+            .FirstOrDefault(e => e.State is EntityState.Modified or EntityState.Deleted && e.Metadata.IsAppendOnlyTable());
+        if (appendOnlyChange is not null)
+        {
+            throw new InvalidOperationException(
+                $"{appendOnlyChange.Metadata.DisplayName()} is append-only: rows cannot be updated or deleted (ADR-0018).");
+        }
+
         var entries = context.ChangeTracker.Entries()
             .Where(e => e.State is EntityState.Added or EntityState.Modified)
             .Where(e => e.Metadata.FindProperty(AuditColumns.Version) is not null)

@@ -58,6 +58,9 @@ public sealed class ApiTestHost : IDisposable
 
     public HttpClient CreateClient() => _factory.CreateClient();
 
+    /// <summary>The built host's services (builds the host on first use).</summary>
+    public IServiceProvider Services => _factory.Services;
+
     public static string CreateToken(
         SigningCredentials? credentials,
         string issuer = Issuer,

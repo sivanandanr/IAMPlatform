@@ -30,11 +30,14 @@ Likelihood / Impact: L = Low, M = Medium, H = High. Ratings are initial assessme
 | R-022 | BFF sessions are in-memory (Sprint 1 owner decision): lost on restart, single instance only; scaling out silently breaks logins and revocation | M | M | Decide a durable/shared session store (isolated Valkey or database) before any multi-instance or shared deployment; record in ADR-0012 | ADR-0012 | Security Architect, DevOps lead | Open |
 | R-023 | IAM.Api authorizes "authenticated" only; no permission model yet (DL-016), so a new endpoint could expose data to any signed-in user | M | H | No sensitive endpoint before per-action permissions; code review and an architecture rule when the permission model lands | DL-016, ADR-0008 | Security Architect | Open |
 | R-024 | Module app logins can modify their own migration history table (schema-wide DML grant) | L | M | Deny DML on the history table to app logins (or move history to a migrator-only schema) before production; parity test for it | ADR-0017 | Database Architect | Open |
+| R-026 | Audit rows can still be changed by a database administrator, superuser or the audit schema owner (disable/drop the trigger; on SQL Server the owner can also TRUNCATE); the row hash is unkeyed, so it can be recomputed; no keyed hash chain or external copy yet | M | H | Hash-chain sealer (spec §12.6) and SIEM/WORM export before production; restrict and monitor administrator and migrator use; review every audit-schema migration | ADR-0018 | Security Architect, DBA lead | Open |
+| R-027 | Any module runtime login can bypass IAuditWriter with its own SQL INSERT and forge actor, timestamps or unmasked values; EffectiveActorId is unchecked; OccurredAtUtc can be backdated; secret detection is pattern-based | M | H | Database-side insert procedure as the only insert path; keyed sealer; delegation model with verified on-behalf-of; lower bound or flag for late events; code review of every audit call | ADR-0018 | Security Architect | Open |
 | R-025 | Per-customer isolation (DL-001) relies on deployment separation, which nothing checks yet | M | H | Deployment automation gives each customer its own database, credentials and network; add a deployment-time check before the first customer deployment | ADR-0014 | DevOps lead, Security Architect | Open |
 
 ## Change history
 | Date | Change | By |
 |---|---|---|
+| 2026-11-08 | S1-07: R-026, R-027 added after independent review | Claude Code, pending human review |
 | 2026-11-08 | S1-06: R-001 closed; R-024, R-025 added | Claude Code, pending human review |
 | 2026-11-08 | S1-05: R-020 mitigated in code; R-022, R-023 added | Claude Code, pending human review |
 | 2026-11-08 | S1-03: R-020, R-021 added; R-015 notes Valkey | Claude Code, pending human review |

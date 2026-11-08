@@ -295,6 +295,36 @@
           "Microsoft.EntityFrameworkCore.Relational": "[10.0.14, )"
         }
       },
+      "iam.modules.audit.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Audit.Contracts": "[1.0.0, )",
+          "IAM.Modules.Audit.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.audit.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.audit.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.audit.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.Modules.Audit.Application": "[1.0.0, )",
+          "IAM.Modules.Audit.Contracts": "[1.0.0, )",
+          "IAM.Modules.Audit.Domain": "[1.0.0, )"
+        }
+      },
       "iam.modules.identity.application": {
         "type": "Project",
         "dependencies": {

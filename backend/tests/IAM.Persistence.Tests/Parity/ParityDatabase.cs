@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using DotNet.Testcontainers.Containers;
 using IAM.BuildingBlocks.Persistence;
+using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
 using IAM.Persistence.Tests.Probe;
 using Microsoft.Data.SqlClient;
@@ -32,6 +33,7 @@ public sealed class ParityDatabase : IAsyncLifetime
     public const string MigratorLogin = "iam_migrator";
     public const string IdentityAppLogin = "iam_app_identity";
     public const string ProbeAppLogin = "iam_app_parity_probe";
+    public const string AuditAppLogin = "iam_app_audit";
 
     private const string SqlServerImage = "mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718";
     private const string PostgreSqlImage = "postgres:17.11-alpine3.24@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac";
@@ -40,6 +42,7 @@ public sealed class ParityDatabase : IAsyncLifetime
     private readonly string _migratorPassword = NewPassword();
     private readonly string _identityAppPassword = NewPassword();
     private readonly string _probeAppPassword = NewPassword();
+    private readonly string _auditAppPassword = NewPassword();
     private IDatabaseContainer? _container;
     private string _adminConnectionString = string.Empty;
 
@@ -54,6 +57,12 @@ public sealed class ParityDatabase : IAsyncLifetime
     public string IdentityAppConnectionString => WithLogin(IdentityAppLogin, _identityAppPassword);
 
     public string ProbeAppConnectionString => WithLogin(ProbeAppLogin, _probeAppPassword);
+
+    public string AuditAppConnectionString => WithLogin(AuditAppLogin, _auditAppPassword);
+
+    public IReadOnlyList<string> AuditFirstRunApplied { get; private set; } = [];
+
+    public IReadOnlyList<string> AuditSecondRunPending { get; private set; } = [];
 
     public string AdminConnectionString => _adminConnectionString;
 
@@ -94,6 +103,16 @@ public sealed class ParityDatabase : IAsyncLifetime
 
         await BootstrapAsync(IdentityDbContext.SchemaName, IdentityAppLogin, _identityAppPassword, ct);
         await BootstrapAsync(ProbeDbContext.SchemaName, ProbeAppLogin, _probeAppPassword, ct);
+        await BootstrapAsync(AuditDbContext.SchemaName, AuditAppLogin, _auditAppPassword, ct);
+
+        // Every module runtime login may append audit events in its own transaction; only the audit login may read
+        // them (ADR-0018). Roles must exist before the audit migration grants to them.
+        foreach (var login in new[] { IdentityAppLogin, ProbeAppLogin, AuditAppLogin })
+        {
+            await GrantAuditRoleAsync(login, AuditDbContext.WriterRole, ct);
+        }
+
+        await GrantAuditRoleAsync(AuditAppLogin, AuditDbContext.ReaderRole, ct);
 
         // Product migrations, as the migrator, twice: the second run must find nothing to do.
         await using (var identity = TestSupport.CreateIdentity(Provider, MigratorConnectionString))
@@ -107,6 +126,19 @@ public sealed class ParityDatabase : IAsyncLifetime
         {
             SecondRunPending = (await identity.Database.GetPendingMigrationsAsync(ct)).ToList();
             await identity.Database.MigrateAsync(ct);
+        }
+
+        await using (var audit = TestSupport.CreateAudit(Provider, MigratorConnectionString))
+        {
+            var pending = (await audit.Database.GetPendingMigrationsAsync(ct)).ToList();
+            await audit.Database.MigrateAsync(ct);
+            AuditFirstRunApplied = pending;
+        }
+
+        await using (var audit = TestSupport.CreateAudit(Provider, MigratorConnectionString))
+        {
+            AuditSecondRunPending = (await audit.Database.GetPendingMigrationsAsync(ct)).ToList();
+            await audit.Database.MigrateAsync(ct);
         }
 
         // Probe tables, created by the migrator from the model with the provider's own DDL generator.
@@ -188,6 +220,36 @@ public sealed class ParityDatabase : IAsyncLifetime
                 AddParameter(settings, "@migratorPassword", _migratorPassword);
                 AddParameter(settings, "@app", appLogin);
                 AddParameter(settings, "@appPassword", appPassword);
+                await settings.ExecuteNonQueryAsync(ct);
+            }
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = script;
+            await command.ExecuteNonQueryAsync(ct);
+        }
+    }
+
+    [SuppressMessage("Security", "CA2100", Justification = "Executes the reviewed grant script from infra/db; the inputs are bound parameters.")]
+    private async Task GrantAuditRoleAsync(string appLogin, string role, CancellationToken ct)
+    {
+        var dialect = Provider == DatabaseProvider.SqlServer ? "sqlserver" : "postgresql";
+        var script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "db", dialect, "grant-audit-role.sql"), ct);
+        await using var connection = OpenConnection(_adminConnectionString);
+        if (Provider == DatabaseProvider.SqlServer)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = script;
+            AddParameter(command, "@AppLogin", appLogin);
+            AddParameter(command, "@Role", role);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        else
+        {
+            await using (var settings = connection.CreateCommand())
+            {
+                settings.CommandText = "SELECT set_config('iam_bootstrap.app_login', @app, false), set_config('iam_bootstrap.audit_role', @role, false)";
+                AddParameter(settings, "@app", appLogin);
+                AddParameter(settings, "@role", role);
                 await settings.ExecuteNonQueryAsync(ct);
             }
 

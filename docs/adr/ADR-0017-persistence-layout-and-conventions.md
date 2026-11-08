@@ -22,7 +22,7 @@ Implemented in S1-06:
 - `IAM.Api` refuses to start without `IAM_DB_PROVIDER` and a `ConnectionStrings:<schema>` per registered module. It never runs migrations.
 - Least-privilege bootstrap scripts: `infra/db/sqlserver/bootstrap-module.sql`, `infra/db/postgresql/bootstrap-module.sql` (inputs bound as parameters; identifiers allowlisted and quoted).
 
-**Not implemented yet:** `iam_audit_writer` and `iam_readonly` (S1-07 / later); `ISJSON`/`jsonb` columns (no JSON yet); keyset pagination and NULL-ordering helpers; raw-SQL analyzer/test ban; readiness check for the latest migration (ADR-0003).
+**Implemented in S1-07:** `iam_audit_writer` and `iam_audit_reader` roles (`infra/db/*/grant-audit-role.sql`) and the `IsAppendOnly()` convention (no Created*/Modified*/Version columns; interceptor refuses update/delete) — ADR-0018. **Not implemented yet:** `iam_readonly` (later); `ISJSON`/`jsonb` columns (no JSON yet); keyset pagination and NULL-ordering helpers; raw-SQL analyzer/test ban; readiness check for the latest migration (ADR-0003).
 
 Proposed conventions (as approved):
 - **Layout**: one DbContext per module, one schema per module (lower-case on both engines), `__EFMigrationsHistory` per module in its schema; migrations per provider assembly (ADR-0003).

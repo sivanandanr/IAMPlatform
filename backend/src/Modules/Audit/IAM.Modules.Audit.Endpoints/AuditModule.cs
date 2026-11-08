@@ -1,3 +1,4 @@
+using IAM.Modules.Audit.Infrastructure;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -15,7 +16,7 @@ public static class AuditModule
     public static IServiceCollection AddAuditModule(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
-        return services;
+        return services.AddAuditInfrastructure();
     }
 
     public static IEndpointRouteBuilder MapAuditEndpoints(this IEndpointRouteBuilder endpoints)
