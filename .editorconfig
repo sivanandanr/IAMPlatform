@@ -61,3 +61,7 @@ dotnet_diagnostic.CA5394.severity = error   # Insecure randomness
 [backend/tests/**.cs]
 dotnet_diagnostic.CA2007.severity = none   # xUnit discourages ConfigureAwait(false) in tests
 dotnet_diagnostic.CA1515.severity = none   # xUnit test classes must be public
+
+# EF Core migrations are generated, then reviewed per provider (ADR-0003); analyzers and style rules do not apply.
+[backend/src/Persistence/**/Migrations/**.cs]
+generated_code = true

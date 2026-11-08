@@ -1,15 +1,19 @@
 # IAM Platform — backend
 
-Status: **S1-02 skeleton.** The solution builds and the architecture tests run, but there are no endpoints, authentication, persistence or health checks yet. Nothing here is production-ready.
+Status: **S1-06.** Solution skeleton (S1-02), BFF/OIDC sign-in and bearer-secured API (S1-05), and the EF Core persistence foundation on SQL Server and PostgreSQL (S1-06). No business features yet. Nothing here is production-ready.
 
 ## Layout (ADR-0001, ADR-0011)
 ```
 backend/
   IAM.slnx
   src/BuildingBlocks/IAM.BuildingBlocks.Abstractions   (no dependencies)
+  src/BuildingBlocks/IAM.BuildingBlocks.Persistence    (EF Core conventions, no database driver)
+  src/BuildingBlocks/IAM.BuildingBlocks.Security       (host security helpers)
+  src/Persistence/IAM.Persistence.{SqlServer,PostgreSql}  (provider setup + each provider's reviewed migrations)
   src/Host/IAM.Api                                     (composition root; references module Endpoints only)
+  src/Host/IAM.Bff                                     (browser-facing BFF, ADR-0012/0013)
   src/Modules/<Module>/IAM.Modules.<Module>.{Contracts,Domain,Application,Infrastructure,Endpoints}
-  tests/IAM.Architecture.Tests
+  tests/IAM.{Architecture,Api,Bff,Persistence}.Tests
 ```
 Modules (14, ADR-0011): Identity, Organization, Catalog, Account, Policy, Workflow, Request, Provisioning, Governance, Audit, Integration, Notification, Administration, Lifecycle.
 
@@ -42,7 +46,15 @@ dotnet restore IAM.slnx
 dotnet build IAM.slnx -c Release --no-restore
 ```
 ```bash
-dotnet test --solution IAM.slnx -c Release --no-build
+dotnet test --solution IAM.slnx -c Release --no-build --filter-not-trait "Category=DatabaseParity"
+```
+Database parity tests (Docker required; one engine per run, `SqlServer` also needs `MSSQL_ACCEPT_EULA=Y` from whoever accepts the licence):
+```bash
+IAM_PARITY_PROVIDER=PostgreSql dotnet test --project tests/IAM.Persistence.Tests -c Release --no-build --filter-trait "Category=DatabaseParity"
+```
+New migration (one per provider, both reviewed; see `docs/runbooks/LOCAL_ENVIRONMENT.md` §3b):
+```bash
+dotnet ef migrations add <Name> --context <Module>DbContext --project src/Persistence/IAM.Persistence.SqlServer --startup-project src/Persistence/IAM.Persistence.SqlServer --output-dir Migrations/<Module> --namespace IAM.Persistence.SqlServer.Migrations.<Module>
 ```
 ```bash
 dotnet format IAM.slnx --verify-no-changes

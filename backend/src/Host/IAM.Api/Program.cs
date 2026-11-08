@@ -16,12 +16,14 @@ using IAM.Modules.Request.Endpoints;
 using IAM.Modules.Workflow.Endpoints;
 
 // S1-05: modules + bearer-token authentication + default-deny authorization. Reached only through the BFF
-// (ADR-0013); not exposed to browsers. Authorization is authenticated-only for now: no permission model yet
+// (ADR-0013); not exposed to browsers. S1-06: one database provider (IAM_DB_PROVIDER, no default) and a
+// connection string per module schema, both checked at startup. Authorization is authenticated-only for now: no permission model yet
 // (DL-016), so no endpoint may expose sensitive data until per-action permissions exist. Not production-ready.
 var builder = WebApplication.CreateBuilder(args);
 
 builder.WebHost.ConfigureKestrel(k => k.Limits.MaxRequestBodySize = 1 * 1024 * 1024);
 builder.Services.AddIamApiAuthentication(builder.Configuration, builder.Environment);
+builder.Services.AddIamPersistence(builder.Configuration);
 builder.Services.AddHealthChecks();
 
 builder.Services.AddIdentityModule();
@@ -40,6 +42,7 @@ builder.Services.AddAdministrationModule();
 builder.Services.AddLifecycleModule();
 
 var app = builder.Build();
+ApiPersistence.EnsurePersistenceConfigured(app.Services);
 
 app.UseIamSecurityHeaders();
 app.UseAuthentication();

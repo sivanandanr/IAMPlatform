@@ -1,5 +1,5 @@
 # ADR-0003: Provider-specific migrations and migration governance
-Status: Proposed | Date: 2026-11-07 | Decision owners: Database Architect / DBA lead, Lead Solution Architect, DevOps lead (named approvers TBD)
+Status: Proposed — recovery approach decided by repository owner (DL-020, 2026-11-08); DBA/DevOps review of the rest pending | Date: 2026-11-07 | Decision owners: Database Architect / DBA lead, Lead Solution Architect, DevOps lead (named approvers TBD)
 
 Source: Blueprint v1.0 §1 (ADR 003), §7, §11; CLAUDE.md (separate reviewed migrations; no destructive migrations without approval). Drafted by Claude Code (S1-01); not approved.
 
@@ -31,7 +31,8 @@ Migration pipeline agents need private network access to the database; no public
 Two migration sets to maintain and review per change. Rollback via restore + compensating migration.
 
 ## Tests / evidence
-Parity job (ADR-0010): migrations apply to empty DB, idempotent script re-run is a no-op, `HasPendingModelChanges()` false for every context/provider. Evidence: none yet.
+Parity job (ADR-0010): migrations apply to empty DB, idempotent script re-run is a no-op, `HasPendingModelChanges()` false for every context/provider. S1-06 evidence: `MigrationsApplyAndReRunCleanly` (parity, as the migrator login) and `IdentityMigrationsMatchTheModel` (both providers, main job). Idempotent **script** generation is not tested yet.
 
 ## Open questions and approvals
-- Blueprint "forward-only" vs database-architect role text "forward and recovery migrations": this ADR proposes restore + compensating forward migration as the recovery approach; needs confirmation (DL-020).
+- ~~Recovery approach (DL-020)~~ **Decided (owner, 2026-11-08): forward-only; recovery = verified backup / point-in-time restore plus a compensating forward migration. No down migrations are reviewed or run.**
+- S1-06 implements the per-provider assemblies (`backend/src/Persistence/IAM.Persistence.*`) and the first Identity migration. Not yet: CI-generated idempotent scripts for DBA review, migration bundles, the gated migrator stage, and the readiness check.

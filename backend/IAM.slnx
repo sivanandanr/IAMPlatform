@@ -8,7 +8,12 @@
   </Folder>
   <Folder Name="/src/BuildingBlocks/">
     <Project Path="src/BuildingBlocks/IAM.BuildingBlocks.Abstractions/IAM.BuildingBlocks.Abstractions.csproj" />
+    <Project Path="src/BuildingBlocks/IAM.BuildingBlocks.Persistence/IAM.BuildingBlocks.Persistence.csproj" />
     <Project Path="src/BuildingBlocks/IAM.BuildingBlocks.Security/IAM.BuildingBlocks.Security.csproj" />
+  </Folder>
+  <Folder Name="/src/Persistence/">
+    <Project Path="src/Persistence/IAM.Persistence.PostgreSql/IAM.Persistence.PostgreSql.csproj" />
+    <Project Path="src/Persistence/IAM.Persistence.SqlServer/IAM.Persistence.SqlServer.csproj" />
   </Folder>
   <Folder Name="/src/Host/">
     <Project Path="src/Host/IAM.Api/IAM.Api.csproj" />
@@ -116,5 +121,6 @@
     <Project Path="tests/IAM.Api.Tests/IAM.Api.Tests.csproj" />
     <Project Path="tests/IAM.Architecture.Tests/IAM.Architecture.Tests.csproj" />
     <Project Path="tests/IAM.Bff.Tests/IAM.Bff.Tests.csproj" />
+    <Project Path="tests/IAM.Persistence.Tests/IAM.Persistence.Tests.csproj" />
   </Folder>
 </Solution>

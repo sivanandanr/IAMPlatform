@@ -24,7 +24,15 @@ public sealed class ApiTestHost : IDisposable
     private readonly RSA _rsa = RSA.Create(2048);
     private readonly WebApplicationFactory<Program> _factory;
 
-    public ApiTestHost(string environment = "Testing", string authority = Issuer, bool requireHttpsMetadata = true)
+    /// <summary>Placeholder connection string; the API never opens it in these tests.</summary>
+    public const string UnusedConnectionString = "Host=unused.invalid;Database=iam";
+
+    public ApiTestHost(
+        string environment = "Testing",
+        string authority = Issuer,
+        bool requireHttpsMetadata = true,
+        string? databaseProvider = "PostgreSql",
+        string? identityConnectionString = UnusedConnectionString)
     {
         SigningKey = new RsaSecurityKey(_rsa) { KeyId = "test-key-1" };
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
@@ -33,6 +41,8 @@ public sealed class ApiTestHost : IDisposable
             builder.UseSetting("Authentication:Jwt:Authority", authority);
             builder.UseSetting("Authentication:Jwt:Audience", Audience);
             builder.UseSetting("Authentication:Jwt:RequireHttpsMetadata", requireHttpsMetadata ? "true" : "false");
+            builder.UseSetting("IAM_DB_PROVIDER", databaseProvider);
+            builder.UseSetting("ConnectionStrings:identity", identityConnectionString);
             builder.ConfigureTestServices(services =>
                 services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
                 {

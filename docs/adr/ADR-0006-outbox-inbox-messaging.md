@@ -14,7 +14,7 @@ At-least-once delivery with idempotent consumers; duplicate messages must not du
 ## Decision and rationale
 Option 1. Messages carry correlation ID, causation ID, idempotency key, schema version and (for provisioning) request-item ID, target identity, operation ID and policy version (blueprint §10). Inbox unique key (ConsumerName, MessageId). Bounded exponential backoff; permanent errors → DLQ / manual repair.
 
-**Location of outbox/inbox tables — undecided:** blueprint §6 places them in the `integration` schema, which conflicts with "no cross-module writes" unless messaging is treated as a building block. Alternative: per-module outbox/inbox tables in each module schema. Needs decision (DL-021).
+**Location of outbox/inbox tables — decided (owner, 2026-11-08, DL-021): per-module.** Each module owns its outbox and inbox tables in its own schema, written in the same transaction as its data by its own login. This keeps "no cross-module writes" enforceable in the database (S1-06 per-module logins). Blueprint §6's shared `integration` schema is not used for them. Built in P0-010.
 
 ## Security and privacy impact
 Payloads contain no tokens, secrets or full HR records (schema assertion). Unknown schema version / oversized / malformed messages go to DLQ unprocessed. Broker users per vhost; no `guest`.

@@ -46,7 +46,7 @@ Required next reviewer(s):
 
 ## 4. Required repository controls (owner action on GitHub)
 To be configured by the repository owner; agents cannot configure them and must not claim they exist until verified:
-- Protect `main`: require pull request, ≥1 approving review from someone other than the author (≥2 for security-sensitive paths via CODEOWNERS), dismiss stale approvals, require status checks — from S1-04: `Secret scan (gitleaks, full history)`, `Build, test, format, vulnerable packages`, `CodeQL (C#)`; from S1-03: `Local environment config (compose)`; both DB parity legs added with S1-06, block force pushes and deletions, require linear history (optional).
+- Protect `main`: require pull request, ≥1 approving review from someone other than the author (≥2 for security-sensitive paths via CODEOWNERS), dismiss stale approvals, require status checks — from S1-04: `Secret scan (gitleaks, full history)`, `Build, test, format, vulnerable packages`, `CodeQL (C#)`; from S1-03: `Local environment config (compose)`; from S1-06: `Database parity (SqlServer)` and `Database parity (PostgreSql)` (the SqlServer leg needs repository variable `MSSQL_ACCEPT_EULA=Y`, set by the owner who accepts the SQL Server Developer licence), block force pushes and deletions, require linear history (optional).
 - CODEOWNERS for `docs/adr/`, `docs/security/`, `.claude/`, `CLAUDE.md`, persistence/migrations, authorization code and the shared UI library (owners TBD).
 - Repository visibility decision (Decision Log DL-024; Risk R-004).
 

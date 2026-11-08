@@ -29,7 +29,15 @@ CI agents need Docker; SQL Server container uses Developer edition (non-producti
 Longer CI times; mitigate with parallel legs and container reuse within a job.
 
 ## Tests / evidence
-The job itself is the evidence; none yet.
+The job itself is the evidence. S1-06 adds `.github/workflows/pr.yml` job `db-parity` (legs `Database parity (SqlServer)` and `Database parity (PostgreSql)`, fail-fast off), running `tests/IAM.Persistence.Tests` with trait `Category=DatabaseParity` against Testcontainers started from the compose.yaml image digests. Setup per leg: bootstrap script as administrator, product migrations as `iam_migrator`, tests as per-module app logins.
+
+Covered now: migrations apply + re-run; no pending model changes (both providers, main job); schema check of the probe table and the identity schema; "01" vs "1" and case distinct; padded/empty codes rejected; µs UTC round-trip and non-UTC rejected; stale Version rejected; audit columns server-set; unique-with-NULL parity; decimal(28,8); Unicode round-trip; readers not blocked by uncommitted writers; app login cannot create or drop tables or read another module's schema; migrator is not an administrator.
+
+Not covered yet: full normalised schema diff across every module (only the probe and identity schema today); NULL ordering; invalid JSON; outbox/inbox (P0-010); audit UPDATE/DELETE denied (S1-07); attribute registration without migration (S1-08).
+
+Local evidence (2026-11-08, Windows 11, Docker, Release build): PostgreSQL 17.11 leg 23/23 passed; SQL Server 2022 CU27 leg 23/23 passed (3 min 37 s including image pull; licence accepted by the repository owner for this run). Mutation check on PostgreSQL: widening the module grants and removing the `Version` concurrency token failed 3 tests. CI runs of both legs: pending the first PR.
+
+SQL Server leg needs the repository variable `MSSQL_ACCEPT_EULA=Y`, set by the owner who accepts the Developer licence; without it the leg fails instead of accepting the licence silently.
 
 ## Open questions and approvals
 - Pinned image versions; MI staging environment availability.

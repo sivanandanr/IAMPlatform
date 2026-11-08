@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using IAM.Modules.Identity.Infrastructure;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -18,7 +19,7 @@ public static class IdentityModule
     public static IServiceCollection AddIdentityModule(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
-        return services;
+        return services.AddIdentityInfrastructure();
     }
 
     public static IEndpointRouteBuilder MapIdentityEndpoints(this IEndpointRouteBuilder endpoints)

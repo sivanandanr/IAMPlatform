@@ -6,7 +6,7 @@ Likelihood / Impact: L = Low, M = Medium, H = High. Ratings are initial assessme
 
 | ID | Risk | L | I | Mitigation (planned) | Linked | Owner (role) | Status |
 |---|---|---|---|---|---|---|---|
-| R-001 | Tenancy decided late → schema, key, cache and queue rework | M | H | Decide DL-001 before S1-06; ADR-0014 | DL-001 | Product owner | Open |
+| R-001 | Tenancy decided late → schema, key, cache and queue rework | M | H | Decide DL-001 before S1-06; ADR-0014 | DL-001 | Product owner | Closed (DL-001 decided 2026-11-08: deployment per customer). Reopen if shared hosting is proposed |
 | R-002 | UI foundation not in blueprint plan → Phase 0 slips beyond 4 weeks, or P0-018 demo collides with UI gate | H | M | Decide DL-028; plan UI-0 in S1 and UI-1 in S2; API-level demo fallback | DL-028, ADR-0019 | Product owner | Open |
 | R-003 | MassTransit licence/support window blocks or taxes P0-010 | M | M | Decide ADR-0021 early in Sprint 1; keep modules on Messaging abstractions | DL-018 | Lead Solution Architect | Open |
 | R-004 | Repository is **public**; requirements, threat models or security findings could be exposed | M | H | DL-024: make repo private or keep sensitive docs out; review every push; no secrets/PII ever | DL-024 | Repository owner | Open |
@@ -29,10 +29,13 @@ Likelihood / Impact: L = Low, M = Medium, H = High. Ratings are initial assessme
 | R-021 | SQL Server local profile and `dev-env-init.ps1` not yet exercised (EULA must be accepted by each developer; script not run in S1-03) | M | L | First developer to accept the EULA runs the sqlserver profile and the PowerShell script and records evidence; CI compose check covers config only | ADR-0023 | DevOps lead | Open |
 | R-022 | BFF sessions are in-memory (Sprint 1 owner decision): lost on restart, single instance only; scaling out silently breaks logins and revocation | M | M | Decide a durable/shared session store (isolated Valkey or database) before any multi-instance or shared deployment; record in ADR-0012 | ADR-0012 | Security Architect, DevOps lead | Open |
 | R-023 | IAM.Api authorizes "authenticated" only; no permission model yet (DL-016), so a new endpoint could expose data to any signed-in user | M | H | No sensitive endpoint before per-action permissions; code review and an architecture rule when the permission model lands | DL-016, ADR-0008 | Security Architect | Open |
+| R-024 | Module app logins can modify their own migration history table (schema-wide DML grant) | L | M | Deny DML on the history table to app logins (or move history to a migrator-only schema) before production; parity test for it | ADR-0017 | Database Architect | Open |
+| R-025 | Per-customer isolation (DL-001) relies on deployment separation, which nothing checks yet | M | H | Deployment automation gives each customer its own database, credentials and network; add a deployment-time check before the first customer deployment | ADR-0014 | DevOps lead, Security Architect | Open |
 
 ## Change history
 | Date | Change | By |
 |---|---|---|
+| 2026-11-08 | S1-06: R-001 closed; R-024, R-025 added | Claude Code, pending human review |
 | 2026-11-08 | S1-05: R-020 mitigated in code; R-022, R-023 added | Claude Code, pending human review |
 | 2026-11-08 | S1-03: R-020, R-021 added; R-015 notes Valkey | Claude Code, pending human review |
 | 2026-11-07 | Initial register from Sprint 1 planning reviews | Claude Code (S1-01), pending human review |

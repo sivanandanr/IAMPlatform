@@ -22,7 +22,7 @@ Workflows:
 
 Supply-chain controls: every action pinned to a full commit SHA (tag in a comment); workflow token `contents: read` by default, `security-events: write` only for CodeQL; `persist-credentials: false` on checkout; no secrets used by PR workflows.
 
-The database parity matrix (ADR-0010) is added with S1-06, when persistence exists.
+- `db-parity` (S1-06): matrix `SqlServer` / `PostgreSql`, fail-fast off; builds `tests/IAM.Persistence.Tests` and runs the `Category=DatabaseParity` tests with Testcontainers. `build-test` excludes that trait. The SqlServer leg reads repository variable `MSSQL_ACCEPT_EULA`.
 
 ## Security and privacy impact
 - PRs from forks run with a read-only token and no secrets (GitHub default for `pull_request`).
@@ -30,7 +30,7 @@ The database parity matrix (ADR-0010) is added with S1-06, when persistence exis
 - CodeQL results are visible in the repository's Security tab; on a public repository they are visible to repository admins/maintainers, not the public.
 
 ## SQL Server vs PostgreSQL impact
-Parity job to be added (S1-06).
+Parity job `db-parity` added in S1-06 (ADR-0010).
 
 ## Hybrid deployment impact
 None for PR checks. Hosted runners have no access to private networks; integration with on-prem targets is out of scope for CI.

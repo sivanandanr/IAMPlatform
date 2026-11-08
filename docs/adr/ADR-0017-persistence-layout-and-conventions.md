@@ -1,5 +1,5 @@
 # ADR-0017: Persistence layout and dual-provider conventions
-Status: Proposed — blocking (S1-06) | Date: 2026-11-07 | Decision owners: Database Architect / DBA lead, Lead Solution Architect (named approvers TBD)
+Status: Accepted by repository owner (sivanandanr, 2026-11-08, via Claude Code session) — DBA review pending | Date: 2026-11-07, decided 2026-11-08 | Decision owners: Database Architect / DBA lead, Lead Solution Architect (named approvers TBD)
 
 Source: Blueprint v1.0 §6, §7; CLAUDE.md (no cross-module direct table writes; least-privilege DB identities). Drafted by Claude Code (S1-01); not approved.
 
@@ -10,7 +10,21 @@ One logical model, provider-specific physical DDL; identical behaviour on SQL Se
 Per concern below; the proposal is listed first.
 
 ## Decision and rationale
-Proposed conventions:
+**Accepted as proposed (owner, 2026-11-08)**, with a hand-written snake_case convention instead of `EFCore.NamingConventions`.
+
+Implemented in S1-06:
+- `IAM.BuildingBlocks.Persistence` (EF Core Relational only, no driver): `IamDbContext` base (one lower-case schema per module, allowlisted name), conventions, `AuditingSaveChangesInterceptor`, `IAM_DB_PROVIDER` parsing (exact `SqlServer` / `PostgreSql`, no default, fails closed).
+- `IAM.Persistence.SqlServer` / `IAM.Persistence.PostgreSql`: provider setup and each provider's reviewed migrations; migration history table per module schema (`__EFMigrationsHistory` / `__ef_migrations_history`). No automatic retry.
+- Audit columns and `Version` are **shadow properties**, so no entity setter or DTO can bind them. The interceptor sets them from `TimeProvider` and the token `sub`; it discards changes to Created*, and saving without an actor fails.
+- `DateTimeOffset` stored as `datetimeoffset(6)` / `timestamptz(6)`; non-UTC values are rejected, not converted.
+- `IsCode(maxLength)`: `Latin1_General_100_BIN2` / `COLLATE "C"` plus a CHECK that rejects empty values and leading/trailing spaces on both engines.
+- The model cache is keyed by provider, so one process can never reuse a SQL Server model for PostgreSQL.
+- `IAM.Api` refuses to start without `IAM_DB_PROVIDER` and a `ConnectionStrings:<schema>` per registered module. It never runs migrations.
+- Least-privilege bootstrap scripts: `infra/db/sqlserver/bootstrap-module.sql`, `infra/db/postgresql/bootstrap-module.sql` (inputs bound as parameters; identifiers allowlisted and quoted).
+
+**Not implemented yet:** `iam_audit_writer` and `iam_readonly` (S1-07 / later); `ISJSON`/`jsonb` columns (no JSON yet); keyset pagination and NULL-ordering helpers; raw-SQL analyzer/test ban; readiness check for the latest migration (ADR-0003).
+
+Proposed conventions (as approved):
 - **Layout**: one DbContext per module, one schema per module (lower-case on both engines), `__EFMigrationsHistory` per module in its schema; migrations per provider assembly (ADR-0003).
 - **Audit columns** on every row: CreatedAtUtc, CreatedBy, ModifiedAtUtc, ModifiedBy, Version — set by a SaveChanges interceptor from the server-side actor and `TimeProvider`; never bound from DTOs.
 - **Concurrency**: application `Version bigint` concurrency token (not `rowversion` / `xmin`) for identical semantics.
@@ -38,8 +52,10 @@ None.
 Many schemas/identities increase DBA setup; scripted in migrations/infra.
 
 ## Tests / evidence
-Parity behaviours listed in ADR-0010. Evidence: none yet.
+Parity behaviours listed in ADR-0010. S1-06 evidence: `tests/IAM.Persistence.Tests` (model tests in the main job; `DatabaseParityTests` per engine in the `Database parity` job).
+
+**Known gap:** the application login can modify its module's migration history table (schema-level grant on SQL Server, default privileges on PostgreSQL). Tracked as R-024.
 
 ## Open questions and approvals
-- Approve `EFCore.NamingConventions` or hand-written convention.
+- ~~Approve `EFCore.NamingConventions` or hand-written convention.~~ Hand-written (owner, 2026-11-08).
 - One schema + migration history per module across two engines: DBA review of operational overhead.

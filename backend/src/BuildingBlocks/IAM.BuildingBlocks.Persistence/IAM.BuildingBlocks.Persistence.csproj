@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Provider-neutral persistence conventions (S1-06, ADR-0017). No database driver here: SQL Server and
+    PostgreSQL specifics live in IAM.Persistence.SqlServer / IAM.Persistence.PostgreSql.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="IAM.Persistence.Tests" />
+  </ItemGroup>
+</Project>

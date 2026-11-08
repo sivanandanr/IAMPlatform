@@ -67,6 +67,19 @@ dotnet run --project backend/src/Host/IAM.Bff --launch-profile "IAM.Bff (local)"
 
 Sign in as `dev.requester` (password `IAM_DEV_USER_PASSWORD`). After login, `https://localhost:5001/api/identity/me` returns your subject id via the proxy. Sessions are in memory: restarting the BFF signs everyone out (R-022). Realm changes (for example the `iam-api` audience mapper) need `docker compose up -d --force-recreate keycloak`.
 
+## 3b. Database provider, connection strings and parity tests (S1-06)
+- `IAM.Api` needs `IAM_DB_PROVIDER` (`SqlServer` or `PostgreSql`, exact; no default) and one connection string per module schema, `ConnectionStrings:<schema>` (today only `identity`). It refuses to start otherwise. The local launch profile sets `IAM_DB_PROVIDER=PostgreSql`; put the connection string in user secrets, never in appsettings:
+```bash
+dotnet user-secrets set "ConnectionStrings:identity" "<connection string for the iam_app_identity login>" --project backend/src/Host/IAM.Api
+```
+- Application logins are least-privilege per module and are **not** `sa` / `iam_owner`. Create them with the bootstrap script for your engine (run as administrator, inputs bound as parameters): `infra/db/sqlserver/bootstrap-module.sql` or `infra/db/postgresql/bootstrap-module.sql`. Migrations run as `iam_migrator`; the API never runs migrations. There are no tables to query yet (S1-08 adds the first ones), so a local database for the API is optional until then.
+- Parity tests start their own throwaway containers from the same pinned images (Docker required) and never touch the compose databases:
+```bash
+cd backend && IAM_PARITY_PROVIDER=PostgreSql dotnet test --project tests/IAM.Persistence.Tests --filter-trait "Category=DatabaseParity"
+```
+  For SQL Server set `IAM_PARITY_PROVIDER=SqlServer` and, only if **you** accept the SQL Server Developer licence, `MSSQL_ACCEPT_EULA=Y`. The tests fail rather than accept it for you.
+- New migrations: add one for **each** provider with `dotnet ef migrations add` (see `backend/README.md`), review both, and keep `IdentityMigrationsMatchTheModel`-style tests green. Recovery from a bad migration is restore/PITR plus a compensating forward migration (DL-020); there are no down migrations.
+
 ## 4. Stop / reset
 - Stop, keep data: `docker compose --profile postgres --profile sqlserver stop`
 - Remove containers, keep data volumes: `docker compose --profile postgres --profile sqlserver down`
