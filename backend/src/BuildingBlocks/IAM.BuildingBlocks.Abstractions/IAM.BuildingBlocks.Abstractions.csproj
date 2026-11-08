@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Shared abstractions with no framework or package dependencies. Contracts and Domain may reference only this. -->
+</Project>

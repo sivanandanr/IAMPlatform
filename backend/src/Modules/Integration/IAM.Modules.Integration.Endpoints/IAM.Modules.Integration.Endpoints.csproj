@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\BuildingBlocks\IAM.BuildingBlocks.Abstractions\IAM.BuildingBlocks.Abstractions.csproj" />
+    <ProjectReference Include="..\IAM.Modules.Integration.Application\IAM.Modules.Integration.Application.csproj" />
+    <ProjectReference Include="..\IAM.Modules.Integration.Contracts\IAM.Modules.Integration.Contracts.csproj" />
+    <ProjectReference Include="..\IAM.Modules.Integration.Infrastructure\IAM.Modules.Integration.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>

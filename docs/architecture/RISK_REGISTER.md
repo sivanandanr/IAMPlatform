@@ -1,0 +1,45 @@
+# Risk Register — Phase 0
+
+Status: Working register | Created: 2026-11-07 (S1-01) | Owner: Lead Development Coordinator (named owner TBD)
+
+Likelihood / Impact: L = Low, M = Medium, H = High. Ratings are initial assessments by the planning reviews, to be validated by the named risk owners. "Mitigation" lists planned actions, **not** implemented controls.
+
+| ID | Risk | L | I | Mitigation (planned) | Linked | Owner (role) | Status |
+|---|---|---|---|---|---|---|---|
+| R-001 | Tenancy decided late → schema, key, cache and queue rework | M | H | Decide DL-001 before S1-06; ADR-0014 | DL-001 | Product owner | Closed (DL-001 decided 2026-11-08: deployment per customer). Reopen if shared hosting is proposed |
+| R-002 | UI foundation not in blueprint plan → Phase 0 slips beyond 4 weeks, or P0-018 demo collides with UI gate | H | M | Decide DL-028; plan UI-0 in S1 and UI-1 in S2; API-level demo fallback | DL-028, ADR-0019 | Product owner | Open |
+| R-003 | MassTransit licence/support window blocks or taxes P0-010 | M | M | Decide ADR-0021 early in Sprint 1; keep modules on Messaging abstractions | DL-018 | Lead Solution Architect | Open |
+| R-004 | Repository is **public**; requirements, threat models or security findings could be exposed | M | H | DL-024: make repo private or keep sensitive docs out; review every push; no secrets/PII ever | DL-024 | Repository owner | Open |
+| R-005 | No branch protection or independent review on `main` | H | H | Enable PR-required, independent review, no force push (owner action on GitHub); SEC-S1-15 | SEC-S1-15 | Repository owner | Open |
+| R-006 | No real secret scanner yet (gitleaks not installed; `scripts/check-repo-security.py` is advisory and misses connection strings, JWTs, cloud keys, history) | H | H | Approve gitleaks; run locally and as CI gate over full history (S1-04) | DL-018 | DevOps lead | Open |
+| R-007 | `.claude/settings.json` deny rules are Bash-only and bypassable (PowerShell, `rm -fr`, `git push -f`, `Get-Content .env`, `*.jks`) — false sense of control | H | M | Treat as best-effort only; enforcement via CI, branch protection and platform controls; review rules (no change without approval) | Security review F3 | Security Architect | Open |
+| R-008 | Unverified executable (`docs/requirements/Claude Setup.exe`) in working tree | M | H | Ignored by `.gitignore`; owner to delete or move; verify signature out-of-band; never run from repo | DL-024 | Repository owner | Open |
+| R-009 | Container parity ≠ Azure SQL MI behaviour (JSON type, ledger, RCSI, collation) | M | M | Pin versions (DL-019); staging smoke tests on real MI | ADR-0010 | DBA lead | Open |
+| R-010 | Spec conflicts (precedence, workflow selection order, timeout actions, EESubgroupCode typing) implemented by assumption | M | H | Decision log entries; fail-closed configurable placeholders; no invented values | DL-006, 011, 013, 015 | Functional Lead | Open |
+| R-011 | Policy AST bounds undecided → evaluation DoS or arbitrary limits | M | M | Proposed bounds (DL-008) behind configuration; sign-off before P0-008 | DL-008 | Security Architect | Open |
+| R-012 | Audit hash-chain sealing (spec §12.6) not in Sprint 1 → could be mis-reported as done | M | H | ADR-0018 marks "NOT implemented"; completion reports must state it | ADR-0018 | Security Architect | Open |
+| R-013 | Break-glass absent in Phase 0 skeleton → pressure to add hidden admin bypass | L | H | ADR-0008 forbids any bypass; dedicated ADR before implementation | DEC-004 | Security Architect | Open |
+| R-014 | HR-derived PII in attribute values leaks via logs, audit or errors | M | H | Sensitivity-driven masking; redaction tests (SEC-S1-13); no sensitive data logging | DL-030, ADR-0015 | Security Architect | Open |
+| R-015 | Commercial licence exposure from transitive or chosen packages (MediatR, AutoMapper, FluentAssertions v8, Duende, Redis (local stack now uses Valkey, ADR-0023), k6, AG Grid Enterprise, Docker Desktop) | M | M | DL-018 approvals; SCA licence scan in CI | DL-018 | Procurement / Legal | Open |
+| R-016 | Schema-per-module × two engines increases migration/DBA overhead | M | L | Scripted identities and migrations; DBA review of ADR-0017 | ADR-0017 | DBA lead | Open |
+| R-017 | Blueprint is "Proposed" → ADR-0001..0010 cannot be marked Accepted; downstream work proceeds on unapproved baseline | H | M | Obtain technical and security sign-off of blueprint early in Sprint 1 | Blueprint document control | Lead Solution Architect | Open |
+| R-018 | Mock connectors or skipped tests represented as production-ready | L | H | CLAUDE.md rule 10; labels in code and reports; release gate | FR-REL-103 | QA lead | Open |
+| R-019 | Slow builds: the 72-project skeleton (14 modules × 5 layers) took 7–15 min for a Release build on the dev machine (7m00s, then 14m48s; `dotnet format` 13m) with almost no code, which will slow feedback and CI | H | M | Investigate cause (antivirus scanning of `bin/obj`, analyzer cost, node reuse); measure on CI agent; if still slow, consider fewer assemblies per module (e.g. Contracts / Domain / Module) via an ADR-0001 amendment | ADR-0001, S1-02 | Lead Solution Architect | Open |
+| R-020 | Local Keycloak issuer (`http://localhost:8180/realms/iam-dev`, HTTP, shared test password) accepted by a non-Development deployment | L | H | S1-05: startup check refuses dev issuer outside Development + issuer allowlist; negative test | ADR-0023, ADR-0012 | Security Architect | Mitigated in code (S1-05: `OidcEnvironmentGuard` + tests); deployment config review still required |
+| R-021 | SQL Server local profile and `dev-env-init.ps1` not yet exercised (EULA must be accepted by each developer; script not run in S1-03) | M | L | First developer to accept the EULA runs the sqlserver profile and the PowerShell script and records evidence; CI compose check covers config only | ADR-0023 | DevOps lead | Open |
+| R-022 | BFF sessions are in-memory (Sprint 1 owner decision): lost on restart, single instance only; scaling out silently breaks logins and revocation | M | M | Decide a durable/shared session store (isolated Valkey or database) before any multi-instance or shared deployment; record in ADR-0012 | ADR-0012 | Security Architect, DevOps lead | Open |
+| R-023 | IAM.Api authorizes "authenticated" only; no permission model yet (DL-016), so a new endpoint could expose data to any signed-in user | M | H | No sensitive endpoint before per-action permissions; code review and an architecture rule when the permission model lands | DL-016, ADR-0008 | Security Architect | Open |
+| R-024 | Module app logins can modify their own migration history table (schema-wide DML grant); since S1-08 a forged history row could make a future security-tightening migration (catalog constraints/triggers) be skipped | M | H | Deny DML on the history table to app logins (or move history to a migrator-only schema) before production; parity test for it | ADR-0017 | Database Architect | Open |
+| R-026 | Audit rows can still be changed by a database administrator, superuser or the audit schema owner (disable/drop the trigger; on SQL Server the owner can also TRUNCATE); the row hash is unkeyed, so it can be recomputed; no keyed hash chain or external copy yet | M | H | Hash-chain sealer (spec §12.6) and SIEM/WORM export before production; restrict and monitor administrator and migrator use; review every audit-schema migration | ADR-0018 | Security Architect, DBA lead | Open |
+| R-027 | Any module runtime login can bypass IAuditWriter with its own SQL INSERT and forge actor, timestamps or unmasked values; EffectiveActorId is unchecked; OccurredAtUtc can be backdated; secret detection is pattern-based | M | H | Database-side insert procedure as the only insert path; keyed sealer; delegation model with verified on-behalf-of; lower bound or flag for late events; code review of every audit call | ADR-0018 | Security Architect | Open |
+| R-025 | Per-customer isolation (DL-001) relies on deployment separation, which nothing checks yet | M | H | Deployment automation gives each customer its own database, credentials and network; add a deployment-time check before the first customer deployment | ADR-0014 | DevOps lead, Security Architect | Open |
+
+## Change history
+| Date | Change | By |
+|---|---|---|
+| 2026-11-08 | S1-08: R-024 raised (likelihood M, impact H) after independent review | Claude Code, pending human review |
+| 2026-11-08 | S1-07: R-026, R-027 added after independent review | Claude Code, pending human review |
+| 2026-11-08 | S1-06: R-001 closed; R-024, R-025 added | Claude Code, pending human review |
+| 2026-11-08 | S1-05: R-020 mitigated in code; R-022, R-023 added | Claude Code, pending human review |
+| 2026-11-08 | S1-03: R-020, R-021 added; R-015 notes Valkey | Claude Code, pending human review |
+| 2026-11-07 | Initial register from Sprint 1 planning reviews | Claude Code (S1-01), pending human review |

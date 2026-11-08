@@ -34,9 +34,13 @@
 *.ldf
 *.ndf
 
-# --- Executables / installers (never belong in the repo) ---
+# --- Executables / installers / archives (never belong in the repo) ---
 *.exe
 *.msi
+*.zip
+*.7z
+*.tar.gz
+*.nupkg
 
 # --- .NET build output ---
 **/bin/

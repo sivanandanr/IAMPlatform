@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Shouldly" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Referencing the host brings every module assembly into the test output for assembly-level checks. -->
+    <ProjectReference Include="..\..\src\Host\IAM.Api\IAM.Api.csproj" />
+  </ItemGroup>
+</Project>

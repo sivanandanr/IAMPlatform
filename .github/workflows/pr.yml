@@ -1,0 +1,157 @@
+# S1-04 PR pipeline (Blueprint §11 "PR" stage; SEC-S1-15; ADR-0024).
+# Every third-party action is pinned to a full commit SHA; the gitleaks binary is pinned by SHA-256.
+name: PR checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: read-only token for every job unless a job widens it.
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+
+jobs:
+  secret-scan:
+    name: Secret scan (gitleaks, full history)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --max-time 120 -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          "$RUNNER_TEMP/gitleaks/gitleaks" version
+
+      - name: Scan full git history
+        # --redact keeps any finding's secret value out of the job log.
+        run: |
+          "$RUNNER_TEMP/gitleaks/gitleaks" git . --redact --verbose --no-banner --exit-code 1
+
+  build-test:
+    name: Build, test, format, vulnerable packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET (version from global.json)
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore (locked mode)
+        working-directory: backend
+        run: dotnet restore IAM.slnx -p:ContinuousIntegrationBuild=true
+
+      - name: Build (warnings as errors, analyzers)
+        working-directory: backend
+        run: dotnet build IAM.slnx -c Release --no-restore -p:ContinuousIntegrationBuild=true
+
+      - name: Test (unit + architecture)
+        working-directory: backend
+        # Database parity tests need a real engine and run in the db-parity job below.
+        run: dotnet test --solution IAM.slnx -c Release --no-build --filter-not-trait "Category=DatabaseParity"
+
+      - name: Format check
+        working-directory: backend
+        run: dotnet format IAM.slnx --verify-no-changes --no-restore --verbosity minimal
+
+      - name: Vulnerable package gate (direct + transitive)
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          dotnet list IAM.slnx package --vulnerable --include-transitive | tee "$RUNNER_TEMP/vulnerable.txt"
+          if grep -q "has the following vulnerable packages" "$RUNNER_TEMP/vulnerable.txt"; then
+            echo "::error::Vulnerable NuGet packages found (see log above)."
+            exit 1
+          fi
+
+  compose-config:
+    name: Local environment config (compose)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate compose file with generated throwaway secrets
+        # Config only: no images are pulled and no containers run (ADR-0023). --quiet keeps values out of the log.
+        run: |
+          set -euo pipefail
+          bash scripts/dev-env-init.sh
+          docker compose --profile postgres --profile sqlserver config --quiet
+
+      - name: Remove throwaway .env
+        if: always()
+        run: rm -f .env
+
+  db-parity:
+    # S1-06 (ADR-0010, ADR-0017): the same parity tests against each engine, from the pinned images in compose.yaml,
+    # started by Testcontainers. Both legs are required checks; neither may be skipped or allowed to fail.
+    name: Database parity (${{ matrix.provider }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [SqlServer, PostgreSql]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET (version from global.json)
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore (locked mode)
+        working-directory: backend
+        run: dotnet restore tests/IAM.Persistence.Tests/IAM.Persistence.Tests.csproj -p:ContinuousIntegrationBuild=true
+
+      - name: Build
+        working-directory: backend
+        run: dotnet build tests/IAM.Persistence.Tests/IAM.Persistence.Tests.csproj -c Release --no-restore -p:ContinuousIntegrationBuild=true
+
+      - name: Parity tests
+        working-directory: backend
+        env:
+          IAM_PARITY_PROVIDER: ${{ matrix.provider }}
+          # SQL Server Developer licence: accepted by the repository owner through the repository variable
+          # MSSQL_ACCEPT_EULA=Y (ADR-0023). Unset, the SqlServer leg fails rather than accepting it silently.
+          MSSQL_ACCEPT_EULA: ${{ vars.MSSQL_ACCEPT_EULA }}
+        # A run that selects zero tests fails (Microsoft.Testing.Platform exit code 8).
+        run: dotnet test --project tests/IAM.Persistence.Tests/IAM.Persistence.Tests.csproj -c Release --no-build --filter-trait "Category=DatabaseParity"
