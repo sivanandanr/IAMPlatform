@@ -1,0 +1,48 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "ES2022",
+    "module": "preserve",
+    "paths": {
+      "@iam/ui/grid": [
+        "./projects/iam-ui/grid/src/public-api.ts"
+      ],
+      "@iam/ui": [
+        "./projects/iam-ui/src/public-api.ts"
+      ]
+    }
+  },
+  "angularCompilerOptions": {
+    "enableI18nLegacyMessageIdFormat": false,
+    "strictInjectionParameters": true,
+    "strictInputAccessModifiers": true,
+    "strictTemplates": true,
+    "extendedDiagnostics": {
+      "defaultCategory": "error"
+    }
+  },
+  "files": [],
+  "references": [
+    {
+      "path": "./projects/iam-ui/tsconfig.lib.json"
+    },
+    {
+      "path": "./projects/iam-ui/tsconfig.spec.json"
+    },
+    {
+      "path": "./projects/iam-portal/tsconfig.app.json"
+    },
+    {
+      "path": "./projects/iam-portal/tsconfig.spec.json"
+    }
+  ]
+}

@@ -12,6 +12,9 @@ Designed for the IAM Functional Specification v3.2 and Phase 0 blueprint: ASP.NE
 ## Local development environment
 Docker Compose dependencies (Keycloak, Valkey, RabbitMQ, OTel Collector + Aspire dashboard, PostgreSQL 17 or SQL Server 2022 profiles): see [docs/runbooks/LOCAL_ENVIRONMENT.md](docs/runbooks/LOCAL_ENVIRONMENT.md). Local only; secrets are generated into a gitignored `.env`.
 
+## Frontend
+Angular 22 workspace with the first-party UI library `@iam/ui` and the AG Grid wrapper `@iam/ui/grid` (S1-09, ADR-0019): see [frontend/README.md](frontend/README.md).
+
 ## Security boundaries
 - Agents are advisory and code-generating assistants, **not** a substitute for peer review, penetration testing, IAM security sign-off or production change approval.
 - Never send real credentials, tokens, personal data, customer identity exports, production logs or restricted diagrams to an AI assistant unless explicitly approved by your organization.

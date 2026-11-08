@@ -7,7 +7,7 @@
 - Angular framework packages, Angular CDK accessibility/overlay primitives and non-UI infrastructure libraries may be proposed only through dependency review; Angular CDK must not be used to introduce prebuilt UI controls. Avoid dependency bloat.
 
 ## Component library location
-`frontend/src/app/shared/ui/` with public exports through `index.ts`; feature modules import only the public surface. Maintain design tokens, component API contracts, examples and tests. Prefer standalone components, Angular Signals, OnPush, typed Reactive Forms, strict TypeScript, Tailwind utility classes plus scoped CSS. Use semantic HTML and native browser controls when they already meet requirements.
+Angular CLI workspace in `frontend/` (ADR-0019, DL-017): the library is `projects/iam-ui` (package `@iam/ui`, public API `src/public-api.ts`; folders `lib/controls/`, `lib/forms/`, `lib/overlays/`, `lib/feedback/`, `lib/tokens/`, `styles/`, `testing/`), the AG Grid wrapper is the secondary entry point `projects/iam-ui/grid` (`@iam/ui/grid`), and apps live beside it (`projects/iam-portal`). Feature code imports only `@iam/ui` and `@iam/ui/grid`; ESLint refuses deep or relative imports into the library and any AG Grid import outside `@iam/ui/grid`. Maintain design tokens, component API contracts and tests in the library. (Updated in S1-09; this replaces the earlier `frontend/src/app/shared/ui/` layout.)
 
 ## Required reusable components — initial priority
 1. `IamTextInputComponent`: label, placeholder, hint, required, readonly, disabled, maxLength, inputMode, autocomplete, error state, prefix/suffix, accessible label association.

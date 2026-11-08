@@ -1,0 +1,22 @@
+/* Portal styles (S1-09). Tailwind utilities map onto the @iam/ui design tokens, which are the source of truth. */
+@import 'tailwindcss';
+
+@theme inline {
+  --color-iam-bg: var(--iam-color-bg);
+  --color-iam-surface: var(--iam-color-surface);
+  --color-iam-raised: var(--iam-color-surface-raised);
+  --color-iam-text: var(--iam-color-text);
+  --color-iam-muted: var(--iam-color-text-muted);
+  --color-iam-border: var(--iam-color-border-subtle);
+  --color-iam-primary: var(--iam-color-primary);
+  --font-iam: var(--iam-font-family);
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--iam-color-bg);
+  color: var(--iam-color-text);
+  font-family: var(--iam-font-family);
+  line-height: var(--iam-line-height);
+}
