@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- S1-05 browser edge (ADR-0012/0013): OIDC login, server-side session, antiforgery, YARP proxy to IAM.Api.
+       Holds no business logic and references no modules. -->
+  <PropertyGroup>
+    <!-- Local development only: Oidc:ClientSecret comes from `dotnet user-secrets`, never from appsettings. -->
+    <UserSecretsId>iam-platform-bff-local</UserSecretsId>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
+    <PackageReference Include="Yarp.ReverseProxy" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="IAM.Bff.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\IAM.BuildingBlocks.Security\IAM.BuildingBlocks.Security.csproj" />
+  </ItemGroup>
+</Project>

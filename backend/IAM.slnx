@@ -8,9 +8,11 @@
   </Folder>
   <Folder Name="/src/BuildingBlocks/">
     <Project Path="src/BuildingBlocks/IAM.BuildingBlocks.Abstractions/IAM.BuildingBlocks.Abstractions.csproj" />
+    <Project Path="src/BuildingBlocks/IAM.BuildingBlocks.Security/IAM.BuildingBlocks.Security.csproj" />
   </Folder>
   <Folder Name="/src/Host/">
     <Project Path="src/Host/IAM.Api/IAM.Api.csproj" />
+    <Project Path="src/Host/IAM.Bff/IAM.Bff.csproj" />
   </Folder>
   <Folder Name="/src/Modules/Identity/">
     <Project Path="src/Modules/Identity/IAM.Modules.Identity.Contracts/IAM.Modules.Identity.Contracts.csproj" />
@@ -111,6 +113,8 @@
     <Project Path="src/Modules/Lifecycle/IAM.Modules.Lifecycle.Endpoints/IAM.Modules.Lifecycle.Endpoints.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/IAM.Api.Tests/IAM.Api.Tests.csproj" />
     <Project Path="tests/IAM.Architecture.Tests/IAM.Architecture.Tests.csproj" />
+    <Project Path="tests/IAM.Bff.Tests/IAM.Bff.Tests.csproj" />
   </Folder>
 </Solution>

@@ -22,8 +22,8 @@ Template: [ADR_TEMPLATE.md](ADR_TEMPLATE.md). Open questions are tracked in [../
 | ADR | Title | Status | Blocks |
 |---|---|---|---|
 | [0011](ADR-0011-module-list-and-naming.md) | Module list and naming | Accepted (owner) | S1-02 |
-| [0012](ADR-0012-browser-session-bff.md) | Browser session model — BFF | Proposed | S1-05 |
-| [0013](ADR-0013-yarp-gateway-placement.md) | YARP gateway placement | Proposed | S1-05 |
+| [0012](ADR-0012-browser-session-bff.md) | Browser session model — BFF | Accepted (owner) | S1-05 |
+| [0013](ADR-0013-yarp-gateway-placement.md) | YARP gateway placement | Accepted (owner) | S1-05 |
 | [0014](ADR-0014-tenancy-model.md) | Tenancy model | Proposed (business decision) | S1-06 |
 | [0015](ADR-0015-attribute-definition-ownership.md) | Ownership of the attribute catalog | Proposed | S1-08 |
 | [0016](ADR-0016-uuid-strategy.md) | Identifier (UUID) strategy | Proposed | S1-06 |
@@ -40,6 +40,8 @@ Template: [ADR_TEMPLATE.md](ADR_TEMPLATE.md). Open questions are tracked in [../
 | ADR | Approver (name, role) | Date | Decision |
 |---|---|---|---|
 | 0011 | sivanandanr (repository owner) | 2026-11-07 | Accepted: CLAUDE.md 13 modules + Lifecycle. Independent architect review pending |
+| 0012 | sivanandanr (repository owner) | 2026-11-08 | Accepted: ASP.NET Core BFF (OIDC + cookie + antiforgery), full login in Sprint 1, in-memory sessions. Security Architect review pending |
+| 0013 | sivanandanr (repository owner) | 2026-11-08 | Accepted: separate IAM.Bff host with YARP; API bearer-only. Network owner/Security review pending |
 | 0020 | sivanandanr (repository owner) | 2026-11-07 | Accepted: hand-written dispatch, manual mapping, FluentValidation |
 | 0022 | sivanandanr (repository owner) | 2026-11-07 | Partly accepted: xUnit v3 + Shouldly, reflection-based architecture tests |
 | 0023 | sivanandanr (repository owner) | 2026-11-08 | Accepted: Keycloak, Valkey, PostgreSQL 17 + SQL Server 2022 Developer, Collector + Aspire dashboard (local only). Security/DevOps review and licence confirmation pending |

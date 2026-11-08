@@ -38,6 +38,20 @@
       "webOrigins": [],
       "defaultClientScopes": ["basic", "profile", "email", "acr"],
       "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "audience-iam-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "iam-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "${IAM_BFF_BASE_URL}/signout-callback-oidc"

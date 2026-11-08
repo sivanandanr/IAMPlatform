@@ -8,7 +8,13 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
+  <ItemGroup Label="Authentication and gateway (S1-05, ADR-0012/0013, approved by owner 2026-11-08)">
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.14" /> <!-- MIT -->
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.14" />     <!-- MIT -->
+    <PackageVersion Include="Yarp.ReverseProxy" Version="2.3.0" />                                   <!-- MIT -->
+  </ItemGroup>
   <ItemGroup Label="Testing (ADR-0022, approved 2026-11-07)">
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.14" />  <!-- MIT; approved 2026-11-08 (S1-05) -->
     <!-- Runs on Microsoft.Testing.Platform (global.json "test.runner"); no VSTest adapter packages needed. -->
     <PackageVersion Include="xunit.v3" Version="4.0.2" />                        <!-- Apache-2.0 -->
     <PackageVersion Include="Shouldly" Version="4.3.0" />                        <!-- BSD-3-Clause -->

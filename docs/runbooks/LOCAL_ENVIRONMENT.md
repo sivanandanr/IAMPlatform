@@ -45,6 +45,28 @@ SA and `iam_owner` are bootstrap superusers. Application code must use least-pri
 
 Test users have no roles or entitlements in the IdP; authorization is decided by the IAM platform. The realm is re-imported only when Keycloak starts with an empty store (the dev store lives in the container — recreate the container to pick up realm changes).
 
+## 3a. Run the API and BFF against local Keycloak (S1-05)
+One-time per machine:
+```bash
+dotnet dev-certs https --trust
+```
+```bash
+dotnet user-secrets set "Oidc:ClientSecret" "<IAM_BFF_CLIENT_SECRET from your .env>" --project backend/src/Host/IAM.Bff
+```
+Then, in two terminals:
+```bash
+dotnet run --project backend/src/Host/IAM.Api --launch-profile "IAM.Api (local)"
+```
+```bash
+dotnet run --project backend/src/Host/IAM.Bff --launch-profile "IAM.Bff (local)"
+```
+| Host | Address | Notes |
+|---|---|---|
+| IAM.Bff | `https://localhost:5001` | Browser entry point. `GET /bff/login?returnUrl=/`, `GET /bff/user`, `POST /bff/logout` (antiforgery), `/api/*` proxied |
+| IAM.Api | `http://127.0.0.1:5100` | Bearer tokens only; browsers never call it directly |
+
+Sign in as `dev.requester` (password `IAM_DEV_USER_PASSWORD`). After login, `https://localhost:5001/api/identity/me` returns your subject id via the proxy. Sessions are in memory: restarting the BFF signs everyone out (R-022). Realm changes (for example the `iam-api` audience mapper) need `docker compose up -d --force-recreate keycloak`.
+
 ## 4. Stop / reset
 - Stop, keep data: `docker compose --profile postgres --profile sqlserver stop`
 - Remove containers, keep data volumes: `docker compose --profile postgres --profile sqlserver down`

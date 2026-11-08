@@ -1,3 +1,6 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -21,6 +24,23 @@ public static class IdentityModule
     public static IEndpointRouteBuilder MapIdentityEndpoints(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
+
+        var group = endpoints.MapGroup(RoutePrefix).RequireAuthorization();
+
+        // S1-05 secured sample endpoint: returns only the caller's subject identifier (no profile/PII).
+        group.MapGet("/me", GetCurrentSubject).WithName("Identity.GetCurrentSubject");
+
         return endpoints;
     }
+
+    private static IResult GetCurrentSubject(ClaimsPrincipal user)
+    {
+        var subject = user.FindFirstValue("sub");
+        return string.IsNullOrEmpty(subject)
+            ? TypedResults.Forbid()
+            : TypedResults.Ok(new CurrentSubjectResponse(subject));
+    }
 }
+
+/// <summary>Response of <c>GET /api/identity/me</c>.</summary>
+public sealed record CurrentSubjectResponse(string Subject);

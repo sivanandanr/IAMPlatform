@@ -25,11 +25,14 @@ Likelihood / Impact: L = Low, M = Medium, H = High. Ratings are initial assessme
 | R-017 | Blueprint is "Proposed" → ADR-0001..0010 cannot be marked Accepted; downstream work proceeds on unapproved baseline | H | M | Obtain technical and security sign-off of blueprint early in Sprint 1 | Blueprint document control | Lead Solution Architect | Open |
 | R-018 | Mock connectors or skipped tests represented as production-ready | L | H | CLAUDE.md rule 10; labels in code and reports; release gate | FR-REL-103 | QA lead | Open |
 | R-019 | Slow builds: the 72-project skeleton (14 modules × 5 layers) took 7–15 min for a Release build on the dev machine (7m00s, then 14m48s; `dotnet format` 13m) with almost no code, which will slow feedback and CI | H | M | Investigate cause (antivirus scanning of `bin/obj`, analyzer cost, node reuse); measure on CI agent; if still slow, consider fewer assemblies per module (e.g. Contracts / Domain / Module) via an ADR-0001 amendment | ADR-0001, S1-02 | Lead Solution Architect | Open |
-| R-020 | Local Keycloak issuer (`http://localhost:8180/realms/iam-dev`, HTTP, shared test password) accepted by a non-Development deployment | L | H | S1-05: startup check refuses dev issuer outside Development + issuer allowlist; negative test | ADR-0023, ADR-0012 | Security Architect | Open |
+| R-020 | Local Keycloak issuer (`http://localhost:8180/realms/iam-dev`, HTTP, shared test password) accepted by a non-Development deployment | L | H | S1-05: startup check refuses dev issuer outside Development + issuer allowlist; negative test | ADR-0023, ADR-0012 | Security Architect | Mitigated in code (S1-05: `OidcEnvironmentGuard` + tests); deployment config review still required |
 | R-021 | SQL Server local profile and `dev-env-init.ps1` not yet exercised (EULA must be accepted by each developer; script not run in S1-03) | M | L | First developer to accept the EULA runs the sqlserver profile and the PowerShell script and records evidence; CI compose check covers config only | ADR-0023 | DevOps lead | Open |
+| R-022 | BFF sessions are in-memory (Sprint 1 owner decision): lost on restart, single instance only; scaling out silently breaks logins and revocation | M | M | Decide a durable/shared session store (isolated Valkey or database) before any multi-instance or shared deployment; record in ADR-0012 | ADR-0012 | Security Architect, DevOps lead | Open |
+| R-023 | IAM.Api authorizes "authenticated" only; no permission model yet (DL-016), so a new endpoint could expose data to any signed-in user | M | H | No sensitive endpoint before per-action permissions; code review and an architecture rule when the permission model lands | DL-016, ADR-0008 | Security Architect | Open |
 
 ## Change history
 | Date | Change | By |
 |---|---|---|
+| 2026-11-08 | S1-05: R-020 mitigated in code; R-022, R-023 added | Claude Code, pending human review |
 | 2026-11-08 | S1-03: R-020, R-021 added; R-015 notes Valkey | Claude Code, pending human review |
 | 2026-11-07 | Initial register from Sprint 1 planning reviews | Claude Code (S1-01), pending human review |
