@@ -38,6 +38,6 @@ public abstract partial class IamDbContext(DbContextOptions options) : DbContext
         }
     }
 
-    [GeneratedRegex("^[a-z][a-z0-9_]{0,62}$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    [GeneratedRegex(@"^[a-z][a-z0-9_]{0,62}\z", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
     private static partial Regex SchemaPattern();
 }

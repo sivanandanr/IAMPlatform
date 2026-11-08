@@ -31,13 +31,17 @@ public sealed class DatabaseParityTests(ParityDatabase db)
     }
 
     [Fact]
-    public async Task IdentitySchemaHoldsOnlyItsMigrationHistory()
+    public async Task IdentitySchemaHoldsExactlyTheCatalogTables()
     {
-        var tables = await StringListAsync(
+        var tables = (await StringListAsync(
             db.AdminConnectionString,
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'identity' ORDER BY table_name");
-        var expected = db.Provider == DatabaseProvider.SqlServer ? "__EFMigrationsHistory" : "__ef_migrations_history";
-        tables.ShouldBe([expected]);
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'identity'"))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        string[] expected = db.Provider == DatabaseProvider.SqlServer
+            ? ["AttributeDefinition", "AttributeDefinitionVersion", "AttributeDefinitionVersionOperator", "__EFMigrationsHistory"]
+            : ["__ef_migrations_history", "attribute_definition", "attribute_definition_version", "attribute_definition_version_operator"];
+        tables.ShouldBe(expected.Order(StringComparer.Ordinal).ToList());
     }
 
     [Fact]

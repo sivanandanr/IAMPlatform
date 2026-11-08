@@ -34,10 +34,15 @@ internal static class TestSupport
         return new ProbeDbContext(options.Options);
     }
 
-    public static IdentityDbContext CreateIdentity(DatabaseProvider provider, string connectionString)
+    public static IdentityDbContext CreateIdentity(DatabaseProvider provider, string connectionString, AuditingSaveChangesInterceptor? interceptor = null)
     {
         var options = new DbContextOptionsBuilder<IdentityDbContext>();
         ProviderFor(provider).Configure(options, connectionString, IdentityDbContext.SchemaName);
+        if (interceptor is not null)
+        {
+            options.AddInterceptors(interceptor);
+        }
+
         return new IdentityDbContext(options.Options);
     }
 

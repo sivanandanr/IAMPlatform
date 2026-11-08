@@ -24,4 +24,17 @@ public sealed class PostgreSqlDatabaseProvider : IIamDatabaseProvider
         });
         options.UseIamDefaults();
     }
+
+    public bool IsUniqueViolation(Exception exception)
+    {
+        for (var e = exception; e is not null; e = e.InnerException)
+        {
+            if (e is Npgsql.PostgresException { SqlState: Npgsql.PostgresErrorCodes.UniqueViolation })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

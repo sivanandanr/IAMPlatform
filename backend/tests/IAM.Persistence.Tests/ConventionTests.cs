@@ -47,6 +47,7 @@ public sealed class ConventionTests
     [InlineData("1identity")]
     [InlineData("identity;drop")]
     [InlineData("iden tity")]
+    [InlineData("identity\n")]
     public void SchemaNamesAreAllowlisted(string? schema) =>
         Should.Throw<ArgumentException>(() => IamDbContext.ValidateSchemaName(schema!));
 

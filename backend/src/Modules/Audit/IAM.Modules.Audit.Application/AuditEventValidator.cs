@@ -348,16 +348,16 @@ public static partial class AuditEventValidator
         new(value.UtcTicks - (value.UtcTicks % 10), TimeSpan.Zero);
 
     /// <summary>Lower-case dotted code with at least two segments: <c>identity.session.started</c>.</summary>
-    [GeneratedRegex(@"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    [GeneratedRegex(@"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+\z", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
     private static partial Regex DottedCodePattern();
 
-    [GeneratedRegex(@"^[A-Za-z0-9._:\-]+$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    [GeneratedRegex(@"^[A-Za-z0-9._:\-]+\z", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
     private static partial Regex CorrelationPattern();
 
-    [GeneratedRegex("^[0-9a-f]{64}$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    [GeneratedRegex(@"^[0-9a-f]{64}\z", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
     private static partial Regex HashPattern();
 
-    [GeneratedRegex(@"^[A-Za-z][A-Za-z0-9_.]{0,63}$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    [GeneratedRegex(@"^[A-Za-z][A-Za-z0-9_.]{0,63}\z", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
     private static partial Regex PayloadNamePattern();
 
     [GeneratedRegex(@"eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]

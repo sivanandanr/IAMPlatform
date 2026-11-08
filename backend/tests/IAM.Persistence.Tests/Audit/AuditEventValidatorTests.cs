@@ -242,4 +242,18 @@ public sealed class AuditEventValidatorTests
         row.PayloadCanonical.ShouldBe("{\"name\":\"Zo\\u00EB \\u6F22\\u5B57\"}");
         Should.Throw<AuditRecordRejectedException>(() => Validate(ValidRecord([Plain("name", "\ud800x")])));
     }
+
+    /// <summary>.NET "$" also matches before a final line break; every pattern now ends with "\z" (S1-08 review).</summary>
+    [Fact]
+    public void TrailingLineBreaksAreRejectedInEveryCode()
+    {
+        Should.Throw<AuditRecordRejectedException>(() => Validate(ValidRecord() with { Action = "parity.item.created\n" })).Field.ShouldBe("Action");
+        Should.Throw<AuditRecordRejectedException>(() => Validate(ValidRecord() with { TargetType = "parity.item\n" })).Field.ShouldBe("TargetType");
+        Should.Throw<AuditRecordRejectedException>(() => Validate(ValidRecord() with { CorrelationId = "corr-123\n" })).Field.ShouldBe("CorrelationId");
+        Should.Throw<AuditRecordRejectedException>(() => Validate(ValidRecord() with { CausationId = "cause-1\r\n" })).Field.ShouldBe("CausationId");
+        Should.Throw<AuditRecordRejectedException>(() => Validate(ValidRecord() with { PolicyVersionHash = new string('a', 64) + "\n" }))
+            .Field.ShouldBe("PolicyVersionHash");
+        Should.Throw<AuditRecordRejectedException>(() => Validate(ValidRecord([Plain("company\n", "0100")])));
+        AuditEventValidator.IsValidActionCode("parity.item.created\n").ShouldBeFalse();
+    }
 }

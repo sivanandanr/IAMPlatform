@@ -67,9 +67,11 @@ public static class IamModelConventions
     {
         ArgumentNullException.ThrowIfNull(property);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxLength, 1);
-        if (property.Metadata.ClrType != typeof(string))
+        // A string, or a value (such as an enum) already converted to a string with HasConversion<string>().
+        var storeType = property.Metadata.GetProviderClrType() ?? property.Metadata.ClrType;
+        if (storeType != typeof(string))
         {
-            throw new InvalidOperationException($"Only string properties can be codes; {property.Metadata.Name} is {property.Metadata.ClrType.Name}.");
+            throw new InvalidOperationException($"Only string properties can be codes; {property.Metadata.Name} is stored as {storeType.Name}.");
         }
 
         return property.HasMaxLength(maxLength).HasAnnotation(CodeAnnotation, true);
@@ -130,7 +132,18 @@ public static class IamModelConventions
             var table = entityType.GetTableName();
             if (table is not null)
             {
+                // Declared triggers remember the table they were declared on, so move them with the rename.
+                var triggers = entityType.GetDeclaredTriggers().Select(t => t.ModelName).ToList();
+                foreach (var trigger in triggers)
+                {
+                    entityType.RemoveTrigger(trigger);
+                }
+
                 entityType.SetTableName(ToSnakeCase(table));
+                foreach (var trigger in triggers)
+                {
+                    entityType.AddTrigger(ToSnakeCase(trigger));
+                }
             }
 
             foreach (var property in entityType.GetProperties())

@@ -517,6 +517,7 @@
         "dependencies": {
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
           "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.Modules.Audit.Contracts": "[1.0.0, )",
           "IAM.Modules.Identity.Application": "[1.0.0, )",
           "IAM.Modules.Identity.Contracts": "[1.0.0, )",
           "IAM.Modules.Identity.Domain": "[1.0.0, )"

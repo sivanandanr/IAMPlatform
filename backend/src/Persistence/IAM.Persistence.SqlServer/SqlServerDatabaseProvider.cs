@@ -24,4 +24,17 @@ public sealed class SqlServerDatabaseProvider : IIamDatabaseProvider
         });
         options.UseIamDefaults();
     }
+
+    public bool IsUniqueViolation(Exception exception)
+    {
+        for (var e = exception; e is not null; e = e.InnerException)
+        {
+            if (e is Microsoft.Data.SqlClient.SqlException { Number: 2601 or 2627 })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

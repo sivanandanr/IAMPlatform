@@ -25,7 +25,7 @@ Template: [ADR_TEMPLATE.md](ADR_TEMPLATE.md). Open questions are tracked in [../
 | [0012](ADR-0012-browser-session-bff.md) | Browser session model — BFF | Accepted (owner) | S1-05 |
 | [0013](ADR-0013-yarp-gateway-placement.md) | YARP gateway placement | Accepted (owner) | S1-05 |
 | [0014](ADR-0014-tenancy-model.md) | Tenancy model | Accepted (owner) | S1-06 |
-| [0015](ADR-0015-attribute-definition-ownership.md) | Ownership of the attribute catalog | Proposed | S1-08 |
+| [0015](ADR-0015-attribute-definition-ownership.md) | Ownership of the attribute catalog | Accepted (owner); review pending | S1-08 |
 | [0016](ADR-0016-uuid-strategy.md) | Identifier (UUID) strategy | Accepted (owner) | S1-06 |
 | [0017](ADR-0017-persistence-layout-and-conventions.md) | Persistence layout and dual-provider conventions | Accepted (owner) | S1-06 |
 | [0018](ADR-0018-audit-atomicity-and-append-only-store.md) | Audit atomicity and append-only store | Accepted (owner); security review pending | S1-07 |

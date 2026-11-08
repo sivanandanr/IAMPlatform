@@ -11,6 +11,13 @@ public interface IIamDatabaseProvider
 
     /// <summary>Applies the provider, migrations assembly and per-schema migrations history table.</summary>
     void Configure(DbContextOptionsBuilder options, string connectionString, string schema);
+
+    /// <summary>
+    /// True if <paramref name="exception"/> (or an inner exception) is a unique-key or primary-key violation
+    /// (SQL Server 2601/2627, PostgreSQL 23505). Lets modules tell "already exists" from other failures without
+    /// referencing a database driver.
+    /// </summary>
+    bool IsUniqueViolation(Exception exception);
 }
 
 /// <summary>Supplies the connection string for a module schema. Each module connects with its own least-privilege login.</summary>
