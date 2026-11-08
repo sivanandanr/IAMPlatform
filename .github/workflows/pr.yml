@@ -95,5 +95,26 @@ jobs:
             exit 1
           fi
 
+  compose-config:
+    name: Local environment config (compose)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate compose file with generated throwaway secrets
+        # Config only: no images are pulled and no containers run (ADR-0023). --quiet keeps values out of the log.
+        run: |
+          set -euo pipefail
+          bash scripts/dev-env-init.sh
+          docker compose --profile postgres --profile sqlserver config --quiet
+
+      - name: Remove throwaway .env
+        if: always()
+        run: rm -f .env
+
   # Database parity matrix (SQL Server + PostgreSQL, ADR-0010) is added with S1-06,
   # when persistence exists. It is intentionally absent here, not skipped.

@@ -9,6 +9,9 @@ Designed for the IAM Functional Specification v3.2 and Phase 0 blueprint: ASP.NE
 4. Run `claude` in the repository root. Ask Claude to use `functional-lead` and `solution-architect` to plan Phase 0 Sprint 1. Do not grant blanket unattended execution permissions.
 5. For reusable prompts, use `/phase0-plan`, `/security-review`, `/threat-model`, `/db-parity`, `/release-gate` (command availability depends on Claude Code version).
 
+## Local development environment
+Docker Compose dependencies (Keycloak, Valkey, RabbitMQ, OTel Collector + Aspire dashboard, PostgreSQL 17 or SQL Server 2022 profiles): see [docs/runbooks/LOCAL_ENVIRONMENT.md](docs/runbooks/LOCAL_ENVIRONMENT.md). Local only; secrets are generated into a gitignored `.env`.
+
 ## Security boundaries
 - Agents are advisory and code-generating assistants, **not** a substitute for peer review, penetration testing, IAM security sign-off or production change approval.
 - Never send real credentials, tokens, personal data, customer identity exports, production logs or restricted diagrams to an AI assistant unless explicitly approved by your organization.

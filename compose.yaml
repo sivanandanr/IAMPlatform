@@ -1,0 +1,202 @@
+# S1-03 / P0-014 local development dependencies (Blueprint §12; ADR-0023; DL-019 local versions).
+# LOCAL DEVELOPMENT ONLY. Not a deployment artefact; never point a shared or production environment at it.
+#
+#   scripts/dev-env-init.sh   (or scripts\dev-env-init.ps1)   -> creates .env with generated secrets (gitignored)
+#   docker compose up -d                                        -> Keycloak, Valkey, RabbitMQ, OTel Collector, Aspire dashboard
+#   docker compose --profile postgres up -d                     -> + PostgreSQL 17
+#   docker compose --profile sqlserver up -d                    -> + SQL Server 2022 Developer (set MSSQL_ACCEPT_EULA=Y yourself)
+#
+# Every image is pinned to a version tag AND its multi-arch index digest (resolved 2026-11-08).
+# Every published port binds to 127.0.0.1 only. Secrets come only from .env; compose fails if one is missing.
+# Do not run `docker compose down -v` (deletes database volumes) without the owner's approval (CLAUDE.md).
+
+name: iam-dev
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  # ---------- Relational databases: one profile each (one provider per deployment, ADR-0010) ----------
+  postgres:
+    <<: *hardening
+    profiles: [postgres]
+    image: postgres:17.11-alpine3.24@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac
+    environment:
+      POSTGRES_DB: iam
+      POSTGRES_USER: iam_owner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/dev-env-init first}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U iam_owner -d iam"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    networks: [iam-dev]
+
+  sqlserver:
+    <<: *hardening
+    profiles: [sqlserver]
+    # Developer edition: free, NON-PRODUCTION licence. amd64 image (emulated on ARM hosts).
+    image: mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718
+    environment:
+      # Each developer accepts the SQL Server EULA personally by setting MSSQL_ACCEPT_EULA=Y in .env.
+      # Left empty, SQL Server refuses to start (fail closed); it is never accepted on anyone's behalf.
+      ACCEPT_EULA: ${MSSQL_ACCEPT_EULA:-}
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?run scripts/dev-env-init first}
+    ports:
+      - "127.0.0.1:1433:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      # Password passed via SQLCMDPASSWORD, not on the command line.
+      test: ["CMD-SHELL", "SQLCMDPASSWORD=\"$$MSSQL_SA_PASSWORD\" /opt/mssql-tools18/bin/sqlcmd -C -S 127.0.0.1 -U sa -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2560m
+    networks: [iam-dev]
+
+  # ---------- Local OIDC test provider (ADR-0023): never trusted outside Development ----------
+  keycloak:
+    <<: *hardening
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:?run scripts/dev-env-init first}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?run scripts/dev-env-init first}
+      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_LOG_LEVEL: info
+      # Substituted into the realm file at import time (Keycloak ${ENV} placeholders).
+      IAM_BFF_CLIENT_SECRET: ${IAM_BFF_CLIENT_SECRET:?run scripts/dev-env-init first}
+      IAM_BFF_BASE_URL: ${IAM_BFF_BASE_URL:?run scripts/dev-env-init first}
+      IAM_DEV_USER_PASSWORD: ${IAM_DEV_USER_PASSWORD:?run scripts/dev-env-init first}
+    ports:
+      - "127.0.0.1:8180:8080"
+    volumes:
+      - ./infra/docker/keycloak/import:/opt/keycloak/data/import:ro
+    healthcheck:
+      # Image has no curl; probe the management port with bash /dev/tcp.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    networks: [iam-dev]
+
+  # ---------- Cache (Valkey, BSD-3; protocol-compatible with Redis) ----------
+  valkey:
+    <<: *hardening
+    image: valkey/valkey:8.1.11-alpine3.24@sha256:2602ace2be6569bc2bbb06f873776516ab9089821525be34f4305c67eb9db02a
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?run scripts/dev-env-init first}
+    # Cache only (Blueprint §3): no persistence, bounded memory, password required.
+    # Password goes in via stdin config ("-"), not in the process arguments.
+    command: ["sh", "-c", "printf 'requirepass %s\\n' \"$$VALKEY_PASSWORD\" | exec valkey-server - --save '' --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$VALKEY_PASSWORD\" valkey-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+    networks: [iam-dev]
+
+  # ---------- Message broker (RabbitMQ, MPL-2.0) ----------
+  rabbitmq:
+    <<: *hardening
+    image: rabbitmq:4.3.7-management-alpine@sha256:eb338b3fc8f5c251028c0022ac0de3fe1db2d599d1c6a08b45898f756f248881
+    hostname: iam-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?run scripts/dev-env-init first}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?run scripts/dev-env-init first}
+      RABBITMQ_DEFAULT_VHOST: iam
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+    networks: [iam-dev]
+
+  # ---------- Telemetry: OTel Collector -> Aspire dashboard ----------
+  otel-collector:
+    <<: *hardening
+    # Contrib distribution: needed for the attributes processor that strips credentials from telemetry.
+    image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      ASPIRE_OTLP_API_KEY: ${ASPIRE_OTLP_API_KEY:?run scripts/dev-env-init first}
+    ports:
+      - "127.0.0.1:4317:4317" # OTLP gRPC
+      - "127.0.0.1:4318:4318" # OTLP HTTP
+    volumes:
+      - ./infra/docker/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+    read_only: true
+    # Distroless image: no shell for a healthcheck; the collector exits on invalid config.
+    depends_on:
+      - aspire-dashboard
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks: [iam-dev]
+
+  aspire-dashboard:
+    <<: *hardening
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:13.6.4@sha256:55a5a9fb88ddcff91997d6889912a19a1627e3584bd41fa5141c9db5f8376754
+    environment:
+      DASHBOARD__FRONTEND__AUTHMODE: BrowserToken
+      DASHBOARD__FRONTEND__BROWSERTOKEN: ${ASPIRE_BROWSER_TOKEN:?run scripts/dev-env-init first}
+      DASHBOARD__OTLP__AUTHMODE: ApiKey
+      DASHBOARD__OTLP__PRIMARYAPIKEY: ${ASPIRE_OTLP_API_KEY:?run scripts/dev-env-init first}
+      # The dashboard logs its login URL (with the browser token) at Information level; keep it out of container logs.
+      Logging__LogLevel__Default: Warning
+    ports:
+      - "127.0.0.1:18888:18888" # UI only; OTLP port 18889 stays on the internal network
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks: [iam-dev]
+
+networks:
+  iam-dev:
+    name: iam-dev
+
+volumes:
+  postgres-data:
+  sqlserver-data:
+  rabbitmq-data:

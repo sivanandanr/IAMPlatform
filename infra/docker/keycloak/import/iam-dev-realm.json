@@ -1,0 +1,76 @@
+{
+  "realm": "iam-dev",
+  "displayName": "IAM Platform - LOCAL DEVELOPMENT ONLY",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "editUsernameAllowed": false,
+  "loginWithEmailAllowed": false,
+  "duplicateEmailsAllowed": false,
+  "bruteForceProtected": true,
+  "failureFactor": 5,
+  "permanentLockout": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "passwordPolicy": "length(16)",
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "clients": [
+    {
+      "clientId": "iam-bff",
+      "name": "IAM BFF (local development)",
+      "description": "Confidential BFF client; authorization code flow with PKCE S256 only. Secret comes from .env.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${IAM_BFF_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "fullScopeAllowed": false,
+      "redirectUris": ["${IAM_BFF_BASE_URL}/signin-oidc"],
+      "webOrigins": [],
+      "defaultClientScopes": ["basic", "profile", "email", "acr"],
+      "optionalClientScopes": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "${IAM_BFF_BASE_URL}/signout-callback-oidc"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "dev.requester",
+      "firstName": "Dev",
+      "lastName": "Requester",
+      "email": "dev.requester@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "${IAM_DEV_USER_PASSWORD}", "temporary": false }]
+    },
+    {
+      "username": "dev.approver",
+      "firstName": "Dev",
+      "lastName": "Approver",
+      "email": "dev.approver@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "${IAM_DEV_USER_PASSWORD}", "temporary": false }]
+    },
+    {
+      "username": "dev.admin",
+      "firstName": "Dev",
+      "lastName": "Admin",
+      "email": "dev.admin@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "${IAM_DEV_USER_PASSWORD}", "temporary": false }]
+    }
+  ]
+}

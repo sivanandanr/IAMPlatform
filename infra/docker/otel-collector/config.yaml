@@ -1,0 +1,66 @@
+# S1-03 local OpenTelemetry Collector (LOCAL DEVELOPMENT ONLY).
+# Receives OTLP from the IAM API/workers on 127.0.0.1:4317/4318 and forwards to the Aspire dashboard.
+# Defence in depth for CLAUDE.md rule 9: credentials and query strings are deleted before export,
+# even though application code must not record them in the first place.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 4
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 400
+    spike_limit_mib: 100
+  # PARTIAL CONTROL: covers span, log-record and datapoint attributes only. Resource attributes,
+  # span events / exception messages are not cleaned. Application code must not emit secrets.
+  attributes/strip-credentials:
+    actions:
+      - { pattern: ^http\.(request|response)\.header\..*, action: delete }
+      - { key: url.query, action: delete }
+      - { key: url.full, action: delete }
+      - { key: http.url, action: delete }
+      - { key: db.statement, action: delete }
+      - { key: db.query.text, action: delete }
+  # Masks bearer tokens and JWT-shaped strings in log bodies.
+  transform/mask-log-bodies:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - replace_pattern(body, "(?i)bearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer ***")
+          - replace_pattern(body, "eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]*", "***jwt***")
+  batch: {}
+
+exporters:
+  otlp/aspire:
+    endpoint: aspire-dashboard:18889
+    tls:
+      insecure: true # container-to-container on the private compose network only
+    headers:
+      x-otlp-api-key: ${env:ASPIRE_OTLP_API_KEY}
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/strip-credentials, batch]
+      exporters: [otlp/aspire]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/strip-credentials, batch]
+      exporters: [otlp/aspire]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/strip-credentials, transform/mask-log-bodies, batch]
+      exporters: [otlp/aspire]

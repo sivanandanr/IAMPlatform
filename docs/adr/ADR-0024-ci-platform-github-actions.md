@@ -16,6 +16,7 @@ The blueprint assumes Azure DevOps Pipelines, but the repository is hosted on Gi
 Workflows:
 - `.github/workflows/pr.yml` — on PR to `main`, push to `main`, manual:
   - `secret-scan`: gitleaks CLI v8.30.1 (MIT), downloaded over HTTPS and verified by pinned SHA-256, scans the **full git history** with `--redact`.
+  - `compose-config` (added S1-03, ADR-0023): generates throwaway secrets and runs `docker compose config --quiet` for both database profiles; no images pulled.
   - `build-test`: SDK from `global.json`; locked restore; Release build (warnings as errors); `dotnet test` (Microsoft Testing Platform); `dotnet format --verify-no-changes`; vulnerable-package gate (`dotnet list package --vulnerable --include-transitive`).
 - `.github/workflows/codeql.yml` — CodeQL C# `security-extended`, on PR, push to `main` and weekly.
 

@@ -20,13 +20,16 @@ Likelihood / Impact: L = Low, M = Medium, H = High. Ratings are initial assessme
 | R-012 | Audit hash-chain sealing (spec §12.6) not in Sprint 1 → could be mis-reported as done | M | H | ADR-0018 marks "NOT implemented"; completion reports must state it | ADR-0018 | Security Architect | Open |
 | R-013 | Break-glass absent in Phase 0 skeleton → pressure to add hidden admin bypass | L | H | ADR-0008 forbids any bypass; dedicated ADR before implementation | DEC-004 | Security Architect | Open |
 | R-014 | HR-derived PII in attribute values leaks via logs, audit or errors | M | H | Sensitivity-driven masking; redaction tests (SEC-S1-13); no sensitive data logging | DL-030, ADR-0015 | Security Architect | Open |
-| R-015 | Commercial licence exposure from transitive or chosen packages (MediatR, AutoMapper, FluentAssertions v8, Duende, Redis, k6, AG Grid Enterprise, Docker Desktop) | M | M | DL-018 approvals; SCA licence scan in CI | DL-018 | Procurement / Legal | Open |
+| R-015 | Commercial licence exposure from transitive or chosen packages (MediatR, AutoMapper, FluentAssertions v8, Duende, Redis (local stack now uses Valkey, ADR-0023), k6, AG Grid Enterprise, Docker Desktop) | M | M | DL-018 approvals; SCA licence scan in CI | DL-018 | Procurement / Legal | Open |
 | R-016 | Schema-per-module × two engines increases migration/DBA overhead | M | L | Scripted identities and migrations; DBA review of ADR-0017 | ADR-0017 | DBA lead | Open |
 | R-017 | Blueprint is "Proposed" → ADR-0001..0010 cannot be marked Accepted; downstream work proceeds on unapproved baseline | H | M | Obtain technical and security sign-off of blueprint early in Sprint 1 | Blueprint document control | Lead Solution Architect | Open |
 | R-018 | Mock connectors or skipped tests represented as production-ready | L | H | CLAUDE.md rule 10; labels in code and reports; release gate | FR-REL-103 | QA lead | Open |
 | R-019 | Slow builds: the 72-project skeleton (14 modules × 5 layers) took 7–15 min for a Release build on the dev machine (7m00s, then 14m48s; `dotnet format` 13m) with almost no code, which will slow feedback and CI | H | M | Investigate cause (antivirus scanning of `bin/obj`, analyzer cost, node reuse); measure on CI agent; if still slow, consider fewer assemblies per module (e.g. Contracts / Domain / Module) via an ADR-0001 amendment | ADR-0001, S1-02 | Lead Solution Architect | Open |
+| R-020 | Local Keycloak issuer (`http://localhost:8180/realms/iam-dev`, HTTP, shared test password) accepted by a non-Development deployment | L | H | S1-05: startup check refuses dev issuer outside Development + issuer allowlist; negative test | ADR-0023, ADR-0012 | Security Architect | Open |
+| R-021 | SQL Server local profile and `dev-env-init.ps1` not yet exercised (EULA must be accepted by each developer; script not run in S1-03) | M | L | First developer to accept the EULA runs the sqlserver profile and the PowerShell script and records evidence; CI compose check covers config only | ADR-0023 | DevOps lead | Open |
 
 ## Change history
 | Date | Change | By |
 |---|---|---|
+| 2026-11-08 | S1-03: R-020, R-021 added; R-015 notes Valkey | Claude Code, pending human review |
 | 2026-11-07 | Initial register from Sprint 1 planning reviews | Claude Code (S1-01), pending human review |
