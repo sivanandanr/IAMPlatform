@@ -42,3 +42,7 @@ __screenshots__/
 # System files
 .DS_Store
 Thumbs.db
+
+# Screenshot baselines: only reviewed Linux baselines (CI platform) are committed
+/e2e/__screenshots__/win32/
+/e2e/__screenshots__/darwin/

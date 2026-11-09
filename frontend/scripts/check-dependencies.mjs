@@ -21,6 +21,7 @@ const APPROVED = {
   '@angular/build': 'DL-018 S1-09: Angular build',
   '@angular/cli': 'DL-018 S1-09: Angular build',
   '@angular/compiler-cli': 'DL-018 S1-09: Angular build',
+  '@playwright/test': 'DL-018 S1-10: real-browser tests (Apache-2.0)',
   '@tailwindcss/postcss': 'DL-018 S1-09: Tailwind',
   'angular-eslint': 'DL-018 S1-09: lint gates',
   'axe-core': 'DL-018 S1-09: accessibility tests',

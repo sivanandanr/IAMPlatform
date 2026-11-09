@@ -20,19 +20,25 @@ describe('portal shell', () => {
     expect(root.querySelector('iam-toast-outlet')).not.toBeNull();
   });
 
-  it('switches theme on <html> without using browser storage', () => {
+  it('switches theme on <html> through the theme dropdown, without browser storage', async () => {
     const fixture = TestBed.createComponent(App);
-    fixture.detectChanges();
-    const select = (fixture.nativeElement as HTMLElement).querySelector<HTMLSelectElement>(
-      '.theme-select',
+    fixture.autoDetectChanges();
+    await fixture.whenStable();
+    const combobox = (fixture.nativeElement as HTMLElement).querySelector<HTMLElement>(
+      '.theme-select [role=combobox]',
     )!;
-    select.value = 'dark';
-    select.dispatchEvent(new Event('change'));
-    fixture.detectChanges();
+    expect(combobox.getAttribute('aria-label')).toBe('Theme');
+    const key = async (k: string) => {
+      combobox.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+      await fixture.whenStable();
+    };
+    await key('ArrowDown');
+    await key('End');
+    await key('Enter');
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
-    select.value = 'system';
-    select.dispatchEvent(new Event('change'));
-    fixture.detectChanges();
+    await key('ArrowDown');
+    await key('Home');
+    await key('Enter');
     expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);

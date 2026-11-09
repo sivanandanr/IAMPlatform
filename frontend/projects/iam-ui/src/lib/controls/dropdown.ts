@@ -16,6 +16,7 @@ import {
 } from '@angular/core';
 import { iamId } from '../forms/field';
 import { IamValueControl } from '../forms/value-control';
+import { IamIconButton } from './button';
 import { IamOption } from './choice';
 import { FIELD_INPUT_STYLES } from './textbox';
 
@@ -39,38 +40,45 @@ const POSITIONS: ConnectedPosition[] = [
 @Component({
   selector: 'iam-dropdown',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CdkConnectedOverlay, CdkOverlayOrigin],
+  imports: [CdkConnectedOverlay, CdkOverlayOrigin, IamIconButton],
   template: `
-    <div
-      #trigger
-      cdkOverlayOrigin
-      #origin="cdkOverlayOrigin"
-      class="iam-input iam-dropdown__trigger"
-      role="combobox"
-      aria-haspopup="listbox"
-      [id]="inputId()"
-      [attr.tabindex]="isDisabled() ? -1 : 0"
-      [attr.aria-expanded]="open() ? 'true' : 'false'"
-      [attr.aria-controls]="open() ? listboxId : null"
-      [attr.aria-activedescendant]="open() && !searchable() ? activeOptionId() : null"
-      [attr.aria-labelledby]="field ? field.labelId : null"
-      [attr.aria-label]="field ? null : ariaLabel()"
-      [attr.aria-describedby]="ariaDescribedBy()"
-      [attr.aria-invalid]="ariaInvalid()"
-      [attr.aria-required]="ariaRequired()"
-      [attr.aria-disabled]="isDisabled() ? 'true' : null"
-      [class.iam-dropdown__trigger--disabled]="isDisabled()"
-      (click)="toggle()"
-      (keydown)="onTriggerKeydown($event)"
-      (blur)="onTriggerBlur()"
-    >
-      <span
-        class="iam-dropdown__value"
-        [class.iam-dropdown__placeholder]="selectedLabel() === null"
+    <div class="iam-dropdown">
+      <div
+        #trigger
+        cdkOverlayOrigin
+        #origin="cdkOverlayOrigin"
+        class="iam-input iam-dropdown__trigger"
+        role="combobox"
+        aria-haspopup="listbox"
+        [id]="inputId()"
+        [attr.tabindex]="isDisabled() ? -1 : 0"
+        [attr.aria-expanded]="open() ? 'true' : 'false'"
+        [attr.aria-controls]="open() ? listboxId : null"
+        [attr.aria-activedescendant]="open() && !searchable() ? activeOptionId() : null"
+        [attr.aria-labelledby]="field ? field.labelId : null"
+        [attr.aria-label]="field ? null : ariaLabel()"
+        [attr.aria-describedby]="ariaDescribedBy()"
+        [attr.aria-invalid]="ariaInvalid()"
+        [attr.aria-required]="ariaRequired()"
+        [attr.aria-disabled]="isDisabled() ? 'true' : null"
+        [class.iam-dropdown__trigger--disabled]="isDisabled()"
+        (click)="toggle()"
+        (keydown)="onTriggerKeydown($event)"
+        (blur)="onTriggerBlur()"
       >
-        {{ selectedLabel() ?? placeholder() }}
-      </span>
-      <span class="iam-dropdown__chevron" aria-hidden="true">&#9662;</span>
+        <span
+          class="iam-dropdown__value"
+          [class.iam-dropdown__placeholder]="selectedLabel() === null"
+        >
+          {{ selectedLabel() ?? placeholder() }}
+        </span>
+        <span class="iam-dropdown__chevron" aria-hidden="true">&#9662;</span>
+      </div>
+      @if (clearable() && value() !== null && !isDisabled()) {
+        <button iamIconButton class="iam-dropdown__clear" [label]="clearLabel()" (click)="clear()">
+          <span aria-hidden="true">&#10005;</span>
+        </button>
+      }
     </div>
 
     <ng-template
@@ -140,7 +148,13 @@ const POSITIONS: ConnectedPosition[] = [
   `,
   styles: `
     ${FIELD_INPUT_STYLES}
+    .iam-dropdown {
+      display: flex;
+      align-items: stretch;
+      gap: var(--iam-space-1);
+    }
     .iam-dropdown__trigger {
+      flex: 1;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -224,10 +238,12 @@ export class IamDropdown<T = string> extends IamValueControl<T | null> {
   readonly emptyText = input<string>('No matching options');
   readonly loadingText = input<string>('Loading options…');
   readonly searchLabel = input<string>('Search options');
-  readonly disabled = input<boolean>(false);
   readonly ariaLabel = input<string | null>(null);
   /** Shown when the current value is not in `options` (for example a server-side list not yet loaded). */
   readonly selectedText = input<string | null>(null);
+  /** Shows a button next to the dropdown that clears the selection. */
+  readonly clearable = input<boolean>(false);
+  readonly clearLabel = input<string>('Clear selection');
 
   /** Debounced search text for server-side options; trimmed and capped at 100 characters. */
   readonly searchChange = output<string>();
@@ -239,7 +255,6 @@ export class IamDropdown<T = string> extends IamValueControl<T | null> {
   protected readonly query = signal('');
   protected readonly activeIndex = signal(-1);
   protected readonly triggerWidth = signal(0);
-  protected readonly isDisabled = computed(() => this.disabled() || this.disabledByForm());
 
   private readonly optionPrefix = iamId('iam-option');
   private readonly trigger = viewChild.required<ElementRef<HTMLElement>>('trigger');
@@ -295,6 +310,12 @@ export class IamDropdown<T = string> extends IamValueControl<T | null> {
         );
       }
     });
+  }
+
+  protected clear(): void {
+    this.commit(null);
+    this.markTouched();
+    this.trigger().nativeElement.focus();
   }
 
   protected optionId(index: number): string {

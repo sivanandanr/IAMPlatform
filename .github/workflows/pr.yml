@@ -146,6 +146,55 @@ jobs:
         # Dev tooling: moderate findings are tracked as risks (R-028) rather than failing the build.
         run: npm audit --audit-level=high
 
+  frontend-e2e:
+    # S1-10 (ADR-0019, DL-018): the portal's production build in real Chromium, served under a strict CSP with Trusted
+    # Types. Keyboard, focus trap, axe (colour contrast included, light and dark), forced colours, phone width, export
+    # download. Any CSP violation, page error or console error fails the test. Screenshot baselines are not run here
+    # until Linux baselines are produced in the pinned Playwright container and reviewed (R-029).
+    name: Frontend browser tests (Chromium)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node (version from frontend/.nvmrc)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install (lock file only, no install scripts)
+        run: npm ci --ignore-scripts --no-fund
+
+      - name: Install Chromium for the locked Playwright version
+        # Chromium only, with its OS libraries; the version comes from the locked @playwright/test.
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: Build library and portal
+        run: npm run build
+
+      - name: Browser tests
+        env:
+          CI: 'true'
+        run: npx --no-install playwright test --project=chromium
+
+      - name: Keep the report when tests fail
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-report
+          path: |
+            frontend/tmp/e2e-report
+            frontend/tmp/e2e-results
+          retention-days: 7
+
   compose-config:
     name: Local environment config (compose)
     runs-on: ubuntu-24.04

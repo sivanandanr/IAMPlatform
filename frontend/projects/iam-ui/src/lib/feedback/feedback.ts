@@ -38,13 +38,23 @@ function keepWithinCap(list: IamToast[]): IamToast[] {
 }
 const MAX_TOAST_LENGTH = 300;
 
+interface DismissTimer {
+  remaining: number;
+  startedAt: number;
+  handle: ReturnType<typeof setTimeout> | undefined;
+}
+
 /**
  * Short, non-blocking messages. Info and success are announced politely and dismiss themselves; warnings and errors
- * are announced assertively and stay until dismissed. Render `<iam-toast-outlet />` once in the app shell.
+ * are announced assertively and stay until dismissed. Auto-dismiss pauses while the pointer is over the toasts or focus
+ * is inside them (WCAG 2.2.1). Render `<iam-toast-outlet />` once in the app shell.
  */
 @Injectable({ providedIn: 'root' })
 export class IamToastService {
   private nextId = 0;
+  private paused = false;
+  private readonly pauseReasons = new Set<IamToastPauseReason>();
+  private readonly timers = new Map<number, DismissTimer>();
   private readonly items = signal<readonly IamToast[]>([]);
   readonly toasts = this.items.asReadonly();
 
@@ -53,29 +63,78 @@ export class IamToastService {
     const safeKind: IamToastKind = TOAST_KINDS.includes(kind) ? kind : 'info';
     const text = plainText(message, MAX_TOAST_LENGTH);
     this.items.update((list) => keepWithinCap([...list, { id, kind: safeKind, message: text }]));
-    const duration = durationMs ?? (kind === 'info' || kind === 'success' ? 6000 : 0);
+    const duration = durationMs ?? (safeKind === 'info' || safeKind === 'success' ? 6000 : 0);
     if (duration > 0) {
-      setTimeout(() => this.dismiss(id), duration);
+      const timer: DismissTimer = { remaining: duration, startedAt: Date.now(), handle: undefined };
+      this.timers.set(id, timer);
+      if (!this.paused) {
+        timer.handle = setTimeout(() => this.dismiss(id), duration);
+      }
     }
 
     return id;
   }
 
   dismiss(id: number): void {
+    const timer = this.timers.get(id);
+    clearTimeout(timer?.handle);
+    this.timers.delete(id);
     this.items.update((list) => list.filter((t) => t.id !== id));
   }
+
+  /**
+   * Stops auto-dismiss timers while the pointer is over, or focus is inside, the toasts. Hover and focus are tracked
+   * separately: the pointer leaving must not dismiss a toast that still has keyboard focus.
+   */
+  pause(reason: IamToastPauseReason = 'hover'): void {
+    this.pauseReasons.add(reason);
+    if (this.paused) {
+      return;
+    }
+
+    this.paused = true;
+    const now = Date.now();
+    for (const timer of this.timers.values()) {
+      clearTimeout(timer.handle);
+      timer.handle = undefined;
+      timer.remaining = Math.max(0, timer.remaining - (now - timer.startedAt));
+    }
+  }
+
+  /** Restarts the timers with the time each toast had left, once neither hover nor focus holds them. */
+  resume(reason: IamToastPauseReason = 'hover'): void {
+    this.pauseReasons.delete(reason);
+    if (!this.paused || this.pauseReasons.size > 0) {
+      return;
+    }
+
+    this.paused = false;
+    const now = Date.now();
+    for (const [id, timer] of this.timers) {
+      timer.startedAt = now;
+      timer.handle = setTimeout(() => this.dismiss(id), timer.remaining);
+    }
+  }
 }
+
+export type IamToastPauseReason = 'hover' | 'focus';
 
 @Component({
   selector: 'iam-toast-outlet',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [IamIconButton],
+  host: {
+    '(mouseenter)': "service.pause('hover')",
+    '(mouseleave)': "service.resume('hover')",
+    '(focusin)': "service.pause('focus')",
+    '(focusout)': 'onFocusOut($event)',
+  },
   template: `
     <div class="iam-toasts" role="status" aria-live="polite" aria-atomic="false">
       @for (toast of polite(); track toast.id) {
-        <div class="iam-toast" [class]="'iam-toast iam-toast--' + toast.kind">
+        <div [class]="'iam-toast iam-toast--' + toast.kind">
           <span class="iam-toast__text">{{ toast.message }}</span>
-          <button iamIconButton label="Dismiss notification" (click)="service.dismiss(toast.id)">
+          <button iamIconButton label="Dismiss notification" (click)="dismiss(toast.id)">
             <span aria-hidden="true">&#10005;</span>
           </button>
         </div>
@@ -90,7 +149,7 @@ export class IamToastService {
       @for (toast of urgent(); track toast.id) {
         <div [class]="'iam-toast iam-toast--' + toast.kind">
           <span class="iam-toast__text">{{ toast.message }}</span>
-          <button iamIconButton label="Dismiss notification" (click)="service.dismiss(toast.id)">
+          <button iamIconButton label="Dismiss notification" (click)="dismiss(toast.id)">
             <span aria-hidden="true">&#10005;</span>
           </button>
         </div>
@@ -150,6 +209,41 @@ export class IamToastOutlet {
   protected readonly urgent = computed(() =>
     this.service.toasts().filter((t) => t.kind === 'warning' || t.kind === 'error'),
   );
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
+
+  /** Focus moving between toasts keeps them paused; only leaving the outlet resumes. */
+  protected onFocusOut(event: FocusEvent): void {
+    const next = event.relatedTarget as Node | null;
+    if (!next || !this.host.nativeElement.contains(next)) {
+      this.service.resume('focus');
+    }
+  }
+
+  /**
+   * Dismisses a toast. If it held keyboard focus, focus moves to the next toast's Dismiss button rather than being
+   * dropped (a removed element fires no reliable focusout); with no toasts left the focus pause is released.
+   */
+  protected dismiss(id: number): void {
+    const element = this.host.nativeElement;
+    const hadFocus = element.contains(element.ownerDocument.activeElement);
+    this.service.dismiss(id);
+    if (!hadFocus) {
+      return;
+    }
+
+    afterNextRender(
+      () => {
+        const next = element.querySelector<HTMLButtonElement>('.iam-toast button');
+        if (next) {
+          next.focus();
+        } else {
+          this.service.resume('focus');
+        }
+      },
+      { injector: this.injector },
+    );
+  }
 }
 
 /** One problem to list in a validation summary. `fieldId` (optional) is the id of the control to move focus to. */
@@ -171,7 +265,17 @@ export interface IamFieldError {
   template: `
     @if (hasProblems()) {
       <div class="iam-summary" role="alert" tabindex="-1">
-        <h2 class="iam-summary__title">{{ heading() }}</h2>
+        @switch (headingLevel()) {
+          @case (3) {
+            <h3 class="iam-summary__title">{{ heading() }}</h3>
+          }
+          @case (4) {
+            <h4 class="iam-summary__title">{{ heading() }}</h4>
+          }
+          @default {
+            <h2 class="iam-summary__title">{{ heading() }}</h2>
+          }
+        }
         <ul class="iam-summary__list">
           @for (message of general(); track $index) {
             <li>{{ message }}</li>
@@ -241,6 +345,8 @@ export class IamValidationSummary {
   /** Messages not tied to a field (for example a ProblemDetails title). */
   readonly general = input<readonly string[]>([]);
   readonly heading = input<string>('Please correct the following:');
+  /** Heading level that fits the page outline (default 2). */
+  readonly headingLevel = input<2 | 3 | 4>(2);
 
   protected readonly hasProblems = computed(
     () => this.errors().length > 0 || this.general().length > 0,

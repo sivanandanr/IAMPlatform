@@ -307,6 +307,64 @@ const cases = [
     '<div [innerHTML]="html"></div>\n',
     'no-restricted-syntax',
   ],
+  // S1-10: feature code uses the shared controls, never raw form elements or unstyled buttons.
+  [
+    'Raw <input> in a portal template is refused',
+    portal,
+    component('<input aria-label="x" />'),
+    'no-restricted-syntax',
+  ],
+  [
+    'Raw <select> in a portal template is refused',
+    portal,
+    component('<select aria-label="x"></select>'),
+    'no-restricted-syntax',
+  ],
+  [
+    'Raw <textarea> in a portal template is refused',
+    portal,
+    component('<textarea aria-label="x"></textarea>'),
+    'no-restricted-syntax',
+  ],
+  [
+    'Plain <button> in a portal template is refused',
+    portal,
+    component('<button type="button">Go</button>'),
+    'no-restricted-syntax',
+  ],
+  [
+    'Raw <input> in an external portal .html template is refused',
+    'projects/iam-portal/src/app/selftest.html',
+    '<input aria-label="x" />\n',
+    'no-restricted-syntax',
+  ],
+  [
+    'Upper-case <INPUT> and <BUTTON> are refused too',
+    portal,
+    component('<INPUT aria-label="x" /><BUTTON type="button">Go</BUTTON>'),
+    'no-restricted-syntax',
+  ],
+  [
+    '<button iamButton> is allowed',
+    portal,
+    component('<button iamButton type="button">Go</button>'),
+    null,
+  ],
+  [
+    '<button iamIconButton> is allowed',
+    portal,
+    component(
+      '<button iamIconButton label="Close" aria-label="Close"><svg aria-hidden="true"></svg></button>',
+    ),
+    null,
+  ],
+  ['<iam-textbox> is allowed', portal, component('<iam-textbox ariaLabel="Name" />'), null],
+  [
+    'The shared library may use raw inputs inside its controls',
+    control,
+    component('<input aria-label="x" />'),
+    null,
+  ],
 ];
 
 let failed = 0;

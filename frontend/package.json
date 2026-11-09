@@ -8,9 +8,11 @@
     "build:portal": "ng build iam-portal",
     "test": "ng test iam-ui --watch=false && ng test iam-portal --watch=false",
     "lint": "eslint .",
-    "format:check": "prettier --check \"projects/**/*.{ts,html,css,json}\" eslint.config.mjs \"scripts/*.mjs\"",
+    "format:check": "prettier --check \"projects/**/*.{ts,html,css,json}\" \"e2e/**/*.ts\" playwright.config.ts eslint.config.mjs \"scripts/*.mjs\"",
     "lint:selftest": "node scripts/lint-selftest.mjs",
-    "deps:check": "node scripts/check-dependencies.mjs"
+    "deps:check": "node scripts/check-dependencies.mjs",
+    "e2e": "ng build iam-portal && playwright test",
+    "e2e:visual": "ng build iam-portal && node scripts/run-visual.mjs"
   },
   "private": true,
   "packageManager": "npm@11.19.0",
@@ -31,6 +33,7 @@
     "@angular/build": "22.2.6",
     "@angular/cli": "22.2.6",
     "@angular/compiler-cli": "22.2.5",
+    "@playwright/test": "1.64.1",
     "@tailwindcss/postcss": "4.3.5",
     "angular-eslint": "22.6.0",
     "axe-core": "4.14.0",

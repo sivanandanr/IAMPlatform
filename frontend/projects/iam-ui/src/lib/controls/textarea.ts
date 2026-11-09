@@ -62,11 +62,9 @@ export class IamTextarea extends IamValueControl<string> {
   readonly maxRows = input<number>(10);
   readonly trim = input<IamTrimPolicy>('both');
   readonly readonly = input<boolean>(false);
-  readonly disabled = input<boolean>(false);
   readonly ariaLabel = input<string | null>(null);
 
   protected readonly counterId = iamId('iam-counter');
-  protected readonly isDisabled = computed(() => this.disabled() || this.disabledByForm());
   protected readonly nearLimit = computed(() => this.value().length >= this.maxLength() * 0.9);
   protected readonly describedBy = computed(() =>
     [this.ariaDescribedBy(), this.counterId].filter(Boolean).join(' '),

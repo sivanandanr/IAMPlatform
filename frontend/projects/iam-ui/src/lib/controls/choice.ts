@@ -11,6 +11,7 @@ const CHOICE_STYLES = `
   .iam-choice--disabled { color: var(--iam-color-disabled-text); cursor: not-allowed; }
   .iam-choice__hint { margin: 0 0 0 calc(1.125rem + var(--iam-space-2)); font-size: var(--iam-font-size-sm); color: var(--iam-color-text-muted); }
   .iam-choice__error { margin: 0; font-size: var(--iam-font-size-sm); color: var(--iam-color-danger); }
+  .iam-choice__errors { padding: 0; list-style: none; }
 `;
 
 /**
@@ -27,7 +28,7 @@ const CHOICE_STYLES = `
         [id]="inputId()"
         [checked]="value()"
         [disabled]="isDisabled()"
-        [attr.aria-invalid]="ariaInvalid()"
+        [attr.aria-invalid]="field ? ariaInvalid() : ownInvalid()"
         [attr.aria-describedby]="describedBy()"
         (change)="onCheckedChange($event)"
         (blur)="markTouched()"
@@ -37,20 +38,52 @@ const CHOICE_STYLES = `
     @if (hint()) {
       <p class="iam-choice__hint" [id]="hintId">{{ hint() }}</p>
     }
+    @if (!field && ownErrors().length > 0) {
+      <ul class="iam-choice__error iam-choice__errors" [id]="errorId">
+        @for (message of ownErrors(); track $index) {
+          <li>{{ message }}</li>
+        }
+      </ul>
+    }
   `,
   styles: CHOICE_STYLES,
 })
 export class IamCheckbox extends IamValueControl<boolean> {
   readonly label = input.required<string>();
   readonly hint = input<string>('');
-  readonly disabled = input<boolean>(false);
+  /** Server-side messages when the checkbox is not inside an iam-form-field. Plain text. */
+  readonly serverErrors = input<readonly string[] | null | undefined>([]);
 
   protected readonly hintId = iamId('iam-hint');
-  protected readonly isDisabled = computed(() => this.disabled() || this.disabledByForm());
-  /** Own hint plus any field hint/error ids. */
+  protected readonly errorId = iamId('iam-error');
+
+  /**
+   * Errors the checkbox shows itself when not inside an iam-form-field: "must be checked" for Validators.requiredTrue
+   * or required, once touched, plus server messages.
+   */
+  protected readonly ownErrors = computed<readonly string[]>(() => {
+    this.revision();
+    const messages: string[] = [];
+    if (this.touched() && this.control?.errors?.['required']) {
+      messages.push(`${this.label()} must be checked.`);
+    }
+
+    messages.push(...(this.serverErrors() ?? []));
+    return messages;
+  });
+
+  protected readonly ownInvalid = computed(() => (this.ownErrors().length > 0 ? 'true' : null));
+
+  /** Own hint, own errors, plus any field hint/error ids. */
   protected readonly describedBy = computed(
     () =>
-      [this.hint() ? this.hintId : null, this.ariaDescribedBy()].filter(Boolean).join(' ') || null,
+      [
+        this.hint() ? this.hintId : null,
+        !this.field && this.ownErrors().length > 0 ? this.errorId : null,
+        this.ariaDescribedBy(),
+      ]
+        .filter(Boolean)
+        .join(' ') || null,
   );
 
   protected onCheckedChange(event: Event): void {
@@ -156,9 +189,6 @@ export class IamToggle extends IamValueControl<boolean> {
   readonly label = input.required<string>();
   readonly onText = input<string>('On');
   readonly offText = input<string>('Off');
-  readonly disabled = input<boolean>(false);
-
-  protected readonly isDisabled = computed(() => this.disabled() || this.disabledByForm());
 
   protected toggle(): void {
     this.commit(!this.value());
@@ -264,23 +294,22 @@ export class IamRadioGroup<T = string> extends IamValueControl<T | null> {
   readonly hint = input<string>('');
   /** Overrides the required marker; by default it follows Validators.required on the bound control. */
   readonly required = input<boolean | undefined>(undefined);
-  readonly disabled = input<boolean>(false);
   /** Server-side messages (ProblemDetails) for this group. Plain text. */
   readonly serverErrors = input<readonly string[] | null | undefined>([]);
 
   protected readonly groupName = iamId('iam-radio');
   protected readonly hintId = iamId('iam-hint');
   protected readonly errorId = iamId('iam-error');
-  protected readonly isDisabled = computed(() => this.disabled() || this.disabledByForm());
 
   protected readonly isRequired = computed(() => {
-    this.touched();
+    this.revision();
     const explicit = this.required();
     return explicit ?? !!this.control?.hasValidator(Validators.required);
   });
 
   /** The group carries its own legend and errors (a fieldset cannot sit inside a label). */
   protected readonly errors = computed<readonly string[]>(() => {
+    this.revision();
     const messages: string[] = [];
     const control = this.control;
     if (control && this.touched() && control.errors?.['required']) {
