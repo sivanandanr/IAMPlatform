@@ -29,7 +29,7 @@ Template: [ADR_TEMPLATE.md](ADR_TEMPLATE.md). Open questions are tracked in [../
 | [0016](ADR-0016-uuid-strategy.md) | Identifier (UUID) strategy | Accepted (owner) | S1-06 |
 | [0017](ADR-0017-persistence-layout-and-conventions.md) | Persistence layout and dual-provider conventions | Accepted (owner) | S1-06 |
 | [0018](ADR-0018-audit-atomicity-and-append-only-store.md) | Audit atomicity and append-only store | Accepted (owner); security review pending | S1-07 |
-| [0019](ADR-0019-first-party-angular-ui-library.md) | First-party Angular UI library and AG Grid wrapper | Proposed | S1-09 |
+| [0019](ADR-0019-first-party-angular-ui-library.md) | First-party Angular UI library and AG Grid wrapper | Accepted (owner); gate approvals pending | S1-09 |
 | [0020](ADR-0020-in-process-mediator-validation-mapping.md) | In-process dispatch, validation and mapping libraries | Accepted (owner) | S1-02 |
 | [0021](ADR-0021-messaging-library.md) | Messaging library | Proposed | P0-010 |
 | [0022](ADR-0022-test-and-architecture-test-tooling.md) | Test and architecture-test tooling | Partly accepted (backend) | S1-02, S1-09 |

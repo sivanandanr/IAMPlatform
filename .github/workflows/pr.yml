@@ -96,6 +96,56 @@ jobs:
             exit 1
           fi
 
+  frontend:
+    name: Frontend lint, test, build, audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node (version from frontend/.nvmrc)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install (lock file only, no install scripts)
+        # The build needs no package install scripts (S1-09); --ignore-scripts keeps third-party code from running here.
+        run: npm ci --ignore-scripts --no-fund
+
+      - name: Dependency allowlist (DL-018)
+        run: npm run deps:check
+
+      - name: Lint (security and architecture gates)
+        run: npm run lint
+
+      - name: Lint gate self-test
+        run: npm run lint:selftest
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Unit and component tests (library and portal)
+        run: npm test
+
+      - name: Production build (library, then portal with size budgets)
+        run: npm run build
+
+      - name: Runtime dependency audit (moderate and above fail)
+        # What ships to the browser is held to a stricter bar than build tooling.
+        run: npm audit --omit=dev --audit-level=moderate
+
+      - name: Full dependency audit (high and critical fail)
+        # Dev tooling: moderate findings are tracked as risks (R-028) rather than failing the build.
+        run: npm audit --audit-level=high
+
   compose-config:
     name: Local environment config (compose)
     runs-on: ubuntu-24.04

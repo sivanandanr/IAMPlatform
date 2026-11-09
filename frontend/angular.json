@@ -1,0 +1,121 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "cli": {
+    "packageManager": "npm"
+  },
+  "newProjectRoot": "projects",
+  "projects": {
+    "iam-ui": {
+      "projectType": "library",
+      "root": "projects/iam-ui",
+      "sourceRoot": "projects/iam-ui",
+      "prefix": "iam",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:ng-packagr",
+          "configurations": {
+            "production": {
+              "tsConfig": "projects/iam-ui/tsconfig.lib.prod.json"
+            },
+            "development": {
+              "tsConfig": "projects/iam-ui/tsconfig.lib.json"
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "test": {
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "tsConfig": "projects/iam-ui/tsconfig.spec.json",
+            "setupFiles": [
+              "projects/iam-ui/src/testing/test-setup.ts"
+            ],
+            "include": [
+              "src/**/*.spec.ts",
+              "grid/src/**/*.spec.ts"
+            ]
+          }
+        }
+      }
+    },
+    "iam-portal": {
+      "projectType": "application",
+      "schematics": {},
+      "root": "projects/iam-portal",
+      "sourceRoot": "projects/iam-portal/src",
+      "prefix": "iam",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "browser": "projects/iam-portal/src/main.ts",
+            "tsConfig": "projects/iam-portal/tsconfig.app.json",
+            "assets": [
+              {
+                "glob": "**/*",
+                "input": "projects/iam-portal/public"
+              }
+            ],
+            "styles": [
+              "node_modules/@angular/cdk/overlay-prebuilt.css",
+              "projects/iam-ui/src/styles/tokens.css",
+              "projects/iam-portal/src/styles.css"
+            ]
+          },
+          "configurations": {
+            "production": {
+              "budgets": [
+                {
+                  "type": "initial",
+                  "maximumWarning": "500kB",
+                  "maximumError": "1MB"
+                },
+                {
+                  "type": "anyComponentStyle",
+                  "maximumWarning": "6kB",
+                  "maximumError": "10kB"
+                }
+              ],
+              "outputHashing": "all",
+              "optimization": {
+                "scripts": true,
+                "styles": {
+                  "minify": true,
+                  "inlineCritical": false
+                },
+                "fonts": true
+              }
+            },
+            "development": {
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": true
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "serve": {
+          "builder": "@angular/build:dev-server",
+          "configurations": {
+            "production": {
+              "buildTarget": "iam-portal:build:production"
+            },
+            "development": {
+              "buildTarget": "iam-portal:build:development"
+            }
+          },
+          "defaultConfiguration": "development"
+        },
+        "test": {
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "setupFiles": [
+              "projects/iam-ui/src/testing/test-setup.ts"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
