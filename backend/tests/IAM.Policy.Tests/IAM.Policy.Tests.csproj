@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- S2-01 policy evaluator tests (P0-008, ADR-0004). No database: the evaluator is pure code. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Shouldly" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Modules\Policy\IAM.Modules.Policy.Domain\IAM.Modules.Policy.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Policy\IAM.Modules.Policy.Application\IAM.Modules.Policy.Application.csproj" />
+    <!-- Only to prove Policy's value parsing agrees with the catalog's. Production code does not reference it. -->
+    <ProjectReference Include="..\..\src\Modules\Identity\IAM.Modules.Identity.Domain\IAM.Modules.Identity.Domain.csproj" />
+  </ItemGroup>
+</Project>

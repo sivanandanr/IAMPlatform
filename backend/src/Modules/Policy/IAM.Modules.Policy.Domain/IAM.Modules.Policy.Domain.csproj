@@ -2,4 +2,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\BuildingBlocks\IAM.BuildingBlocks.Abstractions\IAM.BuildingBlocks.Abstractions.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="IAM.Policy.Tests" />
+  </ItemGroup>
 </Project>
