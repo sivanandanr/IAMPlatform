@@ -35,11 +35,18 @@ const axeSource = readFileSync(
 
 /**
  * Runs axe-core in the real browser, colour contrast included. Injected through the test channel (not a <script>),
- * so the page's CSP stays strict.
+ * so the page's CSP stays strict. Waits for running animations first, so contrast is measured on final colours and
+ * not part-way through a fade. Endless animations, such as a spinner, are not waited for.
  */
 export async function axeViolations(page: Page): Promise<string[]> {
   await page.evaluate(axeSource);
   return page.evaluate(async () => {
+    await Promise.all(
+      document
+        .getAnimations()
+        .filter((animation) => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+        .map((animation) => animation.finished.catch(() => undefined)),
+    );
     const axe = (
       globalThis as unknown as { axe: { run: (c: unknown, o: unknown) => Promise<AxeResult> } }
     ).axe;

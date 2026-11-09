@@ -142,6 +142,26 @@ test.describe('controls page in a real browser', () => {
     expect(await axeViolations(page)).toEqual([]);
   });
 
+  test('axe checks wait for a running fade, so they measure final colours', async ({ page }) => {
+    // Long enough that the fade is still visible when axe measures, or this test can't fail.
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty('--iam-motion-duration', '3000ms'),
+    );
+    await page.getByRole('button', { name: 'Reset form' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    expect(await axeViolations(page)).toEqual([]);
+  });
+
+  test('axe checks do not wait for endless animations', async ({ page }) => {
+    await page.evaluate(() => {
+      document.body.animate([{ opacity: 1 }, { opacity: 1 }], {
+        duration: 1000,
+        iterations: Infinity,
+      });
+    });
+    expect(await axeViolations(page)).toEqual([]);
+  });
+
   test('dropdown works with the keyboard alone', async ({ page }) => {
     const company = page.getByRole('combobox', { name: 'Company' });
     await company.focus();
