@@ -15,6 +15,9 @@ Docker Compose dependencies (Keycloak, Valkey, RabbitMQ, OTel Collector + Aspire
 ## Frontend
 Angular 22 workspace with the first-party UI library `@iam/ui` and the AG Grid wrapper `@iam/ui/grid` (S1-09, ADR-0019): see [frontend/README.md](frontend/README.md).
 
+## Optional features (Proposed, not built yet)
+AR-1 is off until a deployment turns it on. AR-2 and AR-3 do nothing until they are configured. See [docs/requirements/requirements.md](docs/requirements/requirements.md).
+
 ## Security boundaries
 - Agents are advisory and code-generating assistants, **not** a substitute for peer review, penetration testing, IAM security sign-off or production change approval.
 - Never send real credentials, tokens, personal data, customer identity exports, production logs or restricted diagrams to an AI assistant unless explicitly approved by your organization.
