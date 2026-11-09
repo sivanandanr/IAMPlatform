@@ -32,6 +32,13 @@ public static partial class AttributeValueValidator
             return AttributeValueResult.Invalid($"is longer than {MaxRawLength} characters");
         }
 
+        // A code stays ASCII before upper-casing: otherwise U+017F (long s) would become a valid "S".
+        if (definition.DataType == AttributeDataType.Code && definition.Normalization == AttributeNormalization.TrimUpperInvariant
+            && !raw.Trim().All(char.IsAscii))
+        {
+            return AttributeValueResult.Invalid($"must be a code of 1 to {definition.MaxLength ?? 0} letters, digits or '_', '-', '.', '/'");
+        }
+
         var text = definition.Normalization switch
         {
             AttributeNormalization.None => raw,

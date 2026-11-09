@@ -5,10 +5,17 @@
       "iam.buildingblocks.abstractions": {
         "type": "Project"
       },
+      "iam.modules.identity.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
       "iam.modules.policy.application": {
         "type": "Project",
         "dependencies": {
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Identity.Contracts": "[1.0.0, )",
           "IAM.Modules.Policy.Contracts": "[1.0.0, )",
           "IAM.Modules.Policy.Domain": "[1.0.0, )"
         }
