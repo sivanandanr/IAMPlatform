@@ -6,6 +6,11 @@ export {
   IAM_GRID_PAGE_SIZES,
   IamDataGrid,
   type IamGridColumn,
+  type IamGridExport,
+  type IamGridExportAction,
+  type IamGridExportQuery,
+  type IamGridFilter,
   type IamGridQuery,
   type IamSortDirection,
 } from './data-grid';
+export { neutralizeCsvCell, safeCsvFileName, toCsvField, toCsvRow } from './csv';

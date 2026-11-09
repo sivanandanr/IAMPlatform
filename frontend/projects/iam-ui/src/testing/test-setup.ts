@@ -35,3 +35,11 @@ afterEach(() => {
     throw new Error(`AG Grid reported problems:\n${problems.join('\n')}`);
   }
 });
+
+// Overlays (dropdowns, dialogs, tooltips) render into a container on <body> that outlives each test's fixture.
+// Empty it after every test, so an overlay left open by a failing test cannot break the tests that follow.
+afterEach(() => {
+  document
+    .querySelectorAll('.cdk-overlay-container')
+    .forEach((container) => container.replaceChildren());
+});

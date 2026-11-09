@@ -1,9 +1,14 @@
 import { ChangeDetectionStrategy, Component, inject, signal, viewChild } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import {
+  IamAutocomplete,
+  IamAutocompletePage,
   IamButton,
   IamCheckbox,
   IamConfirmService,
+  IamDatePicker,
+  IamDateRange,
+  IamDateRangeValue,
   IamDropdown,
   IamFieldError,
   IamFormField,
@@ -14,9 +19,12 @@ import {
   IamTextbox,
   IamToastService,
   IamToggle,
+  IamTooltip,
   IamValidationSummary,
+  IsoDate,
   fieldErrorsFor,
   readProblemDetails,
+  todayIso,
 } from '@iam/ui';
 
 const COMPANIES: readonly IamOption<string>[] = [
@@ -33,7 +41,29 @@ const LABELS: Record<string, string> = {
   level: 'Access level',
   justification: 'Business justification',
   accept: 'Confirmation',
+  owner: 'Line manager',
+  startDate: 'Start date',
+  period: 'Access period',
 };
+
+/** 60 synthetic people for the fake directory search (no real data). */
+const PEOPLE: readonly IamOption<string>[] = Array.from({ length: 60 }, (_, i) => {
+  const first = ['Alex', 'Sam', 'Jordan', 'Taylor', 'Morgan', 'Casey'][i % 6];
+  const last = [
+    'Lee',
+    'Patel',
+    'Garcia',
+    'Okafor',
+    'Novak',
+    'Kim',
+    'Silva',
+    'Haddad',
+    'Berg',
+    'Ito',
+  ][i % 10];
+  const id = `E${String(i + 1).padStart(5, '0')}`;
+  return { value: id, label: `${first} ${last} (${id})` };
+});
 
 const LEVELS: readonly IamOption<string>[] = [
   { value: 'read', label: 'Read' },
@@ -47,13 +77,17 @@ const LEVELS: readonly IamOption<string>[] = [
   imports: [
     ReactiveFormsModule,
     IamButton,
+    IamAutocomplete,
     IamCheckbox,
+    IamDatePicker,
+    IamDateRange,
     IamDropdown,
     IamFormField,
     IamRadioGroup,
     IamTextarea,
     IamTextbox,
     IamToggle,
+    IamTooltip,
     IamValidationSummary,
   ],
   template: `
@@ -96,6 +130,45 @@ const LEVELS: readonly IamOption<string>[] = [
         <iam-textarea formControlName="justification" [maxLength]="500" />
       </iam-form-field>
 
+      <iam-form-field
+        label="Line manager"
+        hint="Type at least two letters, e.g. pat. Type fail to see a search error."
+        controlId="owner"
+        [serverErrors]="serverErrors('owner')"
+      >
+        <iam-autocomplete formControlName="owner" [search]="searchPeople" />
+      </iam-form-field>
+
+      <iam-form-field
+        label="Start date"
+        hint="Today or later"
+        controlId="startDate"
+        [serverErrors]="serverErrors('startDate')"
+      >
+        <iam-date-picker formControlName="startDate" [min]="today" />
+      </iam-form-field>
+
+      <div class="flex flex-col gap-2">
+        <iam-date-range
+          formControlName="period"
+          legend="Access period"
+          startLabel="Access from"
+          endLabel="Access until"
+          hint="The end date must not be before the start date."
+          controlId="period"
+          [min]="today"
+          [serverErrors]="serverErrors('period')"
+        />
+        <button
+          iamButton
+          variant="ghost"
+          class="self-start"
+          iamTooltip="Time-bound access is removed automatically at the end of the period."
+        >
+          About access periods
+        </button>
+      </div>
+
       <iam-toggle formControlName="notify" label="Email me about this request" />
       <iam-checkbox
         formControlName="accept"
@@ -130,7 +203,32 @@ export class ControlsPage {
     justification: this.fb.control('', Validators.maxLength(500)),
     notify: this.fb.control(false),
     accept: this.fb.control(false, Validators.requiredTrue),
+    owner: this.fb.control<string | null>(null),
+    startDate: this.fb.control<IsoDate | null>(null),
+    period: this.fb.control<IamDateRangeValue | null>(null),
   });
+
+  protected readonly today = todayIso();
+
+  /** Stands in for a directory search API: bounded results, honours cancellation, "fail" simulates an error. */
+  protected readonly searchPeople = async (
+    query: string,
+    signal: AbortSignal,
+  ): Promise<IamAutocompletePage<string>> => {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, 200);
+      signal.addEventListener('abort', () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      });
+    });
+    if (query.toLowerCase() === 'fail') {
+      throw new Error('Directory unavailable');
+    }
+
+    const matches = PEOPLE.filter((p) => p.label.toLowerCase().includes(query.toLowerCase()));
+    return { items: matches.slice(0, 10), hasMore: matches.length > 10 };
+  };
 
   protected serverErrors(field: string): readonly string[] {
     const problem = this.problem();

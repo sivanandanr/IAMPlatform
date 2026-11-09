@@ -30,3 +30,15 @@ export {
   type IamConfirmOptions,
   type IamDialogOptions,
 } from './lib/overlays/dialog';
+export {
+  IAM_AUTOCOMPLETE_MAX_QUERY,
+  IAM_AUTOCOMPLETE_MAX_RESULTS,
+  IAM_AUTOCOMPLETE_MIN_CHARS,
+  IamAutocomplete,
+  type IamAutocompletePage,
+  type IamAutocompleteSearch,
+} from './lib/controls/autocomplete';
+export { IamDatePicker } from './lib/dates/date-picker';
+export { IamDateRange, type IamDateRangeValue } from './lib/dates/date-range';
+export { isIsoDate, todayIso, type IsoDate } from './lib/dates/date-only';
+export { IamTooltip } from './lib/overlays/tooltip';

@@ -219,4 +219,23 @@ export default tseslint.config(
     extends: [...angular.configs.templateRecommended, ...angular.configs.templateAccessibility],
     rules: { 'no-restricted-syntax': ['error', TEMPLATE_HTML_BINDING] },
   },
+  {
+    // Feature and app templates use @iam/ui controls, never raw form elements or unstyled buttons (ADR-0019).
+    files: ['projects/iam-portal/**/*.html'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        TEMPLATE_HTML_BINDING,
+        {
+          selector: 'Element[name=/^(input|select|textarea)$/i]',
+          message:
+            'Use the @iam/ui controls (iam-textbox, iam-dropdown, iam-textarea, …), not raw form elements.',
+        },
+        {
+          selector: 'Element[name=/^button$/i]:not(:has(TextAttribute[name=/^iam(Icon)?Button$/]))',
+          message: 'Buttons use iamButton or iamIconButton from @iam/ui.',
+        },
+      ],
+    },
+  },
 );

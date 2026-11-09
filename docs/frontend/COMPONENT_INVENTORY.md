@@ -16,3 +16,14 @@
 | P1 | Toast / Tooltip / Tabs | Accessible notifications and navigation |
 
 Every component must pass security, accessibility and validation tests before release.
+
+## Status (2026-11-08, after S1-10; pending independent review and the UI foundation gate)
+
+| Component | Status |
+|---|---|
+| TextInput, Select (with clear), Toggle, FormField, Button / Dialog, TextArea, Toast | Built (S1-09, S1-10 follow-ups) |
+| Autocomplete, DatePicker, DateRange (inclusive start and end, date-only values), Tooltip | Built (S1-10) |
+| DataGrid (AG Grid wrapper) | Built: server-side paging, sorting, filters, server-side export (S1-09, S1-10). Permission-aware row actions are not built yet |
+| MultiSelect, NumberInput, Tabs | **Not built** — P1, not required by the UI_FOUNDATION_FIRST control list; to be scheduled |
+
+Details, evidence and open items: ADR-0019.

@@ -96,7 +96,13 @@ export const IAM_FIELD_CONTEXT = new InjectionToken<IamFieldContext>('IAM_FIELD_
 export function validationMessages(label: string, errors: ValidationErrors): string[] {
   const name = label || 'This field';
   const messages: string[] = [];
+  // "Not a real date" already explains an empty value; do not also say "is required".
+  const hasFormatError = 'iamDate' in errors;
   for (const [key, detail] of Object.entries(errors)) {
+    if (key === 'required' && hasFormatError) {
+      continue;
+    }
+
     switch (key) {
       case 'required':
         messages.push(`${name} is required.`);

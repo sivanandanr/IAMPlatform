@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { IamValueControl } from '../forms/value-control';
 
 export type IamTextboxType = 'text' | 'email' | 'search' | 'tel' | 'url';
@@ -76,11 +76,8 @@ export class IamTextbox extends IamValueControl<string> {
   readonly prefix = input<string>('');
   readonly suffix = input<string>('');
   readonly readonly = input<boolean>(false);
-  readonly disabled = input<boolean>(false);
   /** Accessible name when used without `iam-form-field` (for example in a toolbar search box). */
   readonly ariaLabel = input<string | null>(null);
-
-  protected readonly isDisabled = computed(() => this.disabled() || this.disabledByForm());
 
   protected onInput(event: Event): void {
     this.commit((event.target as HTMLInputElement).value);

@@ -1,9 +1,17 @@
 import { DOCUMENT } from '@angular/common';
-import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, effect, inject } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
-import { IamToastOutlet } from '@iam/ui';
+import { IamDropdown, IamOption, IamToastOutlet } from '@iam/ui';
 
 type ThemeChoice = 'system' | 'light' | 'dark';
+
+const THEMES: readonly IamOption<ThemeChoice>[] = [
+  { value: 'system', label: 'System theme' },
+  { value: 'light', label: 'Light theme' },
+  { value: 'dark', label: 'Dark theme' },
+];
 
 /**
  * S1-09 portal shell: a component playground for the @iam/ui foundation, not an IAM feature screen (feature screens
@@ -12,7 +20,14 @@ type ThemeChoice = 'system' | 'light' | 'dark';
 @Component({
   selector: 'iam-root',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, IamToastOutlet],
+  imports: [
+    RouterOutlet,
+    RouterLink,
+    RouterLinkActive,
+    ReactiveFormsModule,
+    IamDropdown,
+    IamToastOutlet,
+  ],
   template: `
     <a class="skip-link" href="#main">Skip to content</a>
     <header
@@ -29,14 +44,12 @@ type ThemeChoice = 'system' | 'light' | 'dark';
         >
         <a routerLink="/grid" routerLinkActive="active" ariaCurrentWhenActive="page">Data grid</a>
       </nav>
-      <label class="flex items-center gap-2 text-sm">
-        Theme
-        <select class="theme-select" [value]="theme()" (change)="setTheme($event)">
-          <option value="system">System</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
-      </label>
+      <iam-dropdown
+        class="theme-select w-44"
+        ariaLabel="Theme"
+        [formControl]="themeControl"
+        [options]="themes"
+      />
     </header>
     <main id="main" tabindex="-1" class="mx-auto max-w-5xl px-4 py-6">
       <router-outlet />
@@ -65,24 +78,19 @@ type ThemeChoice = 'system' | 'light' | 'dark';
       text-underline-offset: 4px;
     }
     a:focus-visible,
-    .theme-select:focus-visible,
     main:focus-visible {
       outline: var(--iam-focus-ring-width) solid var(--iam-color-focus);
       outline-offset: var(--iam-focus-ring-offset);
-    }
-    .theme-select {
-      min-height: 2rem;
-      border: var(--iam-border-width) solid var(--iam-color-border);
-      border-radius: var(--iam-radius-sm);
-      background: var(--iam-color-surface-raised);
-      color: var(--iam-color-text);
-      font: inherit;
     }
   `,
 })
 export class App {
   /** In memory only: no browser storage is used by the portal. */
-  protected readonly theme = signal<ThemeChoice>('system');
+  protected readonly themes = THEMES;
+  protected readonly themeControl = new FormControl<ThemeChoice>('system', { nonNullable: true });
+  protected readonly theme = toSignal(this.themeControl.valueChanges, {
+    initialValue: 'system' as ThemeChoice,
+  });
   private readonly document = inject(DOCUMENT);
 
   constructor() {
@@ -95,12 +103,5 @@ export class App {
         root.setAttribute('data-theme', theme);
       }
     });
-  }
-
-  protected setTheme(event: Event): void {
-    const value = (event.target as HTMLSelectElement).value;
-    if (value === 'system' || value === 'light' || value === 'dark') {
-      this.theme.set(value);
-    }
   }
 }

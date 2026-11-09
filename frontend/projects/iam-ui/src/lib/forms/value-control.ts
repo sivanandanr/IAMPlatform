@@ -8,7 +8,13 @@ import {
   input,
   signal,
 } from '@angular/core';
-import { AbstractControl, ControlValueAccessor, NgControl } from '@angular/forms';
+import {
+  AbstractControl,
+  ControlValueAccessor,
+  NgControl,
+  ValidationErrors,
+  ValidatorFn,
+} from '@angular/forms';
 import { IAM_FIELD_CONTEXT, IamFieldControl, iamId, safeId } from './field';
 
 /**
@@ -26,7 +32,12 @@ export abstract class IamValueControl<T> implements ControlValueAccessor, IamFie
   readonly value = signal<T>(this.emptyValue());
   readonly disabledByForm = signal(false);
   private readonly localTouched = signal(false);
-  private readonly revision = signal(0);
+  /**
+   * Bumped on every value, status or touched change of the bound control. Computeds that read the form control's
+   * (non-signal) state, such as its errors, must read this: `touched()` alone stays true across changes and would let
+   * a stale error list survive.
+   */
+  protected readonly revision = signal(0);
   private watched: AbstractControl | null = null;
   private unwatch: (() => void) | null = null;
   private onChange: (value: T) => void = () => undefined;
@@ -38,6 +49,19 @@ export abstract class IamValueControl<T> implements ControlValueAccessor, IamFie
    */
   readonly controlId = input<string | null>(null);
   private readonly ownId = iamId('iam-input');
+
+  /**
+   * Disabled state for standalone use. Inside a form the form control's own disabled state is the single source of
+   * truth and this input is ignored (bind `[disabled]` together with `formControl` and Angular warns).
+   */
+  readonly disabled = input<boolean>(false);
+
+  /** Whether the control is disabled: the form's state when bound to a form, otherwise the `disabled` input. */
+  readonly isDisabled = computed(() => (this.ngControl ? this.disabledByForm() : this.disabled()));
+
+  /** Subclasses that validate their own input (e.g. a date picker) set this and override `validate`. */
+  protected readonly validates: boolean = false;
+  private readonly boundValidator: ValidatorFn = (control) => this.validate(control);
 
   /** The element id the field's label points at. */
   readonly inputId = computed(
@@ -79,15 +103,31 @@ export abstract class IamValueControl<T> implements ControlValueAccessor, IamFie
   ngDoCheck(): void {
     const control = this.control;
     if (control === this.watched) {
+      // Feature code may replace the validators (setValidators / clearValidators, e.g. "required only when X"):
+      // the control's own rules must survive that, or text that is not a date would pass as an empty value.
+      if (this.validates && control && !control.hasValidator(this.boundValidator)) {
+        control.addValidators(this.boundValidator);
+        control.updateValueAndValidity({ emitEvent: false });
+        this.bump();
+      }
+
       return;
     }
 
     this.unwatch?.();
+    if (this.validates) {
+      this.watched?.removeValidators(this.boundValidator);
+    }
+
     this.watched = control;
     this.unwatch = null;
     if (control) {
       const subscription = control.events.subscribe(() => this.bump());
       this.unwatch = () => subscription.unsubscribe();
+      if (this.validates) {
+        control.addValidators(this.boundValidator);
+        control.updateValueAndValidity({ emitEvent: false });
+      }
     }
 
     this.bump();
@@ -108,6 +148,22 @@ export abstract class IamValueControl<T> implements ControlValueAccessor, IamFie
 
   setDisabledState(isDisabled: boolean): void {
     this.disabledByForm.set(isDisabled);
+  }
+
+  /** Own validation rules; only used when `validates` is true. Messages are plain text, shown by the form field. */
+  protected validate(control: AbstractControl): ValidationErrors | null {
+    void control;
+    return null;
+  }
+
+  /**
+   * Re-runs validation after a change the form cannot see (for example unparsable typed text). No value or status
+   * events are emitted, so subscribers do not see a second valueChanges for one edit; the form's validity and this
+   * control's error display are still updated.
+   */
+  protected revalidate(): void {
+    this.watched?.updateValueAndValidity({ emitEvent: false });
+    this.bump();
   }
 
   /** Called by subclasses when the user changes the value. */

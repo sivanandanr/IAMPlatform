@@ -69,7 +69,17 @@ export class IamDialogService {
   imports: [IamIconButton],
   template: `
     <header class="iam-dialog__header">
-      <h2 class="iam-dialog__title" [id]="titleId">{{ heading() }}</h2>
+      @switch (headingLevel()) {
+        @case (3) {
+          <h3 class="iam-dialog__title" [id]="titleId">{{ heading() }}</h3>
+        }
+        @case (4) {
+          <h4 class="iam-dialog__title" [id]="titleId">{{ heading() }}</h4>
+        }
+        @default {
+          <h2 class="iam-dialog__title" [id]="titleId">{{ heading() }}</h2>
+        }
+      }
       @if (closable()) {
         <button iamIconButton [label]="closeLabel()" (click)="ref?.close()">
           <span aria-hidden="true">&#10005;</span>
@@ -116,6 +126,8 @@ export class IamDialogService {
 })
 export class IamDialog {
   readonly heading = input.required<string>();
+  /** Heading level that fits the page outline (default 2). */
+  readonly headingLevel = input<2 | 3 | 4>(2);
   readonly closable = input<boolean>(true);
   readonly closeLabel = input<string>('Close dialog');
 
