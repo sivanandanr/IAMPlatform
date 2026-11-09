@@ -26,6 +26,16 @@ Read actual source files before making claims about requirements. If unavailable
 8. Do not execute user/admin-authored SQL, C#, JavaScript or arbitrary expressions as policy rules; validate typed AST, allowed operators and bounded complexity.
 9. Audit all sensitive changes, decisions, policy/version snapshots, correlation IDs and connector outcomes without leaking secrets or sensitive attributes.
 10. Never represent a mock connector, skipped test or partial security control as production-ready.
+11. A person filling in details can change names, never what access is given or to whom.
+
+## Domain model (Proposed: AR-1 to AR-3, not built yet)
+Detail: `docs/requirements/requirements.md` and DL-049 to DL-055.
+| Area | Rule |
+|---|---|
+| Application ownership | One required application owner. Optional application roles (User Admin, IT Admin, technical custodian, deployment-defined) come from a catalog, held by a person or group, each Optional or Required. A required role that is empty blocks requests. There is no business owner field. |
+| Portal governance | Optional per deployment, switched on with a second person. The portal is an application with a built-in connector that calls a module contract. Requestable portal roles need a basis. Privileged portal roles are just-in-time: for the portal only, a separate session with fresh MFA counts as the secondary account, and target systems keep real secondary accounts. The owner is outside the IAM team. The last IAM Administrator can't be removed. Not to be used until DL-048 is settled. |
+| Action-only fields | A workflow level may fill in or change listed names and identifiers only (account name, login, technical name, notes, and an AD OU from the application's allowed list). Never access, people, dates or privilege. Proposed and final values are audited. No password fields. |
+| Manual work | Applications with no connector send manual work to the Ticket system or an IAM task. Details entered by a person stay "not verified" until target evidence confirms them. A review can confirm the access is needed, not that the details are verified. |
 
 ## Secure engineering standards
 - Read `docs/security/SECURITY_BASELINE.md` before changes affecting UI, APIs, identity, workflows, connectors, storage or CI.
