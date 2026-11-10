@@ -13,6 +13,16 @@ public enum QuorumMode
     MinimumN = 3,
 }
 
+/// <summary>What a level asks of its people (spec 7.3).</summary>
+public enum StageKind
+{
+    /// <summary>They approve or reject.</summary>
+    Decision = 1,
+
+    /// <summary>They carry out a task, with no decision. Finishing it approves nothing.</summary>
+    Action = 2,
+}
+
 /// <summary>
 /// What a stage does at its deadline (DL-013). There is deliberately no "approve" and no "next level": no configuration
 /// can turn a timeout into a grant or skip a stage (K.1, CLAUDE.md rule 3).
@@ -65,6 +75,15 @@ public enum ApprovalRefusal
     EscalationRemovesAvailableApprover = 35,
     EscalationCannotReachQuorum = 36,
     EscalationRelistsEarlierDecider = 37,
+    InvalidStageSetting = 38,
+
+    // 39 is reserved: it was MandatoryStageCannotSkip, removed by DL-057. Never reuse it once codes are published.
+    NoDecisionStage = 40,
+    WrongActionForStage = 41,
+    AlreadyAuthorized = 42,
+    MandatoryStageCannotBeAction = 43,
+
+    // 44 is reserved: it was IndependentStageCannotSkip, removed by DL-057.
 }
 
 /// <summary>An action was refused. The message gives the code only, never a person, reason text or other value.</summary>
@@ -120,7 +139,7 @@ public static class ApprovalLimits
 /// <summary>
 /// One stage as configured, with its approvers already resolved (approver resolution is a later story). Stages with the
 /// same <see cref="Sequence"/> run in parallel. <see cref="Applicable"/> is the stage condition's result when the route
-/// was built; a mandatory stage must be applicable.
+/// was built; a mandatory stage must be applicable. No level is ever skipped: one with nobody able to act holds (DL-057).
 /// </summary>
 public sealed record StageDefinition(
     Guid StageId,
@@ -132,7 +151,8 @@ public sealed record StageDefinition(
     bool Applicable,
     TimeSpan Deadline,
     TimeoutAction OnTimeout,
-    IReadOnlyList<Guid> Candidates);
+    IReadOnlyList<Guid> Candidates,
+    StageKind Kind = StageKind.Decision);
 
 /// <summary>Changes an entitlement may make to a route (IAM-WF-010). Mandatory stages can be neither removed nor replaced.</summary>
 public sealed record RouteOverride(
@@ -187,6 +207,12 @@ public sealed class ApprovalRoute
         if (!copies.Any(s => s.Applicable))
         {
             throw new ApprovalRefusedException(ApprovalRefusal.NoApplicableStage);
+        }
+
+        // Action levels only carry out work. Without a decision, nobody has agreed to anything.
+        if (!copies.Any(s => s.Applicable && s.Kind == StageKind.Decision))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.NoDecisionStage);
         }
 
         return new ApprovalRoute(Array.AsReadOnly([.. copies.OrderBy(s => s.Sequence).ThenBy(s => s.StageId)]));
@@ -244,6 +270,17 @@ public sealed class ApprovalRoute
 
     private static void Validate(StageDefinition stage)
     {
+        if (!Enum.IsDefined(stage.Kind))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.InvalidStageSetting);
+        }
+
+        // A mandatory stage is a control, so it needs a decision: as a task it would never get one, and authorization wouldn't wait for it.
+        if (stage.Mandatory && stage.Kind == StageKind.Action)
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.MandatoryStageCannotBeAction);
+        }
+
         if (stage.Sequence < 1)
         {
             throw new ApprovalRefusedException(ApprovalRefusal.InvalidSequence);
@@ -254,7 +291,8 @@ public sealed class ApprovalRoute
             throw new ApprovalRefusedException(ApprovalRefusal.MandatoryStageNotApplicable);
         }
 
-        if (!Enum.IsDefined(stage.OnTimeout))
+        // Spec 7.3: an action-only level can only escalate or cancel.
+        if (!Enum.IsDefined(stage.OnTimeout) || (stage.Kind == StageKind.Action && stage.OnTimeout == TimeoutAction.Reject))
         {
             throw new ApprovalRefusedException(ApprovalRefusal.InvalidTimeoutAction);
         }
@@ -275,6 +313,9 @@ public sealed class ApprovalRoute
             QuorumMode.MinimumN => stage.MinimumApprovals >= 1 && stage.MinimumApprovals <= stage.Candidates.Count,
             _ => false,
         };
+
+        // One person finishes a task, whichever of them it is.
+        quorumValid &= stage.Kind != StageKind.Action || stage.Quorum == QuorumMode.AnyOne;
         if (!quorumValid)
         {
             throw new ApprovalRefusedException(ApprovalRefusal.InvalidQuorum);
