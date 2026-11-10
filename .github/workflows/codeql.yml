@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
+      actions: read # private repository: CodeQL reads its own workflow run (read-only)
       contents: read
       security-events: write # upload results to the Security tab
     steps:
