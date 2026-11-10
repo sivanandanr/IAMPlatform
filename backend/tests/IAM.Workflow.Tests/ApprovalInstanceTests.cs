@@ -33,8 +33,9 @@ internal static class F
         bool applicable = true,
         TimeoutAction onTimeout = TimeoutAction.Escalate,
         TimeSpan? deadline = null,
+        StageKind kind = StageKind.Decision,
         params Guid[] candidates) =>
-        new(id, sequence, quorum, minimum, mandatory, independent, applicable, deadline ?? TimeSpan.FromHours(24), onTimeout, candidates);
+        new(id, sequence, quorum, minimum, mandatory, independent, applicable, deadline ?? TimeSpan.FromHours(24), onTimeout, candidates, kind);
 
     public static ApprovalInstance Start(params StageDefinition[] stages) =>
         ApprovalInstance.Bind(Binding, ApprovalRoute.Create(stages), T0);
@@ -46,6 +47,9 @@ internal static class F
 
     public static void Reject(this ApprovalInstance instance, Guid stage, Guid actor) =>
         instance.Decide(new ApprovalDecision(Id(Interlocked.Increment(ref _decisionNumber)), stage, actor, null, false, "Not justified", instance.Version), T0.AddMinutes(1));
+
+    public static void Complete(this ApprovalInstance instance, Guid stage, Guid actor, Guid? onBehalfOf = null, DateTimeOffset? at = null) =>
+        instance.CompleteAction(new ActionCompletion(Id(Interlocked.Increment(ref _decisionNumber)), stage, actor, onBehalfOf, null, instance.Version), at ?? T0.AddMinutes(1));
 
     public static StageView View(this ApprovalInstance instance, Guid stage) => instance.Stages.Single(s => s.StageId == stage);
 
@@ -80,7 +84,8 @@ public sealed class ApprovalInstanceTests
     [Fact]
     public void AnyNumberOfStagesIsAllowed()
     {
-        var stages = Enumerable.Range(1, 10).Select(i => F.Stage(F.Id(100 + i), i, candidates: [F.A])).ToArray();
+        // Mandatory, so the same person is asked at every level rather than approved automatically (DL-057c).
+        var stages = Enumerable.Range(1, 10).Select(i => F.Stage(F.Id(100 + i), i, mandatory: true, candidates: [F.A])).ToArray();
         var instance = F.Start(stages);
         foreach (var stage in stages)
         {
@@ -281,7 +286,8 @@ public sealed class ApprovalInstanceTests
     [Fact]
     public void TheSamePersonMayApproveOrdinaryStages()
     {
-        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.A]));
+        // On a mandatory level they decide again; on an ordinary next level it is carried for them (DL-057c).
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, mandatory: true, candidates: [F.A]));
         instance.Approve(F.S1, F.A);
         instance.Approve(F.S2, F.A);
         instance.ProvisioningAuthorized.ShouldBeTrue();
@@ -603,7 +609,7 @@ public sealed class ApprovalInstanceTests
     }
 
     [Fact]
-    public void AStageThatIsNotApplicableIsRecordedAndSkipped()
+    public void AStageThatIsNotApplicableIsRecordedAndNeverOpens()
     {
         var instance = F.Start(F.Stage(F.S1, 1, applicable: false, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.B]));
         instance.View(F.S1).State.ShouldBe(StageState.NotApplicable);
@@ -1195,7 +1201,7 @@ public sealed class ApprovalReviewRegressionTests
     {
         const string Reason = "Sensitive reason text";
         var decision = new ApprovalDecision(F.Id(50), F.S1, F.A, F.B, false, Reason, 1);
-        var recorded = new RecordedDecision(F.Id(50), F.S1, F.A, F.B, false, Reason, T0);
+        var recorded = new RecordedDecision(F.Id(50), F.S1, F.A, F.B, RecordedOutcome.Rejected, Reason, T0);
         var escalation = new EscalationRecord(F.S1, F.A, Reason, [F.B], [F.C], [F.B], [F.C], T0, T0);
         var closure = new ApprovalClosure(ApprovalState.Cancelled, F.A, Reason, T0);
         var history = new ApprovalEvent(1, T0, ApprovalEventKind.InstanceWithdrawn, null, F.A);
@@ -1432,6 +1438,861 @@ public sealed class ApprovalReviewRegressionTests
     }
 }
 
+/// <summary>Action levels, authorization, Return for changes and approvals carried to the next level (stage 1 of AR-1 to AR-3, DL-055 to DL-057).</summary>
+public sealed class ApprovalActionLevelTests
+{
+    private static readonly DateTimeOffset T0 = F.T0;
+
+    private static StageDefinition Action(Guid id, int sequence, params Guid[] candidates) =>
+        F.Stage(id, sequence, kind: StageKind.Action, candidates: candidates);
+
+    [Fact]
+    public void AnActionLevelAfterTheLastDecisionRunsAfterAuthorization()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 2, F.B));
+        instance.ProvisioningAuthorized.ShouldBeFalse();
+
+        instance.Approve(F.S1, F.A);
+        instance.ProvisioningAuthorized.ShouldBeTrue();
+        instance.State.ShouldBe(ApprovalState.InProgress);
+        instance.View(F.S2).State.ShouldBe(StageState.Active);
+        instance.History.Count(e => e.Kind == ApprovalEventKind.InstanceAuthorized).ShouldBe(1);
+
+        instance.CompleteAction(new ActionCompletion(F.Id(50), F.S2, F.B, null, "Created by hand", instance.Version), T0.AddMinutes(2));
+        instance.View(F.S2).State.ShouldBe(StageState.Completed);
+        instance.Decisions[^1].Reason.ShouldBe("Created by hand");
+        instance.State.ShouldBe(ApprovalState.Approved);
+        instance.ProvisioningAuthorized.ShouldBeTrue();
+        instance.History.Count(e => e.Kind == ApprovalEventKind.InstanceAuthorized).ShouldBe(1);
+    }
+
+    [Fact]
+    public void AnActionLevelBeforeADecisionAuthorizesNothing()
+    {
+        var instance = F.Start(Action(F.S1, 1, F.A), F.Stage(F.S2, 2, candidates: [F.B]));
+        instance.Complete(F.S1, F.A);
+        instance.View(F.S1).State.ShouldBe(StageState.Completed);
+        instance.View(F.S2).State.ShouldBe(StageState.Active);
+        instance.ProvisioningAuthorized.ShouldBeFalse();
+        instance.State.ShouldBe(ApprovalState.InProgress);
+
+        instance.Approve(F.S2, F.B);
+        instance.State.ShouldBe(ApprovalState.Approved);
+        instance.ProvisioningAuthorized.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ARouteWithOnlyActionLevelsIsRefused()
+    {
+        F.Refusal(() => ApprovalRoute.Create([Action(F.S1, 1, F.A), Action(F.S2, 2, F.B)])).ShouldBe(ApprovalRefusal.NoDecisionStage);
+
+        // A decision level that doesn't apply is no decision either.
+        F.Refusal(() => ApprovalRoute.Create([Action(F.S1, 1, F.A), F.Stage(F.S2, 2, applicable: false, candidates: [F.B])])).ShouldBe(ApprovalRefusal.NoDecisionStage);
+
+        var route = ApprovalRoute.Create([F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 2, F.B)]);
+        F.Refusal(() => route.WithOverride(new RouteOverride([F.S1], [], []))).ShouldBe(ApprovalRefusal.NoDecisionStage);
+        F.Refusal(() => route.WithOverride(new RouteOverride([], [Action(F.S1, 1, F.A)], []))).ShouldBe(ApprovalRefusal.NoDecisionStage);
+    }
+
+    [Fact]
+    public void AnActionLevelCannotBeApprovedOrRejectedAndADecisionLevelCannotBeCompleted()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 1, F.B));
+        var version = instance.Version;
+        F.Refusal(() => instance.Approve(F.S2, F.B)).ShouldBe(ApprovalRefusal.WrongActionForStage);
+        F.Refusal(() => instance.Reject(F.S2, F.B)).ShouldBe(ApprovalRefusal.WrongActionForStage);
+        F.Refusal(() => instance.Complete(F.S1, F.A)).ShouldBe(ApprovalRefusal.WrongActionForStage);
+        instance.Version.ShouldBe(version);
+        instance.Decisions.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void FinishingATaskClosesNoDecisionLevel()
+    {
+        var instance = F.Start(Action(F.S1, 1, F.A), F.Stage(F.S2, 1, candidates: [F.B]), F.Stage(F.S3, 2, candidates: [F.C]));
+        instance.Complete(F.S1, F.A);
+        instance.View(F.S2).State.ShouldBe(StageState.Active);
+        instance.View(F.S2).Approvers.ShouldBeEmpty();
+        instance.ProvisioningAuthorized.ShouldBeFalse();
+        instance.History.ShouldNotContain(e => e.Kind == ApprovalEventKind.StageApproved);
+    }
+
+    [Theory]
+    [MemberData(nameof(ApprovalInstanceTests.ExcludedPeople), MemberType = typeof(ApprovalInstanceTests))]
+    public void ExcludedPeopleCannotCompleteAnActionLevel(Guid person)
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 2, person, F.B));
+        instance.Approve(F.S1, F.A);
+        instance.View(F.S2).Eligible.ShouldBe([F.B]);
+        F.Refusal(() => instance.Complete(F.S2, person)).ShouldBe(ApprovalRefusal.NotEligible);
+        F.Refusal(() => instance.Complete(F.S2, F.C, onBehalfOf: person)).ShouldBe(ApprovalRefusal.NotEligible);
+        F.Refusal(() => instance.Complete(F.S2, person, onBehalfOf: F.B)).ShouldBe(ApprovalRefusal.NotEligible);
+        instance.Complete(F.S2, F.B);
+        instance.State.ShouldBe(ApprovalState.Approved);
+    }
+
+    [Fact]
+    public void AnActionLevelCompletesOutOfOrderOnlyWhenOpen()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 2, F.B));
+        F.Refusal(() => instance.Complete(F.S2, F.B)).ShouldBe(ApprovalRefusal.StageNotActive);
+
+        var late = F.Start(Action(F.S1, 1, F.A), F.Stage(F.S2, 2, candidates: [F.B]));
+        F.Refusal(() => late.Complete(F.S1, F.A, at: T0.AddHours(24))).ShouldBe(ApprovalRefusal.StagePastDeadline);
+    }
+
+    [Fact]
+    public void SomeoneWhoFinishedATaskCountsForIndependence()
+    {
+        var instance = F.Start(Action(F.S1, 1, F.A), F.Stage(F.S2, 2, independent: true, candidates: [F.A, F.B]));
+        instance.Complete(F.S1, F.A);
+        instance.View(F.S2).Eligible.ShouldBe([F.B]);
+
+        var ordinary = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 2, F.A));
+        ordinary.Approve(F.S1, F.A);
+        ordinary.Complete(F.S2, F.A);
+        ordinary.State.ShouldBe(ApprovalState.Approved);
+    }
+
+    [Fact]
+    public void SomeoneWhoFinishedATaskCannotEscalate()
+    {
+        var instance = F.Start(Action(F.S1, 1, F.E), F.Stage(F.S2, 2, candidates: [F.Requester]));
+        instance.Complete(F.S1, F.E);
+        F.Refusal(() => instance.Escalate(F.S2, [F.A], F.E, "r", instance.Version, T0.AddHours(1))).ShouldBe(ApprovalRefusal.EscalatorConflict);
+    }
+
+    [Fact]
+    public void ActionLevelsCanOnlyEscalateOrCancelAtTheirDeadline()
+    {
+        F.Refusal(() => ApprovalRoute.Create([F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, kind: StageKind.Action, onTimeout: TimeoutAction.Reject, candidates: [F.B])])).ShouldBe(ApprovalRefusal.InvalidTimeoutAction);
+
+        var holding = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, kind: StageKind.Action, deadline: TimeSpan.FromHours(1), candidates: [F.B]));
+        holding.Approve(F.S1, F.A);
+        holding.ApplyTimeouts(T0.AddHours(2), holding.Version);
+        holding.State.ShouldBe(ApprovalState.Held);
+        holding.ProvisioningAuthorized.ShouldBeTrue();
+
+        // Escalating keeps the same limits as any other level.
+        F.Refusal(() => holding.Escalate(F.S2, [F.A], F.A, "r", holding.Version, T0.AddHours(3))).ShouldBe(ApprovalRefusal.EscalatorConflict);
+        holding.Escalate(F.S2, [F.C], F.E, "r", holding.Version, T0.AddHours(3));
+        holding.Complete(F.S2, F.C, at: T0.AddHours(3.5));
+        holding.State.ShouldBe(ApprovalState.Approved);
+
+        var cancelling = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, kind: StageKind.Action, onTimeout: TimeoutAction.Cancel, deadline: TimeSpan.FromHours(1), candidates: [F.B]));
+        cancelling.Approve(F.S1, F.A);
+        cancelling.ApplyTimeouts(T0.AddHours(2), cancelling.Version);
+        cancelling.State.ShouldBe(ApprovalState.Cancelled);
+        cancelling.ProvisioningAuthorized.ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(QuorumMode.All, null)]
+    [InlineData(QuorumMode.MinimumN, 1)]
+    public void AnActionLevelIsDoneByOnePerson(QuorumMode quorum, int? minimum) =>
+        F.Refusal(() => ApprovalRoute.Create([F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, quorum, minimum, kind: StageKind.Action, candidates: [F.B])])).ShouldBe(ApprovalRefusal.InvalidQuorum);
+
+    [Fact]
+    public void CancelAfterAuthorizationWithdrawsIt()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 2, F.B));
+        instance.Approve(F.S1, F.A);
+        instance.ProvisioningAuthorized.ShouldBeTrue();
+        instance.Cancel(F.E, "Duplicate", instance.Version, T0.AddHours(1));
+        instance.State.ShouldBe(ApprovalState.Cancelled);
+        instance.ProvisioningAuthorized.ShouldBeFalse();
+        instance.History.ShouldContain(e => e.Kind == ApprovalEventKind.InstanceAuthorized);
+        instance.History[^1].Kind.ShouldBe(ApprovalEventKind.InstanceCancelled);
+    }
+
+    [Fact]
+    public void WithdrawIsRefusedAfterAuthorization()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 2, F.B));
+        instance.Approve(F.S1, F.A);
+        var version = instance.Version;
+        F.Refusal(() => instance.Withdraw(F.Requester, null, version, T0.AddHours(1))).ShouldBe(ApprovalRefusal.AlreadyAuthorized);
+        instance.Version.ShouldBe(version);
+        instance.ProvisioningAuthorized.ShouldBeTrue();
+    }
+
+    [Theory]
+    [MemberData(nameof(ApprovalInstanceTests.ExcludedPeople), MemberType = typeof(ApprovalInstanceTests))]
+    public void ExcludedPeopleCannotCancelAfterAuthorization(Guid person)
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 2, F.B));
+        instance.Approve(F.S1, F.A);
+        F.Refusal(() => instance.Cancel(person, "r", instance.Version, T0.AddHours(1))).ShouldBe(ApprovalRefusal.AlreadyAuthorized);
+        instance.ProvisioningAuthorized.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ACancelAfterAuthorizationRecordsOpenTasksAsUnknown()
+    {
+        var instance = F.Start(
+            F.Stage(F.S1, 1, candidates: [F.A]),
+            F.Stage(F.S2, 2, kind: StageKind.Action, deadline: TimeSpan.FromHours(1), candidates: [F.B]),
+            Action(F.S3, 2, F.C),
+            Action(F.Id(104), 2, F.D),
+            Action(F.Id(105), 3, F.E));
+        instance.Approve(F.S1, F.A);
+        instance.Complete(F.Id(104), F.D);
+        instance.ApplyTimeouts(T0.AddHours(2), instance.Version);
+        instance.View(F.S2).State.ShouldBe(StageState.Held);
+
+        instance.Cancel(F.Id(77), "r", instance.Version, T0.AddHours(3));
+
+        // Held and active count; the finished task and the one that never opened do not.
+        instance.TasksWithUnknownOutcome.ShouldBe([F.S2, F.S3], ignoreOrder: true);
+    }
+
+    [Fact]
+    public void ACancelTimeoutAfterAuthorizationIncludesTheTaskThatTimedOut()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, kind: StageKind.Action, onTimeout: TimeoutAction.Cancel, deadline: TimeSpan.FromHours(1), candidates: [F.B]));
+        instance.Approve(F.S1, F.A);
+        instance.ApplyTimeouts(T0.AddHours(2), instance.Version);
+        instance.State.ShouldBe(ApprovalState.Cancelled);
+        instance.TasksWithUnknownOutcome.ShouldBe([F.S2]);
+    }
+
+    [Fact]
+    public void ACancelBeforeAuthorizationHasNoUnknownTasks()
+    {
+        var instance = F.Start(Action(F.S1, 1, F.A), F.Stage(F.S2, 1, candidates: [F.B]));
+        instance.Cancel(F.Requester, "r", instance.Version, T0);
+        instance.State.ShouldBe(ApprovalState.Cancelled);
+        instance.TasksWithUnknownOutcome.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AfterAuthorizationAHoldDoesNotStopOtherTasksBeingRecorded()
+    {
+        var instance = F.Start(
+            F.Stage(F.S1, 1, candidates: [F.A]),
+            F.Stage(F.S2, 2, kind: StageKind.Action, deadline: TimeSpan.FromHours(1), candidates: [F.B]),
+            F.Stage(F.S3, 2, kind: StageKind.Action, onTimeout: TimeoutAction.Cancel, deadline: TimeSpan.FromHours(4), candidates: [F.C]));
+        instance.Approve(F.S1, F.A);
+        instance.ApplyTimeouts(T0.AddHours(2), instance.Version);
+        instance.State.ShouldBe(ApprovalState.Held);
+
+        instance.Complete(F.S3, F.C, at: T0.AddHours(3));
+        instance.View(F.S3).State.ShouldBe(StageState.Completed);
+        instance.State.ShouldBe(ApprovalState.Held);
+
+        // The finished task's clock has no effect now, and the held one still needs someone.
+        instance.ApplyTimeouts(T0.AddHours(5), instance.Version);
+        instance.State.ShouldBe(ApprovalState.Held);
+        instance.ProvisioningAuthorized.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void BeforeAuthorizationAHoldStillStopsTasks()
+    {
+        var instance = F.Start(Action(F.S1, 1, F.A), F.Stage(F.S2, 1, candidates: [F.Requester]));
+        instance.State.ShouldBe(ApprovalState.Held);
+        F.Refusal(() => instance.Complete(F.S1, F.A)).ShouldBe(ApprovalRefusal.InstanceHeld);
+    }
+
+    [Fact]
+    public void AfterAuthorizationAHeldTaskItselfStillCannotBeCompleted()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, kind: StageKind.Action, deadline: TimeSpan.FromHours(1), candidates: [F.B]));
+        instance.Approve(F.S1, F.A);
+        instance.ApplyTimeouts(T0.AddHours(2), instance.Version);
+        F.Refusal(() => instance.Complete(F.S2, F.B, at: T0.AddHours(3))).ShouldBe(ApprovalRefusal.StageNotActive);
+    }
+
+    [Fact]
+    public void AMandatoryLevelCannotBeAnActionLevel() =>
+        F.Refusal(() => ApprovalRoute.Create([F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, mandatory: true, kind: StageKind.Action, candidates: [F.B])])).ShouldBe(ApprovalRefusal.MandatoryStageCannotBeAction);
+
+    [Fact]
+    public void ADelegateCanReturnForChangesAndItIsRecorded()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]));
+        instance.ReturnForChanges(F.S1, F.D, F.A, "Needs more", instance.Version, T0);
+        instance.State.ShouldBe(ApprovalState.Returned);
+        instance.Closure.ShouldBe(new ApprovalClosure(ApprovalState.Returned, F.D, "Needs more", T0, F.A));
+    }
+
+    [Fact]
+    public void AReturnByADelegateHasTheSameChecksAsADecision()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, QuorumMode.MinimumN, 2, candidates: [F.Requester, F.A, F.B]));
+        var v = instance.Version;
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.D, F.Requester, "r", v, T0)).ShouldBe(ApprovalRefusal.NotEligible);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.Requester, F.A, "r", v, T0)).ShouldBe(ApprovalRefusal.NotEligible);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.D, F.C, "r", v, T0)).ShouldBe(ApprovalRefusal.NotEligible);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.A, F.A, "r", v, T0)).ShouldBe(ApprovalRefusal.InvalidActor);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.A, Guid.Empty, "r", v, T0)).ShouldBe(ApprovalRefusal.InvalidActor);
+
+        instance.Approve(F.S1, F.D, onBehalfOf: F.A);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.D, F.B, "r", instance.Version, T0.AddMinutes(2))).ShouldBe(ApprovalRefusal.AlreadyDecided);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.C, F.A, "r", instance.Version, T0.AddMinutes(2))).ShouldBe(ApprovalRefusal.AlreadyDecided);
+    }
+
+    [Theory]
+    [InlineData(TimeoutAction.Reject)]
+    [InlineData(TimeoutAction.Cancel)]
+    public void AReturnCannotPreemptASiblingsOverdueClosingTimeout(TimeoutAction action)
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, onTimeout: action, deadline: TimeSpan.FromHours(1), candidates: [F.A]), F.Stage(F.S2, 1, candidates: [F.B]));
+        F.Refusal(() => instance.ReturnForChanges(F.S2, F.B, null, "r", instance.Version, T0.AddHours(1))).ShouldBe(ApprovalRefusal.StagePastDeadline);
+    }
+
+    [Theory]
+    [InlineData(TimeoutAction.Reject)]
+    [InlineData(TimeoutAction.Cancel)]
+    public void AReturnIsAllowedBeforeASiblingsClosingDeadline(TimeoutAction action)
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, onTimeout: action, deadline: TimeSpan.FromHours(1), candidates: [F.A]), F.Stage(F.S2, 1, candidates: [F.B]));
+        instance.ReturnForChanges(F.S2, F.B, null, "r", instance.Version, T0.AddHours(1).AddTicks(-1));
+        instance.State.ShouldBe(ApprovalState.Returned);
+    }
+
+    [Fact]
+    public void AReturnIsAllowedBesideASiblingOverdueToEscalate()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, onTimeout: TimeoutAction.Escalate, deadline: TimeSpan.FromHours(1), candidates: [F.A]), F.Stage(F.S2, 1, candidates: [F.B]));
+        instance.ReturnForChanges(F.S2, F.B, null, "r", instance.Version, T0.AddHours(2));
+        instance.State.ShouldBe(ApprovalState.Returned);
+    }
+
+    [Fact]
+    public void AReturnBesideAnApprovedSiblingCancelsNothingAlreadyApproved()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 1, candidates: [F.B]), F.Stage(F.S3, 2, candidates: [F.C]));
+        instance.Approve(F.S1, F.A);
+        instance.ReturnForChanges(F.S2, F.B, null, "r", instance.Version, T0.AddHours(1));
+        instance.View(F.S1).State.ShouldBe(StageState.Approved);
+        instance.View(F.S3).State.ShouldBe(StageState.Cancelled);
+        instance.ProvisioningAuthorized.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AFinishedTaskIsRecordedAsCompletedNotApproved()
+    {
+        var instance = F.Start(Action(F.S1, 1, F.A), F.Stage(F.S2, 2, candidates: [F.B]));
+        instance.Complete(F.S1, F.A);
+        instance.Decisions[0].Outcome.ShouldBe(RecordedOutcome.Completed);
+        instance.View(F.S1).Approvers.ShouldBeEmpty();
+
+        instance.Approve(F.S2, F.B);
+        instance.Decisions[1].Outcome.ShouldBe(RecordedOutcome.Approved);
+    }
+
+    [Fact]
+    public void ADelegateCanFinishATask()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 2, F.B));
+        instance.Approve(F.S1, F.A);
+        instance.Complete(F.S2, F.D, onBehalfOf: F.B);
+        instance.State.ShouldBe(ApprovalState.Approved);
+        instance.Decisions[^1].Actor.ShouldBe(F.D);
+        instance.Decisions[^1].Principal.ShouldBe(F.B);
+    }
+
+    [Fact]
+    public void ADecisionIdCannotBeUsedAgainToFinishATask()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 2, F.B));
+        instance.Decide(new ApprovalDecision(F.Id(50), F.S1, F.A, null, true, null, instance.Version), T0);
+        F.Refusal(() => instance.CompleteAction(new ActionCompletion(F.Id(50), F.S2, F.B, null, null, instance.Version), T0)).ShouldBe(ApprovalRefusal.DuplicateDecision);
+    }
+
+    [Fact]
+    public void AnIndependentDeciderCannotAlsoFinishATask()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, independent: true, candidates: [F.A]), Action(F.S2, 2, F.A, F.B));
+        instance.Approve(F.S1, F.A);
+        F.Refusal(() => instance.Complete(F.S2, F.A)).ShouldBe(ApprovalRefusal.NotEligible);
+        instance.Complete(F.S2, F.B);
+        instance.State.ShouldBe(ApprovalState.Approved);
+    }
+
+    [Fact]
+    public void ReachingAuthorizationAndClosingTogetherRecordInTheRightOrder()
+    {
+        var first = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 1, F.B));
+        first.Complete(F.S2, F.B);
+        first.Approve(F.S1, F.A);
+        first.History.Select(e => e.Kind).TakeLast(2).ShouldBe([ApprovalEventKind.InstanceAuthorized, ApprovalEventKind.InstanceApproved]);
+
+        // Authorized, then held: the same order wherever the action level sits.
+        var held = F.Start(F.Stage(F.S1, 1, independent: true, candidates: [F.A]), Action(F.S2, 1, F.A));
+        held.Approve(F.S1, F.A);
+        var kinds = held.History.Select(e => e.Kind).ToList();
+        kinds.IndexOf(ApprovalEventKind.InstanceAuthorized).ShouldBeLessThan(kinds.IndexOf(ApprovalEventKind.InstanceHeld));
+    }
+
+    [Fact]
+    public void AuthorizationIsRecordedOnceWhoeverActsFirst()
+    {
+        var approvedFirst = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 1, F.B));
+        approvedFirst.Approve(F.S1, F.A);
+        approvedFirst.Complete(F.S2, F.B);
+
+        var completedFirst = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 1, F.B));
+        completedFirst.Complete(F.S2, F.B);
+        completedFirst.Approve(F.S1, F.A);
+
+        foreach (var instance in new[] { approvedFirst, completedFirst })
+        {
+            instance.History.Count(e => e.Kind == ApprovalEventKind.InstanceAuthorized).ShouldBe(1);
+        }
+    }
+
+    [Fact]
+    public void ActionAndDecisionLevelsExpiringTogetherGiveTheSameResultWhateverTheIds()
+    {
+        ApprovalInstance Run(Guid decision, Guid action)
+        {
+            var instance = F.Start(
+                F.Stage(decision, 1, onTimeout: TimeoutAction.Reject, deadline: TimeSpan.FromHours(1), candidates: [F.A]),
+                F.Stage(action, 1, kind: StageKind.Action, onTimeout: TimeoutAction.Cancel, deadline: TimeSpan.FromHours(1), candidates: [F.B]));
+            instance.ApplyTimeouts(T0.AddHours(1), instance.Version);
+            return instance;
+        }
+
+        foreach (var (decision, action) in new[] { (F.S1, F.S2), (F.S2, F.S1) })
+        {
+            var instance = Run(decision, action);
+            instance.State.ShouldBe(ApprovalState.Rejected);
+            instance.View(decision).State.ShouldBe(StageState.Rejected);
+            instance.View(action).State.ShouldBe(StageState.Cancelled);
+        }
+    }
+
+    [Theory]
+    [InlineData(StageState.Completed)]
+    [InlineData(StageState.NotApplicable)]
+    public void AReturnIsRefusedOnALevelThatIsNotOpen(StageState state)
+    {
+        var first = state switch
+        {
+            StageState.Completed => Action(F.S1, 1, F.A),
+            _ => F.Stage(F.S1, 1, applicable: false, candidates: [F.A]),
+        };
+        var instance = F.Start(first, F.Stage(F.S2, 2, candidates: [F.B]));
+        if (state == StageState.Completed)
+        {
+            instance.Complete(F.S1, F.A);
+        }
+
+        instance.View(F.S1).State.ShouldBe(state);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.A, null, "r", instance.Version, T0.AddHours(1))).ShouldBe(ApprovalRefusal.StageNotActive);
+    }
+
+    [Fact]
+    public void ARouteWithNoActionLevelsHasTheSameHistoryAsBefore()
+    {
+        ApprovalEventKind[] Kinds(ApprovalInstance instance) => [.. instance.History.Select(e => e.Kind)];
+
+        var single = F.Start(F.Stage(F.S1, 1, candidates: [F.A]));
+        single.Approve(F.S1, F.A);
+        Kinds(single).ShouldBe([ApprovalEventKind.Bound, ApprovalEventKind.StageActivated, ApprovalEventKind.DecisionApproved, ApprovalEventKind.StageApproved, ApprovalEventKind.InstanceApproved]);
+
+        var sequential = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.B]));
+        sequential.Approve(F.S1, F.A);
+        sequential.Approve(F.S2, F.B);
+        Kinds(sequential).ShouldBe([ApprovalEventKind.Bound, ApprovalEventKind.StageActivated, ApprovalEventKind.DecisionApproved, ApprovalEventKind.StageApproved, ApprovalEventKind.StageActivated, ApprovalEventKind.DecisionApproved, ApprovalEventKind.StageApproved, ApprovalEventKind.InstanceApproved]);
+
+        var parallel = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 1, candidates: [F.B]));
+        parallel.Approve(F.S1, F.A);
+        parallel.Approve(F.S2, F.B);
+        Kinds(parallel).ShouldBe([ApprovalEventKind.Bound, ApprovalEventKind.StageActivated, ApprovalEventKind.StageActivated, ApprovalEventKind.DecisionApproved, ApprovalEventKind.StageApproved, ApprovalEventKind.DecisionApproved, ApprovalEventKind.StageApproved, ApprovalEventKind.InstanceApproved]);
+
+        var notApplicable = F.Start(F.Stage(F.S1, 1, applicable: false, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.B]));
+        notApplicable.Approve(F.S2, F.B);
+        Kinds(notApplicable).ShouldBe([ApprovalEventKind.Bound, ApprovalEventKind.StageNotApplicable, ApprovalEventKind.StageActivated, ApprovalEventKind.DecisionApproved, ApprovalEventKind.StageApproved, ApprovalEventKind.InstanceApproved]);
+
+        var escalated = F.Start(F.Stage(F.S1, 1, candidates: [F.Requester]));
+        escalated.Escalate(F.S1, [F.A], F.E, "r", escalated.Version, T0);
+        escalated.Approve(F.S1, F.A);
+        Kinds(escalated).ShouldBe([ApprovalEventKind.Bound, ApprovalEventKind.StageActivated, ApprovalEventKind.StageHeld, ApprovalEventKind.InstanceHeld, ApprovalEventKind.StageEscalated, ApprovalEventKind.StageActivated, ApprovalEventKind.InstanceResumed, ApprovalEventKind.DecisionApproved, ApprovalEventKind.StageApproved, ApprovalEventKind.InstanceApproved]);
+
+        var timedOut = F.Start(F.Stage(F.S1, 1, onTimeout: TimeoutAction.Reject, deadline: TimeSpan.FromHours(1), candidates: [F.A]));
+        timedOut.ApplyTimeouts(T0.AddHours(1), timedOut.Version);
+        Kinds(timedOut).ShouldBe([ApprovalEventKind.Bound, ApprovalEventKind.StageActivated, ApprovalEventKind.StageTimedOut, ApprovalEventKind.StageRejected, ApprovalEventKind.InstanceRejected]);
+    }
+
+    [Fact]
+    public void AnEmptyListIsRefused() =>
+        F.Refusal(() => ApprovalRoute.Create([F.Stage(F.S1, 1)])).ShouldBe(ApprovalRefusal.InvalidCandidates);
+
+    [Fact]
+    public void AnIndependenceConflictOnALaterLevelHolds()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, independent: true, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.A]));
+        instance.Approve(F.S1, F.A);
+        instance.View(F.S2).State.ShouldBe(StageState.Held);
+    }
+
+    [Fact]
+    public void AnUnknownKindOrSettingIsRefused()
+    {
+        F.Refusal(() => ApprovalRoute.Create([F.Stage(F.S1, 1, kind: (StageKind)9, candidates: [F.A])])).ShouldBe(ApprovalRefusal.InvalidStageSetting);
+    }
+
+    [Fact]
+    public void ReturnForChangesClosesTheRequestAndAuthorizesNothing()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.B]), Action(F.S3, 3, F.C));
+        instance.Approve(F.S1, F.A);
+        instance.ReturnForChanges(F.S2, F.B, null, "Wrong entitlement", instance.Version, T0.AddHours(1));
+
+        instance.State.ShouldBe(ApprovalState.Returned);
+        instance.ProvisioningAuthorized.ShouldBeFalse();
+        instance.View(F.S2).State.ShouldBe(StageState.Returned);
+        instance.View(F.S3).State.ShouldBe(StageState.Cancelled);
+        instance.Closure.ShouldBe(new ApprovalClosure(ApprovalState.Returned, F.B, "Wrong entitlement", T0.AddHours(1)));
+        instance.History.TakeLast(3).Select(e => e.Kind).ShouldBe([ApprovalEventKind.StageReturned, ApprovalEventKind.StageCancelled, ApprovalEventKind.InstanceReturned]);
+        instance.History.Any(e => e.ToString().Contains("Wrong entitlement", StringComparison.Ordinal)).ShouldBeFalse();
+
+        var version = instance.Version;
+        F.Refusal(() => instance.Decide(new ApprovalDecision(F.Id(50), F.S2, F.B, null, true, null, version), T0.AddHours(2))).ShouldBe(ApprovalRefusal.InstanceClosed);
+        F.Refusal(() => instance.ReturnForChanges(F.S2, F.B, null, "r", version, T0.AddHours(2))).ShouldBe(ApprovalRefusal.InstanceClosed);
+    }
+
+    [Fact]
+    public void AnActionLevelBeforeTheLastDecisionCanReturnForChanges()
+    {
+        var instance = F.Start(Action(F.S1, 1, F.A), F.Stage(F.S2, 2, candidates: [F.B]));
+        instance.ReturnForChanges(F.S1, F.A, null, "Name needs more than a rename", instance.Version, T0);
+        instance.State.ShouldBe(ApprovalState.Returned);
+    }
+
+    [Fact]
+    public void ReturnForChangesIsRefusedAfterAuthorization()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), Action(F.S2, 2, F.B));
+        instance.Approve(F.S1, F.A);
+        var version = instance.Version;
+        F.Refusal(() => instance.ReturnForChanges(F.S2, F.B, null, "r", version, T0.AddHours(1))).ShouldBe(ApprovalRefusal.AlreadyAuthorized);
+        instance.Version.ShouldBe(version);
+        instance.ProvisioningAuthorized.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ReturnForChangesNeedsSomeoneAbleToActAndAReason()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, QuorumMode.MinimumN, 2, deadline: TimeSpan.FromHours(1), candidates: [F.Requester, F.A, F.B]), F.Stage(F.S2, 2, candidates: [F.C]));
+        var v = instance.Version;
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.Requester, null, "r", v, T0)).ShouldBe(ApprovalRefusal.NotEligible);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.C, null, "r", v, T0)).ShouldBe(ApprovalRefusal.NotEligible);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, Guid.Empty, null, "r", v, T0)).ShouldBe(ApprovalRefusal.InvalidActor);
+        F.Refusal(() => instance.ReturnForChanges(F.S2, F.C, null, "r", v, T0)).ShouldBe(ApprovalRefusal.StageNotActive);
+        F.Refusal(() => instance.ReturnForChanges(F.Id(999), F.A, null, "r", v, T0)).ShouldBe(ApprovalRefusal.UnknownStage);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.A, null, null, v, T0)).ShouldBe(ApprovalRefusal.InvalidReason);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.A, null, "  ", v, T0)).ShouldBe(ApprovalRefusal.InvalidReason);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.A, null, "r", v - 1, T0)).ShouldBe(ApprovalRefusal.StaleVersion);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.A, null, "r", v, T0.AddHours(1))).ShouldBe(ApprovalRefusal.StagePastDeadline);
+        instance.Version.ShouldBe(v);
+        instance.Closure.ShouldBeNull();
+
+        instance.Approve(F.S1, F.A);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.A, null, "r", instance.Version, T0.AddMinutes(2))).ShouldBe(ApprovalRefusal.AlreadyDecided);
+    }
+
+    [Fact]
+    public void ReturnForChangesIsRefusedDuringAHold()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 1, candidates: [F.Requester]));
+        instance.State.ShouldBe(ApprovalState.Held);
+        F.Refusal(() => instance.ReturnForChanges(F.S1, F.A, null, "r", instance.Version, T0)).ShouldBe(ApprovalRefusal.InstanceHeld);
+    }
+
+    [Fact]
+    public void LoggingACompletionDoesNotExposeAPersonOrANote()
+    {
+        var text = new ActionCompletion(F.Id(50), F.S1, F.A, F.B, "Sensitive note", 1).ToString();
+        text.ShouldNotContain("Sensitive note");
+        text.ShouldNotContain(F.A.ToString());
+        text.ShouldNotContain(F.B.ToString());
+    }
+}
+
+/// <summary>The same person at the next decision level is approved automatically, within the limits of DL-057(c) and DL-058.</summary>
+public sealed class ApprovalSameApproverTests
+{
+    private static readonly DateTimeOffset T0 = F.T0;
+
+    [Fact]
+    public void TheNextLevelIsApprovedForTheSamePersonWithARemarkAndALink()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.A, F.B]));
+        instance.Approve(F.S1, F.A);
+
+        instance.State.ShouldBe(ApprovalState.Approved);
+        var carried = instance.Decisions.Single(d => d.StageId == F.S2);
+        carried.Outcome.ShouldBe(RecordedOutcome.ApprovedAutomatically);
+        carried.Principal.ShouldBe(F.A);
+        carried.Actor.ShouldBe(F.A);
+        carried.Reason.ShouldBe(ApprovalInstance.SameApproverRemark);
+        carried.CarriedFrom.ShouldBe(instance.Decisions.Single(d => d.StageId == F.S1).DecisionId);
+        instance.History.ShouldContain(e => e.Kind == ApprovalEventKind.DecisionApprovedAutomatically && e.StageId == F.S2 && e.Actor == F.A);
+    }
+
+    [Fact]
+    public void ItCountsAsOneApprovalSoOthersAreStillNeeded()
+    {
+        var all = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, QuorumMode.All, candidates: [F.A, F.B]));
+        all.Approve(F.S1, F.A);
+        all.View(F.S2).Approvers.ShouldBe([F.A]);
+        all.ProvisioningAuthorized.ShouldBeFalse();
+        all.Approve(F.S2, F.B);
+        all.ProvisioningAuthorized.ShouldBeTrue();
+
+        var two = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, QuorumMode.MinimumN, 2, candidates: [F.A, F.B, F.C]));
+        two.Approve(F.S1, F.A);
+        two.ProvisioningAuthorized.ShouldBeFalse();
+        F.Refusal(() => two.Approve(F.S2, F.A)).ShouldBe(ApprovalRefusal.AlreadyDecided);
+        two.Approve(F.S2, F.C);
+        two.ProvisioningAuthorized.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AMandatoryLevelIsNeverApprovedAutomatically()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, mandatory: true, candidates: [F.A]));
+        instance.Approve(F.S1, F.A);
+        instance.View(F.S2).State.ShouldBe(StageState.Active);
+        instance.ProvisioningAuthorized.ShouldBeFalse();
+        instance.Approve(F.S2, F.A);
+        instance.Decisions[^1].Outcome.ShouldBe(RecordedOutcome.Approved);
+        instance.ProvisioningAuthorized.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AnIndependentLevelIsNeverApprovedAutomatically()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, independent: true, candidates: [F.A, F.B]));
+        instance.Approve(F.S1, F.A);
+        instance.View(F.S2).Approvers.ShouldBeEmpty();
+        F.Refusal(() => instance.Approve(F.S2, F.A)).ShouldBe(ApprovalRefusal.NotEligible);
+        instance.Approve(F.S2, F.B);
+        instance.ProvisioningAuthorized.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ApprovingAnIndependentLevelCarriesNothingToTheNext()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, independent: true, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.A, F.B]));
+        instance.Approve(F.S1, F.A);
+        instance.View(F.S2).State.ShouldBe(StageState.Active);
+        instance.View(F.S2).Approvers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ADelegatesDecisionIsNotCarried()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.A, F.D]));
+        instance.Approve(F.S1, F.D, onBehalfOf: F.A);
+        instance.View(F.S2).State.ShouldBe(StageState.Active);
+        instance.View(F.S2).Approvers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void OnlyTheNextDecisionLevelNotOneFurtherOn()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.B]), F.Stage(F.S3, 3, candidates: [F.A, F.C]));
+        instance.Approve(F.S1, F.A);
+        instance.Approve(F.S2, F.B);
+        instance.View(F.S3).State.ShouldBe(StageState.Active);
+        instance.View(F.S3).Approvers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void LevelsThatDoNotApplyArePassedOver()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.Id(104), 2, applicable: false, candidates: [F.C]), F.Stage(F.S3, 3, candidates: [F.A, F.C]));
+        instance.Approve(F.S1, F.A);
+        instance.View(F.S3).State.ShouldBe(StageState.Approved);
+        instance.Decisions[^1].Outcome.ShouldBe(RecordedOutcome.ApprovedAutomatically);
+    }
+
+    [Fact]
+    public void ATaskInBetweenStopsTheCarry()
+    {
+        // The second decision is there to look at what the task did, so the person decides again (DL-058).
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, kind: StageKind.Action, candidates: [F.B]), F.Stage(F.S3, 3, candidates: [F.A, F.C]));
+        instance.Approve(F.S1, F.A);
+        instance.Complete(F.S2, F.B);
+        instance.View(F.S3).State.ShouldBe(StageState.Active);
+        instance.View(F.S3).Approvers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ATaskBesideThePreviousDecisionStopsTheCarryToo()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 1, kind: StageKind.Action, candidates: [F.B]), F.Stage(F.S3, 2, candidates: [F.A, F.C]));
+        instance.Approve(F.S1, F.A);
+        instance.Complete(F.S2, F.B);
+        instance.View(F.S3).Approvers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ATaskThatDoesNotApplyDoesNotStopIt()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, kind: StageKind.Action, applicable: false, candidates: [F.B]), F.Stage(F.S3, 3, candidates: [F.A, F.C]));
+        instance.Approve(F.S1, F.A);
+        instance.View(F.S3).State.ShouldBe(StageState.Approved);
+    }
+
+    [Fact]
+    public void ATaskIsNotCarriedAsAnApproval()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.B]), F.Stage(F.S2, 2, kind: StageKind.Action, candidates: [F.A]), F.Stage(F.S3, 3, candidates: [F.A, F.C]));
+        instance.Approve(F.S1, F.B);
+        instance.Complete(F.S2, F.A);
+        instance.View(F.S3).Approvers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ItIsNeverCarriedToSomeoneNotListed()
+    {
+        var notListed = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.B]));
+        notListed.Approve(F.S1, F.A);
+        notListed.View(F.S2).Approvers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ItDoesNotChainBeyondTheNextLevel()
+    {
+        // Only a real decision on the level just before carries, never another automatic approval (DL-058).
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.A]), F.Stage(F.S3, 3, candidates: [F.A]));
+        instance.Approve(F.S1, F.A);
+        instance.View(F.S2).State.ShouldBe(StageState.Approved);
+        instance.Decisions.Single(d => d.StageId == F.S2).CarriedFrom.ShouldBe(instance.Decisions.Single(d => d.StageId == F.S1).DecisionId);
+        instance.View(F.S3).State.ShouldBe(StageState.Active);
+        instance.View(F.S3).Approvers.ShouldBeEmpty();
+
+        instance.Approve(F.S3, F.A);
+        instance.Decisions[^1].Outcome.ShouldBe(RecordedOutcome.Approved);
+        instance.State.ShouldBe(ApprovalState.Approved);
+    }
+
+    [Fact]
+    public void NothingIsCarriedFromALevelThatWasEscalated()
+    {
+        // A's approval didn't count there once the list was replaced, so it can't carry either (DL-058).
+        var instance = F.Start(F.Stage(F.S1, 1, QuorumMode.All, deadline: TimeSpan.FromHours(1), candidates: [F.A, F.B]), F.Stage(F.S2, 2, candidates: [F.A, F.Id(30)]));
+        instance.Approve(F.S1, F.A);
+        instance.ApplyTimeouts(T0.AddHours(1), instance.Version);
+        instance.Escalate(F.S1, [F.C, F.D], F.E, "r", instance.Version, T0.AddHours(2));
+        instance.Approve(F.S1, F.C, at: T0.AddHours(2.5));
+        instance.Approve(F.S1, F.D, at: T0.AddHours(2.5));
+        instance.View(F.S2).State.ShouldBe(StageState.Active);
+        instance.View(F.S2).Approvers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void SomeoneAnEscalatorAddedIsNotCarriedOnward()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.Requester]), F.Stage(F.S2, 2, QuorumMode.All, candidates: [F.A, F.B]));
+        instance.Escalate(F.S1, [F.A], F.E, "r", instance.Version, T0);
+        instance.Approve(F.S1, F.A);
+        instance.View(F.S2).Approvers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ADecisionIdEqualToTheNextLevelsIdCarriesNothing()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.A, F.B]));
+        instance.Decide(new ApprovalDecision(F.S2, F.S1, F.A, null, true, null, instance.Version), T0);
+        instance.View(F.S2).State.ShouldBe(StageState.Active);
+        instance.View(F.S2).Approvers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AParallelPreviousStepCarriesFromAnyOfItsStages()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 1, candidates: [F.B]), F.Stage(F.S3, 2, QuorumMode.All, candidates: [F.A, F.B]));
+        instance.Approve(F.S1, F.A);
+        instance.Approve(F.S2, F.B);
+        instance.State.ShouldBe(ApprovalState.Approved);
+        instance.Decisions.Count(d => d.StageId == F.S3 && d.Outcome == RecordedOutcome.ApprovedAutomatically).ShouldBe(2);
+    }
+
+    [Fact]
+    public void SomeoneWhoApprovedTwoParallelLevelsIsCarriedOnce()
+    {
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 1, candidates: [F.A]), F.Stage(F.S3, 2, QuorumMode.MinimumN, 2, candidates: [F.A, F.B]));
+        instance.Approve(F.S1, F.A);
+        instance.Approve(F.S2, F.A);
+        instance.Decisions.Count(d => d.StageId == F.S3).ShouldBe(1);
+        instance.ProvisioningAuthorized.ShouldBeFalse();
+        instance.Approve(F.S3, F.B);
+        instance.ProvisioningAuthorized.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IfACarriedIdWouldClashNothingIsCarried()
+    {
+        // A caller chooses decision ids, so one can collide with the id a carried approval would get. Then nothing is
+        // carried, and the people decide as usual.
+        var first = F.Id(61);
+        var clashing = Xor(first, F.S3);
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 1, candidates: [F.B]), F.Stage(F.S3, 2, candidates: [F.A, F.B]));
+        instance.Decide(new ApprovalDecision(first, F.S1, F.A, null, true, null, instance.Version), T0);
+        instance.Decide(new ApprovalDecision(clashing, F.S2, F.B, null, true, null, instance.Version), T0);
+
+        instance.View(F.S3).State.ShouldBe(StageState.Active);
+        instance.View(F.S3).Approvers.ShouldBeEmpty();
+        instance.Decisions.Select(d => d.DecisionId).Distinct().Count().ShouldBe(instance.Decisions.Count);
+    }
+
+    private static Guid Xor(Guid x, Guid y)
+    {
+        var a = x.ToByteArray();
+        var b = y.ToByteArray();
+        for (var i = 0; i < 16; i++)
+        {
+            a[i] ^= b[i];
+        }
+
+        return new Guid(a);
+    }
+
+    [Fact]
+    public void AnEscalatedLevelIsNotApprovedAutomatically()
+    {
+        // Carrying happens only when a level opens, not when an escalation reopens it, even for someone who just approved
+        // the level before.
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.Requester]));
+        instance.Approve(F.S1, F.A);
+        instance.State.ShouldBe(ApprovalState.Held);
+        instance.Escalate(F.S2, [F.A], F.E, "r", instance.Version, T0.AddHours(1));
+        instance.View(F.S2).State.ShouldBe(StageState.Active);
+        instance.View(F.S2).Approvers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AnIndependentSiblingInTheNextStepStillHoldsBecauseOfTheEarlierDecision()
+    {
+        // The carry to S2 isn't what holds S3: A's own decision on S1 already makes A ineligible on any independent level.
+        var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.A]), F.Stage(F.S3, 2, QuorumMode.All, independent: true, candidates: [F.A, F.B]));
+        instance.Approve(F.S1, F.A);
+        instance.View(F.S2).State.ShouldBe(StageState.Approved);
+        instance.View(F.S3).State.ShouldBe(StageState.Held);
+        instance.ProvisioningAuthorized.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TheSameActionsGiveTheSameCarriedDecisions()
+    {
+        ApprovalInstance Run()
+        {
+            var instance = F.Start(F.Stage(F.S1, 1, candidates: [F.A]), F.Stage(F.S2, 2, candidates: [F.A]));
+            instance.Decide(new ApprovalDecision(F.Id(61), F.S1, F.A, null, true, null, instance.Version), T0);
+            return instance;
+        }
+
+        Run().Decisions.ShouldBe(Run().Decisions);
+    }
+}
+
 public sealed class ApprovalRouteTests
 {
     private static ApprovalRefusal? Refused(params StageDefinition[] stages) => F.Refusal(() => ApprovalRoute.Create(stages));
@@ -1552,10 +2413,14 @@ public sealed class ApprovalInvariantTests
         var rejected = 0;
         var cancelled = 0;
         var withdrawn = 0;
+        var returned = 0;
+        var authorizedBeforeApproved = 0;
+        var carried = 0;
+        var completed = 0;
         var held = 0;
         var escalated = 0;
         var overridden = 0;
-        var approvedWithEscalatedAll = 0;
+        var approvedAfterEscalation = 0;
         var refusals = new Dictionary<ApprovalRefusal, int>();
         for (var round = 0; round < 3_000; round++)
         {
@@ -1569,12 +2434,16 @@ public sealed class ApprovalInvariantTests
             var definitions = route.Stages.ToDictionary(s => s.StageId);
             var routeStages = route.Stages.ToArray();
             var instance = ApprovalInstance.Bind(F.Binding, route, F.T0);
+            CheckInvariants(instance, definitions);
+            var everHeld = false;
+            var everAuthorizedEarly = false;
             var at = F.T0;
             var decisionNumber = 0;
 
             for (var step = 0; step < 40 && instance.State is ApprovalState.InProgress or ApprovalState.Held; step++)
             {
                 var before = Snapshot(instance);
+                var versionBefore = instance.Version;
                 at = at.AddMinutes(random.Next(0, 90));
                 var when = random.Next(5) == 0 ? at.ToOffset(TimeSpan.FromHours(random.Next(-11, 12))) : at;
                 try
@@ -1585,23 +2454,36 @@ public sealed class ApprovalInvariantTests
                 {
                     refusals[refusal.Refusal!.Value] = refusals.GetValueOrDefault(refusal.Refusal!.Value) + 1;
 
-                    // Nothing visible changes on a refusal.
-                    Snapshot(instance).ShouldBe(before);
+                    // A refusal adds nothing to the history.
+                    instance.Version.ShouldBe(versionBefore);
                 }
 
-                held += instance.State == ApprovalState.Held ? 1 : 0;
-                CheckInvariants(instance, definitions);
+                everHeld |= instance.State == ApprovalState.Held;
+                everAuthorizedEarly |= instance.ProvisioningAuthorized && instance.State != ApprovalState.Approved;
+
+                // If the version didn't move, refused or not, nothing else may have either, and there's nothing new to check.
+                if (instance.Version == versionBefore)
+                {
+                    Snapshot(instance).ShouldBe(before);
+                }
+                else
+                {
+                    CheckInvariants(instance, definitions);
+                }
             }
+
+            held += everHeld ? 1 : 0;
+            authorizedBeforeApproved += everAuthorizedEarly ? 1 : 0;
 
             escalated += instance.Escalations.Count;
             approved += instance.State == ApprovalState.Approved ? 1 : 0;
             rejected += instance.State == ApprovalState.Rejected ? 1 : 0;
             cancelled += instance.State == ApprovalState.Cancelled ? 1 : 0;
             withdrawn += instance.State == ApprovalState.Withdrawn ? 1 : 0;
-            if (instance.State == ApprovalState.Approved && instance.Escalations.Any(e => definitions[e.StageId].Quorum == QuorumMode.All))
-            {
-                approvedWithEscalatedAll++;
-            }
+            returned += instance.State == ApprovalState.Returned ? 1 : 0;
+            carried += instance.Decisions.Count(d => d.Outcome == RecordedOutcome.ApprovedAutomatically);
+            completed += instance.Stages.Count(v => v.State == StageState.Completed);
+            approvedAfterEscalation += instance.State == ApprovalState.Approved && instance.Escalations.Count > 0 ? 1 : 0;
         }
 
         // The generator must really reach every outcome and rule, or this proves nothing.
@@ -1609,10 +2491,14 @@ public sealed class ApprovalInvariantTests
         rejected.ShouldBeGreaterThan(100);
         cancelled.ShouldBeGreaterThan(100);
         withdrawn.ShouldBeGreaterThan(100);
+        returned.ShouldBeGreaterThan(25);
+        authorizedBeforeApproved.ShouldBeGreaterThan(10);
+        carried.ShouldBeGreaterThan(15);
+        completed.ShouldBeGreaterThan(50);
         held.ShouldBeGreaterThan(100);
         escalated.ShouldBeGreaterThan(100);
         overridden.ShouldBeGreaterThan(100);
-        approvedWithEscalatedAll.ShouldBeGreaterThan(0);
+        approvedAfterEscalation.ShouldBeGreaterThan(0);
         foreach (var rule in new[]
         {
             ApprovalRefusal.EscalatorConflict,
@@ -1625,10 +2511,75 @@ public sealed class ApprovalInvariantTests
             ApprovalRefusal.NotEligible,
             ApprovalRefusal.AlreadyDecided,
             ApprovalRefusal.StaleVersion,
+            ApprovalRefusal.WrongActionForStage,
         })
         {
             refusals.GetValueOrDefault(rule).ShouldBeGreaterThan(0, rule.ToString());
         }
+    }
+
+    [Fact]
+    public void EscalatedAllStagesStillNeedEveryoneOnTheLastList()
+    {
+        // The general generator rarely gets an ALL stage through the escalation rules, so this one aims straight at it.
+        var random = new Random(31);
+        Guid[] pool = [F.A, F.B, F.C, F.D, F.Id(20), F.Id(21), F.Id(22), F.Requester];
+        var approvedAfterEscalation = 0;
+        for (var round = 0; round < 1_500; round++)
+        {
+            var configured = pool.Take(7).OrderBy(_ => random.Next()).Take(random.Next(2, 4)).ToArray();
+            var stage = new StageDefinition(F.S1, 1, QuorumMode.All, null, false, false, true, TimeSpan.FromHours(1), TimeoutAction.Escalate, configured);
+            var instance = ApprovalInstance.Bind(F.Binding, ApprovalRoute.Create([stage]), F.T0);
+            var at = F.T0;
+            Guid[]? lastAccepted = null;
+            for (var step = 0; step < 30 && instance.State is ApprovalState.InProgress or ApprovalState.Held; step++)
+            {
+                at = at.AddMinutes(random.Next(10, 90));
+                try
+                {
+                    switch (random.Next(3))
+                    {
+                        case 0:
+                            instance.ApplyTimeouts(at, instance.Version);
+                            break;
+                        case 1:
+                            Guid[] list2 = [.. pool.OrderBy(_ => random.Next()).Take(random.Next(1, 5))];
+                            instance.Escalate(F.S1, list2, F.Id(800 + step), "r", instance.Version, at);
+                            lastAccepted = list2;
+                            break;
+                        default:
+                            var list = instance.View(F.S1).Candidates;
+                            instance.Approve(F.S1, list[random.Next(list.Count)], at: at);
+                            break;
+                    }
+                }
+                catch (ApprovalRefusedException)
+                {
+                    // Most attempts are refused. What matters is what happens when one isn't.
+                }
+            }
+
+            if (instance.State != ApprovalState.Approved || instance.Escalations.Count == 0)
+            {
+                continue;
+            }
+
+            approvedAfterEscalation++;
+            var principals = instance.Decisions.Select(d => d.Principal).ToHashSet();
+            var lastList = lastAccepted!.Where(c => c != F.Requester).ToList();
+
+            // Everyone on the last list approved, the list never went below its size at opening, and nobody counted twice.
+            lastList.All(principals.Contains).ShouldBeTrue();
+            lastList.Count.ShouldBeGreaterThanOrEqualTo(configured.Length);
+            instance.Decisions.Count.ShouldBe(principals.Count);
+
+            // A real decision came after the last escalation: it never closed the stage itself.
+            var lastEscalation = instance.History.Select(e => e.Kind).ToList().LastIndexOf(ApprovalEventKind.StageEscalated);
+            var lastDecision = instance.History.Select(e => e.Kind).ToList().LastIndexOf(ApprovalEventKind.DecisionApproved);
+            lastDecision.ShouldBeGreaterThan(lastEscalation);
+        }
+
+        approvedAfterEscalation.ShouldBeGreaterThan(10);
     }
 
     private static ApprovalRoute RandomOverride(Random random, ApprovalRoute route, ref int overridden)
@@ -1674,7 +2625,7 @@ public sealed class ApprovalInvariantTests
         var stages = new StageDefinition[count];
         for (var i = 0; i < count; i++)
         {
-            // The first always applies, or the route would be refused for having nothing to approve it.
+            // The first is always an applicable decision, or the route could be refused for having no decision.
             stages[i] = RandomStage(random, F.Id(100 + i), mustApply: i == 0);
         }
 
@@ -1683,26 +2634,42 @@ public sealed class ApprovalInvariantTests
 
     private static StageDefinition RandomStage(Random random, Guid id, bool mustApply)
     {
-        var candidates = People.OrderBy(_ => random.Next()).Take(random.Next(1, 5)).ToArray();
-        var quorum = (QuorumMode)random.Next(1, 4);
-        var mandatory = random.Next(3) == 0;
+        var kind = !mustApply && random.Next(4) == 0 ? StageKind.Action : StageKind.Decision;
+        var mandatory = kind == StageKind.Decision && random.Next(3) == 0;
+        var independent = random.Next(3) == 0;
+        Guid[] candidates = [.. People.OrderBy(_ => random.Next()).Take(random.Next(1, 5))];
+        var quorum = kind == StageKind.Action ? QuorumMode.AnyOne : (QuorumMode)random.Next(1, 4);
+        var timeout = (TimeoutAction)random.Next(1, 4);
         return new StageDefinition(
             id,
             random.Next(1, 4),
             quorum,
             quorum == QuorumMode.MinimumN ? random.Next(1, candidates.Length + 1) : null,
             mandatory,
-            random.Next(3) == 0,
+            independent,
             mustApply || mandatory || random.Next(5) != 0,
             TimeSpan.FromHours(random.Next(1, 8)),
-            (TimeoutAction)random.Next(1, 4),
-            candidates);
+            kind == StageKind.Action && timeout == TimeoutAction.Reject ? TimeoutAction.Cancel : timeout,
+            candidates,
+            kind);
     }
 
     private static void Act(Random random, ApprovalInstance instance, StageDefinition[] stages, DateTimeOffset at, ref int decisionNumber)
     {
-        var stage = stages[random.Next(stages.Length)].StageId;
-        var person = People[random.Next(People.Length)];
+        var chosen = stages[random.Next(stages.Length)];
+        var stage = chosen.StageId;
+
+        // Half the time someone on the stage's own list, or most attempts stop at the first check.
+        var person = chosen.Candidates.Count > 0 && random.Next(2) == 0
+            ? chosen.Candidates[random.Next(chosen.Candidates.Count)]
+            : People[random.Next(People.Length)];
+        if (chosen.Kind == StageKind.Action && random.Next(2) == 0)
+        {
+            var forWhom = random.Next(4) == 0 ? chosen.Candidates.Count > 0 ? chosen.Candidates[random.Next(chosen.Candidates.Count)] : F.A : (Guid?)null;
+            instance.CompleteAction(new ActionCompletion(F.Id(5000 + decisionNumber++), stage, forWhom is null ? person : F.Id(810), forWhom, null, instance.Version), at);
+            return;
+        }
+
         switch (random.Next(24))
         {
             case 0:
@@ -1731,6 +2698,14 @@ public sealed class ApprovalInvariantTests
             case 8:
                 instance.Withdraw(person, null, instance.Version, at);
                 break;
+            case 9:
+            case 10:
+            case 11:
+                instance.CompleteAction(new ActionCompletion(F.Id(5000 + decisionNumber++), stage, person, null, null, instance.Version), at);
+                break;
+            case 12:
+                instance.ReturnForChanges(stage, person, random.Next(4) == 0 ? People[random.Next(People.Length)] : null, "r", instance.Version, at);
+                break;
             default:
                 instance.Decide(new ApprovalDecision(F.Id(5000 + decisionNumber++), stage, person, null, true, null, instance.Version), at);
                 break;
@@ -1740,8 +2715,10 @@ public sealed class ApprovalInvariantTests
     private static void CheckInvariants(ApprovalInstance instance, Dictionary<Guid, StageDefinition> definitions)
     {
         var excluded = new[] { F.Requester, F.Beneficiary, F.PolicyMaker };
+        var views = instance.Stages;
+        var viewOf = views.ToDictionary(v => v.StageId);
 
-        // Plain LINQ below, not ShouldAllBe: that compiles an expression on every call, and this runs tens of thousands of times.
+        // Plain comparisons below, not ShouldAllBe or typed ShouldBe: this runs tens of thousands of times, and those are slow.
         // Nobody excluded ever has a decision on record, as actor or principal.
         instance.Decisions.All(d => !excluded.Contains(d.Actor) && !excluded.Contains(d.Principal)).ShouldBeTrue();
 
@@ -1769,17 +2746,41 @@ public sealed class ApprovalInvariantTests
             && e.NewCandidates.Count(c => !excluded.Contains(c)) < definitions[e.StageId].Candidates.Count(c => !excluded.Contains(c))).ShouldBeFalse();
 
         // Nobody is listed again on a stage they decided on after being dropped from it.
-        foreach (var escalation in instance.Escalations)
+        // Ordered by the history, not by time: several things can happen at one instant.
+        var decisionsSoFar = 0;
+        var escalationsSoFar = 0;
+        foreach (var entry in instance.History)
         {
-            var deciders2 = instance.Decisions.Where(d => d.StageId == escalation.StageId && d.AtUtc <= escalation.AtUtc).SelectMany(d => new[] { d.Actor, d.Principal });
-            deciders2.Any(p => escalation.NewCandidates.Contains(p) && !escalation.PreviousCandidates.Contains(p)).ShouldBeFalse();
+            if (entry.Kind is ApprovalEventKind.DecisionApproved or ApprovalEventKind.DecisionRejected or ApprovalEventKind.ActionCompleted or ApprovalEventKind.DecisionApprovedAutomatically)
+            {
+                decisionsSoFar++;
+            }
+            else if (entry.Kind == ApprovalEventKind.StageEscalated)
+            {
+                var escalation = instance.Escalations[escalationsSoFar++];
+                var deciders2 = instance.Decisions.Take(decisionsSoFar).Where(d => d.StageId == escalation.StageId).SelectMany(d => new[] { d.Actor, d.Principal });
+                deciders2.Any(p => escalation.NewCandidates.Contains(p) && !escalation.PreviousCandidates.Contains(p)).ShouldBeFalse();
+            }
         }
 
-        // A stage closes as approved only straight after an approving decision on that same stage. The one thing allowed
-        // between them is another stage holding, because that same decision created an independence conflict.
+        // What each entry says it was matches the kind of level it is on.
+        instance.Decisions.All(d => (definitions[d.StageId].Kind == StageKind.Action) == (d.Outcome == RecordedOutcome.Completed)).ShouldBeTrue();
+
+        // A stage closes as approved only after an approving decision on that same stage since it last opened, so neither an
+        // escalation (which reopens it) nor anything else can close it alone. Parallel stages may close side by side.
         for (var i = 0; i < instance.History.Count; i++)
         {
             if (instance.History[i].Kind == ApprovalEventKind.StageApproved)
+            {
+                var stageId = instance.History[i].StageId;
+                var opened = instance.History.Take(i).ToList().FindLastIndex(e => e.Kind is ApprovalEventKind.StageActivated or ApprovalEventKind.StageEscalated && e.StageId == stageId);
+                opened.ShouldBeGreaterThanOrEqualTo(0);
+                instance.History.Skip(opened).Take(i - opened).Any(e => e.StageId == stageId && e.Kind is ApprovalEventKind.DecisionApproved or ApprovalEventKind.DecisionApprovedAutomatically).ShouldBeTrue();
+                (definitions[stageId!.Value].Kind == StageKind.Decision).ShouldBeTrue();
+            }
+
+            // A task is done only straight after someone finished it, on an action level.
+            if (instance.History[i].Kind == ApprovalEventKind.StageCompleted)
             {
                 var previous = i - 1;
                 while (instance.History[previous].Kind == ApprovalEventKind.StageHeld)
@@ -1787,9 +2788,46 @@ public sealed class ApprovalInvariantTests
                     previous--;
                 }
 
-                instance.History[previous].Kind.ShouldBe(ApprovalEventKind.DecisionApproved);
-                instance.History[previous].StageId.ShouldBe(instance.History[i].StageId);
+                (instance.History[previous].Kind == ApprovalEventKind.ActionCompleted).ShouldBeTrue();
+                (instance.History[previous].StageId == instance.History[i].StageId).ShouldBeTrue();
+                (definitions[instance.History[i].StageId!.Value].Kind == StageKind.Action).ShouldBeTrue();
             }
+        }
+
+        // Authorized exactly when every applicable decision level was decided, worked out here from the route and the views.
+        var decisionViews = definitions.Values.Where(d => d.Kind == StageKind.Decision).Select(d => viewOf[d.StageId]).ToList();
+        var allDecided = decisionViews.All(v => v.State is StageState.Approved or StageState.NotApplicable) && decisionViews.Any(v => v.State == StageState.Approved);
+        var stillValid = instance.State is ApprovalState.InProgress or ApprovalState.Held or ApprovalState.Approved;
+        instance.ProvisioningAuthorized.ShouldBe(allDecided && stillValid);
+
+        // Every approved decision level has a real approval behind it, and action levels never count as one.
+        foreach (var approved in decisionViews.Where(v => v.State == StageState.Approved))
+        {
+            instance.Decisions.Any(d => d.StageId == approved.StageId && d.Outcome is RecordedOutcome.Approved or RecordedOutcome.ApprovedAutomatically).ShouldBeTrue();
+        }
+
+        // A carried approval is only ever on an ordinary decision level, for the same person, from their own real decision on
+        // the previous applicable decision step, which was never escalated, with no applicable task in that step or between,
+        // and only when the level first opened. Worked out here from the route and the history.
+        var byId = instance.Decisions.ToDictionary(d => d.DecisionId);
+        foreach (var auto in instance.Decisions.Where(d => d.Outcome == RecordedOutcome.ApprovedAutomatically))
+        {
+            var here = definitions[auto.StageId];
+            (here.Kind == StageKind.Decision && !here.Mandatory && !here.Independent).ShouldBeTrue();
+            var source = byId[auto.CarriedFrom!.Value];
+            (source.Principal == auto.Principal && source.Actor == source.Principal && auto.Actor == auto.Principal).ShouldBeTrue();
+            (source.Outcome == RecordedOutcome.Approved).ShouldBeTrue();
+            instance.Escalations.Any(e => e.StageId == source.StageId).ShouldBeFalse();
+            var previousStep = definitions.Values.Where(d => d.Kind == StageKind.Decision && d.Applicable && d.Sequence < here.Sequence).Select(d => d.Sequence).DefaultIfEmpty(0).Max();
+            (definitions[source.StageId].Sequence == previousStep).ShouldBeTrue();
+            definitions.Values.Any(d => d.Kind == StageKind.Action && d.Applicable && d.Sequence >= previousStep && d.Sequence < here.Sequence).ShouldBeFalse();
+            instance.History.Any(e => e.Kind == ApprovalEventKind.StageEscalated && e.StageId == auto.StageId).ShouldBeFalse();
+        }
+
+        // Whenever provisioning is authorized, at least one approval was a real decision, not an automatic one.
+        if (instance.ProvisioningAuthorized)
+        {
+            instance.Decisions.Any(d => d.Outcome == RecordedOutcome.Approved).ShouldBeTrue();
         }
 
         // Every counted person was on the stage's list at some point.
@@ -1800,10 +2838,9 @@ public sealed class ApprovalInvariantTests
         }
 
         // Steps run in order: nothing is open while an earlier applicable stage is unfinished.
-        var views = instance.Stages;
         foreach (var open in views.Where(s => s.State is StageState.Active or StageState.Held))
         {
-            views.Any(s => s.Sequence < open.Sequence && s.State != StageState.Approved && s.State != StageState.NotApplicable).ShouldBeFalse();
+            views.Any(s => s.Sequence < open.Sequence && s.State is not (StageState.Approved or StageState.NotApplicable or StageState.Completed)).ShouldBeFalse();
         }
 
         // An active stage always has someone left who can act.
@@ -1813,37 +2850,41 @@ public sealed class ApprovalInvariantTests
             active.Eligible.Any(c => !decided.Contains(c)).ShouldBeTrue();
         }
 
-        instance.ProvisioningAuthorized.ShouldBe(instance.State == ApprovalState.Approved);
+        // Whenever provisioning is authorized, count every decision level again from the decisions alone, without using the
+        // state machine's own quorum code. This is the moment that matters, and it comes before Approved.
+        if (instance.ProvisioningAuthorized)
+        {
+            foreach (var stage in definitions.Values.Where(d => d.Kind == StageKind.Decision && d.Applicable))
+            {
+                (viewOf[stage.StageId].State == StageState.Approved).ShouldBeTrue();
+                var principals = instance.Decisions.Where(d => d.StageId == stage.StageId && d.Outcome is RecordedOutcome.Approved or RecordedOutcome.ApprovedAutomatically).Select(d => d.Principal).ToHashSet();
+                var needed = stage.Quorum == QuorumMode.MinimumN ? stage.MinimumApprovals!.Value : 1;
+                principals.Count.ShouldBeGreaterThanOrEqualTo(needed);
+
+                if (stage.Quorum == QuorumMode.All)
+                {
+                    // Everyone on the last list, worked out from the route and the escalations given, approved.
+                    var lastList = instance.Escalations.LastOrDefault(e => e.StageId == stage.StageId)?.NewCandidates ?? stage.Candidates;
+                    var mustApprove = lastList.Where(c => !excluded.Contains(c)).ToList();
+                    mustApprove.Count.ShouldBeGreaterThanOrEqualTo(stage.Candidates.Count(c => !excluded.Contains(c)));
+                    mustApprove.All(principals.Contains).ShouldBeTrue();
+                }
+            }
+        }
+
         if (instance.State != ApprovalState.Approved)
         {
             return;
         }
 
-        // Counted again from the decisions alone, without using the state machine's own quorum code.
-        instance.Decisions.All(d => d.Approve).ShouldBeTrue();
-        foreach (var stage in definitions.Values)
+        // Approved means authorized, on at least one real approval, and every task finished.
+        instance.ProvisioningAuthorized.ShouldBeTrue();
+        decisionViews.Any(v => v.State == StageState.Approved).ShouldBeTrue();
+        instance.Decisions.All(d => d.Outcome != RecordedOutcome.Rejected).ShouldBeTrue();
+        foreach (var task in definitions.Values.Where(d => d.Kind == StageKind.Action))
         {
-            var view = instance.View(stage.StageId);
-            if (!stage.Applicable)
-            {
-                view.State.ShouldBe(StageState.NotApplicable);
-                continue;
-            }
-
-            var principals = instance.Decisions.Where(d => d.StageId == stage.StageId).Select(d => d.Principal).ToHashSet();
-            var needed = stage.Quorum == QuorumMode.MinimumN ? stage.MinimumApprovals!.Value : 1;
-            principals.Count.ShouldBeGreaterThanOrEqualTo(needed);
-
-            if (stage.Quorum == QuorumMode.All)
-            {
-                // Everyone on the last list, worked out from the route and the escalations given, approved.
-                var lastList = instance.Escalations.LastOrDefault(e => e.StageId == stage.StageId)?.NewCandidates ?? stage.Candidates;
-                var mustApprove = lastList.Where(c => !excluded.Contains(c)).ToList();
-                mustApprove.Count.ShouldBeGreaterThanOrEqualTo(stage.Candidates.Count(c => !excluded.Contains(c)));
-                mustApprove.All(principals.Contains).ShouldBeTrue();
-            }
-
-            view.State.ShouldBe(StageState.Approved);
+            var state = viewOf[task.StageId].State;
+            (task.Applicable ? state == StageState.Completed : state == StageState.NotApplicable).ShouldBeTrue();
         }
     }
 

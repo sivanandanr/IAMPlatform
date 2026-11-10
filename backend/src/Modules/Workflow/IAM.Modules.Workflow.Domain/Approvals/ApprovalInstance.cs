@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace IAM.Modules.Workflow.Domain.Approvals;
 
-/// <summary>Where an instance stands. Approved, Rejected, Cancelled and Withdrawn never change.</summary>
+/// <summary>Where an instance stands. Approved, Rejected, Cancelled, Withdrawn and Returned never change.</summary>
 public enum ApprovalState
 {
     InProgress = 1,
@@ -13,6 +13,9 @@ public enum ApprovalState
     Rejected = 4,
     Cancelled = 5,
     Withdrawn = 6,
+
+    /// <summary>Sent back for changes (AR-3.2). Nothing is authorized, and resubmitting starts a new instance (DL-055).</summary>
+    Returned = 7,
 }
 
 public enum StageState
@@ -26,6 +29,14 @@ public enum StageState
 
     /// <summary>The stage's condition was false when the route was built. Never a mandatory stage.</summary>
     NotApplicable = 7,
+
+    // 8 is reserved: it was Skipped, removed by DL-057. Never reuse it once states are stored.
+
+    /// <summary>An action level's task is done. It approved nothing.</summary>
+    Completed = 9,
+
+    /// <summary>Someone at this level sent the request back for changes.</summary>
+    Returned = 10,
 }
 
 public enum ApprovalEventKind
@@ -47,6 +58,19 @@ public enum ApprovalEventKind
     InstanceRejected = 15,
     InstanceCancelled = 16,
     InstanceWithdrawn = 17,
+
+    // 18 is reserved: it was StageSkippedNoApprovers, removed by DL-057. Never reuse it once events are stored.
+
+    ActionCompleted = 19,
+    StageCompleted = 20,
+
+    /// <summary>Every decision is made, and action levels are still to run. Provisioning may start (DL-055).</summary>
+    InstanceAuthorized = 21,
+    StageReturned = 22,
+    InstanceReturned = 23,
+
+    /// <summary>The same person decided the previous decision level themselves, so this one is approved for them (DL-057c, DL-058).</summary>
+    DecisionApprovedAutomatically = 24,
 }
 
 /// <summary>What the instance is bound to (IAM-WF-009, FR-POL-103). Taken once; a later policy change does not alter it.</summary>
@@ -82,8 +106,36 @@ public sealed record ApprovalDecision(
     public override string ToString() => $"{nameof(ApprovalDecision)} {DecisionId}";
 }
 
-/// <summary>A recorded decision. <see cref="Principal"/> is whose approval it counts as: the delegator, or the actor.</summary>
-public sealed record RecordedDecision(Guid DecisionId, Guid StageId, Guid Actor, Guid Principal, bool Approve, string? Reason, DateTimeOffset AtUtc)
+/// <summary>An action level's task, reported done. <see cref="Actor"/> and <see cref="OnBehalfOf"/> are for the calling layer to verify, as for a decision.</summary>
+public sealed record ActionCompletion(
+    Guid CompletionId,
+    Guid StageId,
+    Guid Actor,
+    Guid? OnBehalfOf,
+    string? Note,
+    long ExpectedVersion)
+{
+    /// <summary>The id only: logging this object must not expose a person or a note.</summary>
+    public override string ToString() => $"{nameof(ActionCompletion)} {CompletionId}";
+}
+
+/// <summary>What a recorded entry was. A finished task is not an approval, and must not read as one.</summary>
+public enum RecordedOutcome
+{
+    Approved = 1,
+    Rejected = 2,
+    Completed = 3,
+
+    /// <summary>Approved for someone who decided the previous decision level themselves (DL-057c, DL-058). Counts as one approval.</summary>
+    ApprovedAutomatically = 4,
+}
+
+/// <summary>
+/// A recorded decision or finished task; <see cref="Reason"/> holds a decision's reason, a task's note, or the remark on an
+/// automatic approval. <see cref="Principal"/> is whose approval it counts as: the delegator, or the actor.
+/// <see cref="CarriedFrom"/> is the previous level's decision an automatic approval came from.
+/// </summary>
+public sealed record RecordedDecision(Guid DecisionId, Guid StageId, Guid Actor, Guid Principal, RecordedOutcome Outcome, string? Reason, DateTimeOffset AtUtc, Guid? CarriedFrom = null)
 {
     /// <summary>The id only: logging this object must not expose a person or a reason.</summary>
     public override string ToString() => $"{nameof(RecordedDecision)} {DecisionId}";
@@ -105,8 +157,8 @@ public sealed record EscalationRecord(
     public override string ToString() => $"{nameof(EscalationRecord)} {StageId}";
 }
 
-/// <summary>Who cancelled or withdrew the request, and why.</summary>
-public sealed record ApprovalClosure(ApprovalState Outcome, Guid Actor, string? Reason, DateTimeOffset AtUtc)
+/// <summary>Who cancelled, withdrew or returned the request, and why. <see cref="OnBehalfOf"/> is set when a delegate returned it for someone.</summary>
+public sealed record ApprovalClosure(ApprovalState Outcome, Guid Actor, string? Reason, DateTimeOffset AtUtc, Guid? OnBehalfOf = null)
 {
     /// <summary>The outcome only: logging this object must not expose a person or a reason.</summary>
     public override string ToString() => $"{nameof(ApprovalClosure)} {Outcome}";
@@ -126,6 +178,7 @@ public sealed record StageView(
     StageState State,
     bool Mandatory,
     bool Independent,
+    StageKind Kind,
     QuorumMode Quorum,
     int? MinimumApprovals,
     DateTimeOffset? DeadlineUtc,
@@ -141,13 +194,18 @@ public sealed record StageView(
 /// nothing. Actions are checked first and change nothing when refused. Time is always given, never read from a clock, so
 /// the same sequence of actions gives the same history.
 /// <para>
-/// Only <see cref="ApprovalState.Approved"/> means every applicable stage met its quorum with eligible, distinct people,
-/// and only then is <see cref="ProvisioningAuthorized"/> true. Only a decision can close a stage as approved: a timeout, a
-/// missing approver, an empty candidate list or an escalation can hold, reject or cancel, but never approve.
+/// <see cref="ProvisioningAuthorized"/> means every applicable decision level met its quorum with eligible, distinct
+/// people. Action levels after the last decision then run, and <see cref="ApprovalState.Approved"/> means they are
+/// finished too. Only a decision can close a stage as approved, including one carried from the previous level by the same
+/// person: a timeout, a missing approver, an escalation or a finished task can hold, reject, cancel or complete, but never
+/// approve. No level is ever skipped.
 /// </para>
 /// </summary>
 public sealed class ApprovalInstance
 {
+    /// <summary>The remark recorded on an automatic approval (DL-057c).</summary>
+    public const string SameApproverRemark = "Approved automatically: the same person approved the previous level.";
+
     private readonly List<StageRun> _stages;
     private readonly List<RecordedDecision> _decisions = [];
     private readonly List<ApprovalEvent> _history = [];
@@ -156,6 +214,8 @@ public sealed class ApprovalInstance
     private readonly HashSet<Guid> _escalators = [];
     private readonly HashSet<Guid> _decisionIds = [];
     private int _step = -1;
+    private bool _authorizationRecorded;
+    private IReadOnlyList<Guid> _tasksWithUnknownOutcome = [];
     private DateTimeOffset _lastAt;
 
     private ApprovalInstance(ApprovalBinding binding, ApprovalRoute route, DateTimeOffset atUtc)
@@ -182,21 +242,35 @@ public sealed class ApprovalInstance
 
     public IReadOnlyList<EscalationRecord> Escalations => _escalations.AsReadOnly();
 
-    /// <summary>Set when the request is cancelled by a person or withdrawn; null otherwise.</summary>
+    /// <summary>Set when the request is cancelled by a person, withdrawn or returned; null otherwise.</summary>
     public ApprovalClosure? Closure { get; private set; }
+
+    /// <summary>
+    /// Action levels still open when an authorized request was cancelled. Their work may or may not have been done, so the
+    /// Provisioning story must check them.
+    /// </summary>
+    public IReadOnlyList<Guid> TasksWithUnknownOutcome => _tasksWithUnknownOutcome;
 
     public IReadOnlyList<StageView> Stages => [.. _stages.Select(View)];
 
     /// <summary>
-    /// True only when approved and every stage was either not applicable or approved with its quorum still met by the
-    /// recorded decisions. Counted again here rather than trusted.
+    /// True once every applicable decision level is approved, and until the request is cancelled or otherwise closed without
+    /// approval. Counted again here rather than trusted. Undoing work already done after a cancel is for
+    /// the Provisioning story.
     /// </summary>
-    public bool ProvisioningAuthorized =>
-        State == ApprovalState.Approved
-        && _stages.All(s => (s.State == StageState.Approved && QuorumMet(s)) || (s.State == StageState.NotApplicable && !s.Definition.Mandatory))
-        && _stages.Any(s => s.State == StageState.Approved);
+    public bool ProvisioningAuthorized => State is ApprovalState.InProgress or ApprovalState.Held or ApprovalState.Approved && DecisionsComplete;
 
-    private bool IsClosed => State is ApprovalState.Approved or ApprovalState.Rejected or ApprovalState.Cancelled or ApprovalState.Withdrawn;
+    private bool IsClosed => State is ApprovalState.Approved or ApprovalState.Rejected or ApprovalState.Cancelled or ApprovalState.Withdrawn or ApprovalState.Returned;
+
+    private bool DecisionsComplete
+    {
+        get
+        {
+            var decisions = _stages.Where(s => s.Definition.Kind == StageKind.Decision).ToList();
+            return decisions.All(s => (s.State == StageState.Approved && QuorumMet(s)) || (s.State == StageState.NotApplicable && !s.Definition.Mandatory))
+                && decisions.Exists(s => s.State == StageState.Approved);
+        }
+    }
 
     /// <summary>Starts an instance on a validated route. If the first stage has no eligible approver the instance starts Held, never approved.</summary>
     public static ApprovalInstance Bind(ApprovalBinding binding, ApprovalRoute route, DateTimeOffset now)
@@ -226,6 +300,74 @@ public sealed class ApprovalInstance
     public void Decide(ApprovalDecision decision, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(decision);
+        Act(decision, StageKind.Decision, now);
+    }
+
+    /// <summary>
+    /// Reports an action level's task done. The same people are excluded as for a decision. It approves nothing, and a
+    /// route must still have a decision level for anything to be authorized.
+    /// </summary>
+    public void CompleteAction(ActionCompletion completion, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(completion);
+        Act(new ApprovalDecision(completion.CompletionId, completion.StageId, completion.Actor, completion.OnBehalfOf, true, completion.Note, completion.ExpectedVersion), StageKind.Action, now);
+    }
+
+    /// <summary>
+    /// Sends the request back for changes (AR-3.2). Anyone able to act at an active level may, or their delegate, before
+    /// authorization. It closes this instance and authorizes nothing. Refused while any stage's Reject or Cancel timeout is
+    /// overdue, so it can't turn that outcome into one that can be resubmitted. Starting a new instance is for the Request
+    /// story; this class only guarantees nothing carries over from this one (DL-055).
+    /// </summary>
+    public void ReturnForChanges(Guid stageId, Guid actor, Guid? onBehalfOf, string? reason, long expectedVersion, DateTimeOffset now)
+    {
+        var at = RequireOpen(expectedVersion, now);
+        if (DecisionsComplete)
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.AlreadyAuthorized);
+        }
+
+        if (State == ApprovalState.Held)
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.InstanceHeld);
+        }
+
+        var stage = Stage(stageId);
+        if (stage.State != StageState.Active)
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.StageNotActive);
+        }
+
+        if (at >= stage.DeadlineUtc || _stages.Exists(s => s.State == StageState.Active && at >= s.DeadlineUtc && s.Definition.OnTimeout != TimeoutAction.Escalate))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.StagePastDeadline);
+        }
+
+        if (actor == Guid.Empty || onBehalfOf == Guid.Empty || onBehalfOf == actor)
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.InvalidActor);
+        }
+
+        var principal = onBehalfOf ?? actor;
+        if (!stage.ActiveCandidates.Contains(principal) || !IsEligible(stage, principal) || !IsEligible(stage, actor))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.NotEligible);
+        }
+
+        if (HasDecided(stage, principal) || HasDecided(stage, actor))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.AlreadyDecided);
+        }
+
+        RequireValidReason(reason, required: true);
+        Closure = new ApprovalClosure(ApprovalState.Returned, actor, reason, at, onBehalfOf);
+        stage.State = StageState.Returned;
+        Record(at, ApprovalEventKind.StageReturned, stageId, actor);
+        Close(ApprovalState.Returned, ApprovalEventKind.InstanceReturned, at, actor);
+    }
+
+    private void Act(ApprovalDecision decision, StageKind kind, DateTimeOffset now)
+    {
         var at = RequireOpen(decision.ExpectedVersion, now);
         if (decision.DecisionId == Guid.Empty || decision.Actor == Guid.Empty || decision.OnBehalfOf == Guid.Empty || decision.OnBehalfOf == decision.Actor)
         {
@@ -237,12 +379,18 @@ public sealed class ApprovalInstance
             throw new ApprovalRefusedException(ApprovalRefusal.DuplicateDecision);
         }
 
-        if (State == ApprovalState.Held)
+        // Once authorized, no decisions remain, and a hold on one task must not stop others being recorded (DL-056).
+        if (State == ApprovalState.Held && !(kind == StageKind.Action && DecisionsComplete))
         {
             throw new ApprovalRefusedException(ApprovalRefusal.InstanceHeld);
         }
 
         var stage = Stage(decision.StageId);
+        if (stage.Definition.Kind != kind)
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.WrongActionForStage);
+        }
+
         if (stage.State != StageState.Active)
         {
             throw new ApprovalRefusedException(ApprovalRefusal.StageNotActive);
@@ -269,8 +417,10 @@ public sealed class ApprovalInstance
         RequireValidReason(decision.Reason, required: !decision.Approve);
 
         _decisionIds.Add(decision.DecisionId);
-        _decisions.Add(new RecordedDecision(decision.DecisionId, decision.StageId, decision.Actor, principal, decision.Approve, decision.Reason, at));
-        Record(at, decision.Approve ? ApprovalEventKind.DecisionApproved : ApprovalEventKind.DecisionRejected, decision.StageId, decision.Actor);
+        var outcome = kind == StageKind.Action ? RecordedOutcome.Completed : decision.Approve ? RecordedOutcome.Approved : RecordedOutcome.Rejected;
+        _decisions.Add(new RecordedDecision(decision.DecisionId, decision.StageId, decision.Actor, principal, outcome, decision.Reason, at));
+        var recorded = kind == StageKind.Action ? ApprovalEventKind.ActionCompleted : decision.Approve ? ApprovalEventKind.DecisionApproved : ApprovalEventKind.DecisionRejected;
+        Record(at, recorded, decision.StageId, decision.Actor);
 
         if (!decision.Approve)
         {
@@ -302,6 +452,7 @@ public sealed class ApprovalInstance
 
         if (expired.Exists(s => s.Definition.OnTimeout == TimeoutAction.Cancel))
         {
+            RecordTasksWithUnknownOutcome();
             CloseExpired(expired, TimeoutAction.Cancel, StageState.Cancelled, ApprovalEventKind.StageCancelled, at);
             Close(ApprovalState.Cancelled, ApprovalEventKind.InstanceCancelled, at, null);
             return;
@@ -427,7 +578,7 @@ public sealed class ApprovalInstance
         Settle(at);
     }
 
-    /// <summary>Withdraws the request. Only the requester may; the calling layer has authenticated them.</summary>
+    /// <summary>Withdraws the request. Only the requester may, and only before authorization: work may have started after it (DL-056).</summary>
     public void Withdraw(Guid actor, string? reason, long expectedVersion, DateTimeOffset now)
     {
         var at = RequireOpen(expectedVersion, now);
@@ -436,12 +587,20 @@ public sealed class ApprovalInstance
             throw new ApprovalRefusedException(ApprovalRefusal.NotRequester);
         }
 
+        if (DecisionsComplete)
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.AlreadyAuthorized);
+        }
+
         RequireValidReason(reason, required: false);
         Closure = new ApprovalClosure(ApprovalState.Withdrawn, actor, reason, at);
         Close(ApprovalState.Withdrawn, ApprovalEventKind.InstanceWithdrawn, at, actor);
     }
 
-    /// <summary>Cancels the request. Who may do this is for the calling layer's authorization.</summary>
+    /// <summary>
+    /// Cancels the request. Who may do this is for the calling layer's authorization, except that after authorization the
+    /// requester, beneficiary and policy maker may not, and open tasks are recorded as having an unknown outcome (DL-056).
+    /// </summary>
     public void Cancel(Guid actor, string? reason, long expectedVersion, DateTimeOffset now)
     {
         var at = RequireOpen(expectedVersion, now);
@@ -450,7 +609,13 @@ public sealed class ApprovalInstance
             throw new ApprovalRefusedException(ApprovalRefusal.InvalidActor);
         }
 
+        if (DecisionsComplete && _excluded.Contains(actor))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.AlreadyAuthorized);
+        }
+
         RequireValidReason(reason, required: true);
+        RecordTasksWithUnknownOutcome();
         Closure = new ApprovalClosure(ApprovalState.Cancelled, actor, reason, at);
         Close(ApprovalState.Cancelled, ApprovalEventKind.InstanceCancelled, at, actor);
     }
@@ -566,12 +731,21 @@ public sealed class ApprovalInstance
     private bool HasDecided(StageRun stage, Guid person) =>
         _decisions.Any(d => d.StageId == stage.Definition.StageId && (d.Principal == person || d.Actor == person));
 
+    /// <summary>An action level can only ever hold completions, and they count as nobody's approval.</summary>
+    private bool TaskFinished(StageRun stage) =>
+        _decisions.Exists(d => d.StageId == stage.Definition.StageId);
+
     /// <summary>People whose approval on this stage counts. The eligibility filter is a backstop: the checks on each action should mean it never removes anyone.</summary>
     private List<Guid> ValidApprovers(StageRun stage) =>
-        [.. _decisions.Where(d => d.StageId == stage.Definition.StageId && d.Approve && IsEligible(stage, d.Principal) && IsEligible(stage, d.Actor)).Select(d => d.Principal).Distinct()];
+        [.. _decisions.Where(d => d.StageId == stage.Definition.StageId && d.Outcome is RecordedOutcome.Approved or RecordedOutcome.ApprovedAutomatically && IsEligible(stage, d.Principal) && IsEligible(stage, d.Actor)).Select(d => d.Principal).Distinct()];
 
     private bool QuorumMet(StageRun stage)
     {
+        if (stage.Definition.Kind == StageKind.Action)
+        {
+            return TaskFinished(stage);
+        }
+
         var approvers = ValidApprovers(stage);
         return stage.Definition.Quorum switch
         {
@@ -605,8 +779,9 @@ public sealed class ApprovalInstance
             {
                 if (QuorumMet(stage))
                 {
-                    stage.State = StageState.Approved;
-                    Record(at, ApprovalEventKind.StageApproved, stage.Definition.StageId, null);
+                    var isAction = stage.Definition.Kind == StageKind.Action;
+                    stage.State = isAction ? StageState.Completed : StageState.Approved;
+                    Record(at, isAction ? ApprovalEventKind.StageCompleted : ApprovalEventKind.StageApproved, stage.Definition.StageId, null);
                 }
                 else if (QuorumUnreachable(stage, stage.ActiveCandidates, stage.Required))
                 {
@@ -614,8 +789,9 @@ public sealed class ApprovalInstance
                 }
             }
 
+            RecordAuthorizationIfDue(at);
             UpdateHeldState(at);
-            if (_step >= 0 && !CurrentStep().All(s => s.State == StageState.Approved))
+            if (_step >= 0 && !CurrentStep().All(s => s.State is StageState.Approved or StageState.Completed))
             {
                 return;
             }
@@ -639,6 +815,7 @@ public sealed class ApprovalInstance
             return false;
         }
 
+        var previous = PreviousDecisionStep(next.Value);
         _step = next.Value;
         foreach (var stage in CurrentStep())
         {
@@ -652,7 +829,90 @@ public sealed class ApprovalInstance
             Record(at, ApprovalEventKind.StageActivated, stage.Definition.StageId, null);
         }
 
+        foreach (var stage in CurrentStep())
+        {
+            CarryApprovals(stage, previous, at);
+        }
+
         return true;
+    }
+
+    /// <summary>
+    /// The applicable decision stages of the nearest earlier step that has any, if nothing breaks the carry (DL-058): no
+    /// applicable action level in that step or between it and this one, as the person should look at what a task did.
+    /// Stages that don't apply are passed over.
+    /// </summary>
+    private HashSet<Guid> PreviousDecisionStep(int sequence)
+    {
+        var earlier = _stages.Where(s => s.Definition.Kind == StageKind.Decision && s.Definition.Applicable && s.Definition.Sequence < sequence).ToList();
+        if (earlier.Count == 0)
+        {
+            return [];
+        }
+
+        var step = earlier.Max(s => s.Definition.Sequence);
+        if (_stages.Exists(s => s.Definition.Kind == StageKind.Action && s.Definition.Applicable && s.Definition.Sequence >= step && s.Definition.Sequence < sequence))
+        {
+            return [];
+        }
+
+        return [.. earlier.Where(s => s.Definition.Sequence == step).Select(s => s.Definition.StageId)];
+    }
+
+    /// <summary>
+    /// Approves a newly opened decision level for anyone who decided the previous decision level themselves (DL-057c,
+    /// DL-058), as one approval each. Only from a real decision, never another automatic approval, so it doesn't chain; never
+    /// from a level that was escalated, whose list someone else chose; never from a delegate's decision; and only for
+    /// someone listed and eligible here. If an id can't be made safely, nothing is carried and the person decides as usual.
+    /// <para>
+    /// Some checks below can't change the result today, and are kept to state the rule: a mandatory or independent level,
+    /// the state check, and the outcome filter. <see cref="IsEligible"/> already refuses someone who decided elsewhere on an
+    /// independent level, every level in a new step is active, and a rejection closes the request before this runs.
+    /// </para>
+    /// </summary>
+    private void CarryApprovals(StageRun stage, HashSet<Guid> previous, DateTimeOffset at)
+    {
+        if (stage.Definition.Kind != StageKind.Decision || stage.Definition.Mandatory || stage.Definition.Independent || previous.Count == 0)
+        {
+            return;
+        }
+
+        var sources = _decisions
+            .Where(d => previous.Contains(d.StageId) && Stage(d.StageId).Escalations == 0 && d.Outcome == RecordedOutcome.Approved && d.Actor == d.Principal)
+            .ToList();
+        foreach (var source in sources)
+        {
+            var person = source.Principal;
+            if (stage.State != StageState.Active || !stage.ActiveCandidates.Contains(person) || !IsEligible(stage, person) || HasDecided(stage, person))
+            {
+                continue;
+            }
+
+            var id = CarriedId(source.DecisionId, stage.Definition.StageId);
+            if (id == Guid.Empty || _decisionIds.Contains(id))
+            {
+                continue;
+            }
+
+            _decisionIds.Add(id);
+            _decisions.Add(new RecordedDecision(id, stage.Definition.StageId, person, person, RecordedOutcome.ApprovedAutomatically, SameApproverRemark, at, source.DecisionId));
+            Record(at, ApprovalEventKind.DecisionApprovedAutomatically, stage.Definition.StageId, person);
+        }
+    }
+
+    /// <summary>The same inputs always give the same id, so the same actions give the same history.</summary>
+    private static Guid CarriedId(Guid decision, Guid stage)
+    {
+        Span<byte> a = stackalloc byte[16];
+        Span<byte> b = stackalloc byte[16];
+        decision.TryWriteBytes(a);
+        stage.TryWriteBytes(b);
+        for (var i = 0; i < 16; i++)
+        {
+            a[i] ^= b[i];
+        }
+
+        return new Guid(a);
     }
 
     /// <summary>Every stage that expired records it, and every stage whose own timeout caused this ends in that state, whatever the stage ids.</summary>
@@ -671,6 +931,28 @@ public sealed class ApprovalInstance
                 // A stage already held by an earlier Escalate timeout recorded this then.
                 Record(at, ApprovalEventKind.StageTimedOut, stage.Definition.StageId, null);
             }
+        }
+    }
+
+    private void RecordTasksWithUnknownOutcome()
+    {
+        if (DecisionsComplete)
+        {
+            // Every decision is made, so anything still open is a task.
+            _tasksWithUnknownOutcome = Array.AsReadOnly(_stages
+                .Where(s => s.State is StageState.Active or StageState.Held)
+                .Select(s => s.Definition.StageId)
+                .ToArray());
+        }
+    }
+
+    /// <summary>Marks the moment provisioning may start, once, on any route with action levels. A route with none goes straight to approved, so has no separate event.</summary>
+    private void RecordAuthorizationIfDue(DateTimeOffset at)
+    {
+        if (!_authorizationRecorded && DecisionsComplete && _stages.Exists(s => s.Definition.Kind == StageKind.Action && s.Definition.Applicable))
+        {
+            _authorizationRecorded = true;
+            Record(at, ApprovalEventKind.InstanceAuthorized, null, null);
         }
     }
 
@@ -720,6 +1002,7 @@ public sealed class ApprovalInstance
         stage.State,
         stage.Definition.Mandatory,
         stage.Definition.Independent,
+        stage.Definition.Kind,
         stage.Definition.Quorum,
         stage.Definition.MinimumApprovals,
         stage.DeadlineUtc,
