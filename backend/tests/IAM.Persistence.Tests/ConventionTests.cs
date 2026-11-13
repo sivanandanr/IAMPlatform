@@ -219,14 +219,18 @@ public sealed class ConventionTests
         foreach (var type in contexts)
         {
             var module = type.Assembly.GetName().Name!.Split('.')[2];
+            var expected = SchemaOf(module);
             using var context = CreateModuleContext(type, provider);
-            context.Schema.ShouldBe(module.ToLowerInvariant(), $"{type.Name} must use schema '{module.ToLowerInvariant()}'");
+            context.Schema.ShouldBe(expected, $"{type.Name} must use schema '{expected}'");
             foreach (var entity in context.Model.GetEntityTypes().Where(e => e.GetTableName() is not null))
             {
                 entity.GetSchema().ShouldBe(context.Schema, $"{type.Name} maps {entity.DisplayName()} outside its schema");
             }
         }
     }
+
+    /// <summary>ADR-0011: each module's schema is its lower-case name, except Administration, which owns <c>configuration</c>.</summary>
+    private static string SchemaOf(string module) => module == "Administration" ? "configuration" : module.ToLowerInvariant();
 
     private static List<Type> ModuleDbContextTypes()
     {

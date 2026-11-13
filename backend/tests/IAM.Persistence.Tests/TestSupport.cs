@@ -1,10 +1,12 @@
 using IAM.BuildingBlocks.Persistence;
+using IAM.Modules.Administration.Infrastructure.Persistence;
 using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
 using IAM.Persistence.PostgreSql;
 using IAM.Persistence.SqlServer;
 using IAM.Persistence.Tests.Probe;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace IAM.Persistence.Tests;
 
@@ -56,6 +58,23 @@ internal static class TestSupport
         }
 
         return new AuditDbContext(options.Options);
+    }
+
+    public static AdministrationDbContext CreateAdministration(DatabaseProvider provider, string connectionString, AuditingSaveChangesInterceptor? interceptor = null, IInterceptor? extra = null)
+    {
+        var options = new DbContextOptionsBuilder<AdministrationDbContext>();
+        ProviderFor(provider).Configure(options, connectionString, AdministrationDbContext.SchemaName);
+        if (interceptor is not null)
+        {
+            options.AddInterceptors(interceptor);
+        }
+
+        if (extra is not null)
+        {
+            options.AddInterceptors(extra);
+        }
+
+        return new AdministrationDbContext(options.Options);
     }
 
     public static IEnumerable<Exception> Flatten(Exception ex)

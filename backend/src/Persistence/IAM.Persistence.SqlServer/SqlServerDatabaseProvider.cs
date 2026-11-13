@@ -37,4 +37,17 @@ public sealed class SqlServerDatabaseProvider : IIamDatabaseProvider
 
         return false;
     }
+
+    public bool IsConcurrencyFailure(Exception exception)
+    {
+        for (var e = exception; e is not null; e = e.InnerException)
+        {
+            if (e is Microsoft.Data.SqlClient.SqlException { Number: 1205 or 1222 or 3960 })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

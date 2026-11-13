@@ -1,3 +1,4 @@
+using IAM.Modules.Administration.Infrastructure.Persistence;
 using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -28,5 +29,15 @@ internal sealed class AuditDesignTimeFactory : IDesignTimeDbContextFactory<Audit
         var options = new DbContextOptionsBuilder<AuditDbContext>();
         new PostgreSqlDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, AuditDbContext.SchemaName);
         return new AuditDbContext(options.Options);
+    }
+}
+
+internal sealed class AdministrationDesignTimeFactory : IDesignTimeDbContextFactory<AdministrationDbContext>
+{
+    public AdministrationDbContext CreateDbContext(string[] args)
+    {
+        var options = new DbContextOptionsBuilder<AdministrationDbContext>();
+        new PostgreSqlDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, AdministrationDbContext.SchemaName);
+        return new AdministrationDbContext(options.Options);
     }
 }

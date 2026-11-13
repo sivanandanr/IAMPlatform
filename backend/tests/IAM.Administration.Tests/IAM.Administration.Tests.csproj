@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Stage 2 (P0-013) permission rules and the shared second-person approval. No database: the rules and the stored-change codec are pure code. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Shouldly" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Modules\Administration\IAM.Modules.Administration.Domain\IAM.Modules.Administration.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Administration\IAM.Modules.Administration.Infrastructure\IAM.Modules.Administration.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

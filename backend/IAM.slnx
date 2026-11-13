@@ -123,6 +123,7 @@
     <Project Path="tests/IAM.Bff.Tests/IAM.Bff.Tests.csproj" />
     <Project Path="tests/IAM.Persistence.Tests/IAM.Persistence.Tests.csproj" />
     <Project Path="tests/IAM.Policy.Tests/IAM.Policy.Tests.csproj" />
+    <Project Path="tests/IAM.Administration.Tests/IAM.Administration.Tests.csproj" />
     <Project Path="tests/IAM.Workflow.Tests/IAM.Workflow.Tests.csproj" />
   </Folder>
 </Solution>
