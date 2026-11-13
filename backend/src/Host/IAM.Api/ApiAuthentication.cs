@@ -59,11 +59,14 @@ internal static class ApiAuthentication
                 };
             });
 
-        // Default deny: every endpoint requires an authenticated caller unless it explicitly opts out.
+        // Default deny: every endpoint requires an authenticated caller unless it explicitly opts out. The default policy
+        // (which RequirePermission combines with) is the same, so it never depends on which scheme happens to be default.
+        var authenticated = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme)
+            .RequireAuthenticatedUser()
+            .Build();
         services.AddAuthorizationBuilder()
-            .SetFallbackPolicy(new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme)
-                .RequireAuthenticatedUser()
-                .Build());
+            .SetDefaultPolicy(authenticated)
+            .SetFallbackPolicy(authenticated);
 
         return services;
     }

@@ -540,7 +540,9 @@
       "iam.modules.administration.endpoints": {
         "type": "Project",
         "dependencies": {
+          "FluentValidation": "[12.2.0, )",
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
           "IAM.Modules.Administration.Application": "[1.0.0, )",
           "IAM.Modules.Administration.Contracts": "[1.0.0, )",
           "IAM.Modules.Administration.Infrastructure": "[1.0.0, )"
@@ -551,6 +553,7 @@
         "dependencies": {
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
           "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
           "IAM.Modules.Administration.Application": "[1.0.0, )",
           "IAM.Modules.Administration.Contracts": "[1.0.0, )",
           "IAM.Modules.Administration.Domain": "[1.0.0, )",
@@ -696,6 +699,8 @@
         "type": "Project",
         "dependencies": {
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
           "IAM.Modules.Identity.Application": "[1.0.0, )",
           "IAM.Modules.Identity.Contracts": "[1.0.0, )",
           "IAM.Modules.Identity.Infrastructure": "[1.0.0, )"
@@ -1036,6 +1041,12 @@
           "IAM.Modules.Identity.Infrastructure": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore.SqlServer": "[10.0.14, )"
         }
+      },
+      "FluentValidation": {
+        "type": "CentralTransitive",
+        "requested": "[12.2.0, )",
+        "resolved": "12.2.0",
+        "contentHash": "DR3lFbdnKucaaj1/8zMNOACMz/64igzox1yVZSFVsLxYB5mxAB+wFP1WZ8fjwrZnbU1KA1DoMzHKYKxUfuZ4wQ=="
       },
       "Microsoft.AspNetCore.Authentication.JwtBearer": {
         "type": "CentralTransitive",

@@ -9,6 +9,8 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="IAM.Api.Tests" />
+    <!-- API tests against real databases on both engines (P0-013 slice 4), run by the CI parity job. -->
+    <InternalsVisibleTo Include="IAM.Persistence.Tests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\BuildingBlocks\IAM.BuildingBlocks.Persistence\IAM.BuildingBlocks.Persistence.csproj" />

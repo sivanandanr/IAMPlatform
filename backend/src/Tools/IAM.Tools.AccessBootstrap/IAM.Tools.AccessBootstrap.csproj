@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    One-time access-control bootstrap (P0-013 slice 5, DL-059e, DL-062c). An operator command with no HTTP surface. Like the
+    hosts, it composes modules through their Endpoints projects only (ADR-0001). Runbook: docs/runbooks/ACCESS_CONTROL_BOOTSTRAP.md.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="IAM.Persistence.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\IAM.BuildingBlocks.Persistence\IAM.BuildingBlocks.Persistence.csproj" />
+    <ProjectReference Include="..\..\Persistence\IAM.Persistence.PostgreSql\IAM.Persistence.PostgreSql.csproj" />
+    <ProjectReference Include="..\..\Persistence\IAM.Persistence.SqlServer\IAM.Persistence.SqlServer.csproj" />
+    <ProjectReference Include="..\..\Modules\Audit\IAM.Modules.Audit.Endpoints\IAM.Modules.Audit.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Modules\Administration\IAM.Modules.Administration.Endpoints\IAM.Modules.Administration.Endpoints.csproj" />
+  </ItemGroup>
+</Project>

@@ -32,7 +32,9 @@ public sealed class ApiTestHost : IDisposable
         string authority = Issuer,
         bool requireHttpsMetadata = true,
         string? databaseProvider = "PostgreSql",
-        string? identityConnectionString = UnusedConnectionString)
+        string? identityConnectionString = UnusedConnectionString,
+        Action<IServiceCollection>? configureServices = null,
+        IReadOnlyDictionary<string, string>? settings = null)
     {
         SigningKey = new RsaSecurityKey(_rsa) { KeyId = "test-key-1" };
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
@@ -43,14 +45,23 @@ public sealed class ApiTestHost : IDisposable
             builder.UseSetting("Authentication:Jwt:RequireHttpsMetadata", requireHttpsMetadata ? "true" : "false");
             builder.UseSetting("IAM_DB_PROVIDER", databaseProvider);
             builder.UseSetting("ConnectionStrings:identity", identityConnectionString);
+            builder.UseSetting("ConnectionStrings:configuration", UnusedConnectionString);
+            foreach (var (key, value) in settings ?? new Dictionary<string, string>())
+            {
+                builder.UseSetting(key, value);
+            }
+
             builder.ConfigureTestServices(services =>
+            {
                 services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
                 {
                     var configuration = new OpenIdConnectConfiguration { Issuer = Issuer };
                     configuration.SigningKeys.Add(SigningKey);
                     options.Configuration = configuration;
                     options.ConfigurationManager = new StaticConfigurationManager<OpenIdConnectConfiguration>(configuration);
-                }));
+                });
+                configureServices?.Invoke(services);
+            });
         });
     }
 

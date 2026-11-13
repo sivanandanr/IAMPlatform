@@ -13,6 +13,9 @@ public enum ProjectKind
     Connector,
     Persistence,
     Test,
+
+    /// <summary>Operator command-line tools (for example the access bootstrap): composed like hosts, no HTTP surface.</summary>
+    Tool,
 }
 
 /// <summary>
@@ -66,6 +69,11 @@ public sealed record ProjectInfo(
         if (name.StartsWith("IAM.Persistence.", StringComparison.Ordinal))
         {
             return ProjectKind.Persistence;
+        }
+
+        if (name.StartsWith("IAM.Tools.", StringComparison.Ordinal))
+        {
+            return ProjectKind.Tool;
         }
 
         return name == "IAM.Api" || name == "IAM.Bff" ? ProjectKind.Host : ProjectKind.Unknown;

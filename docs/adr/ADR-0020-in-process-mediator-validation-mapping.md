@@ -1,5 +1,5 @@
 # ADR-0020: In-process dispatch, validation and mapping libraries
-Status: Accepted by repository owner (sivanandanr, 2026-11-07, via Claude Code session) — licence verification of FluentValidation pending | Date: 2026-11-07 | Decision owners: Lead Solution Architect; licence approval by procurement/legal
+Status: Accepted by repository owner (sivanandanr, 2026-11-07, via Claude Code session) — FluentValidation licence verified 2026-11-13 (Apache-2.0, 12.2.0, DL-062) | Date: 2026-11-07 | Decision owners: Lead Solution Architect; licence approval by procurement/legal
 
 Source: CLAUDE.md ("Ask before changing dependency versions or adding paid/licensed packages"); BACKEND_INPUT_VALIDATION.md. Decision log DL-018. Drafted by Claude Code (S1-01); not approved.
 

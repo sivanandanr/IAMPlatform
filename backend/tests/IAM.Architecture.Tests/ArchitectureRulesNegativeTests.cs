@@ -81,6 +81,14 @@ public sealed class ArchitectureRulesNegativeTests
     }
 
     [Fact]
+    public void ToolReferencingModuleApplicationIsReported() =>
+        ArchitectureRules.CheckHostsWorkersConnectors([Project("IAM.Tools.AccessBootstrap", projects: ["IAM.Modules.Administration.Application"])]).ShouldNotBeEmpty();
+
+    [Fact]
+    public void ToolComposingThroughEndpointsIsAllowed() =>
+        ArchitectureRules.CheckHostsWorkersConnectors([Project("IAM.Tools.AccessBootstrap", projects: ["IAM.Modules.Administration.Endpoints", "IAM.Persistence.SqlServer", "IAM.BuildingBlocks.Persistence"])]).ShouldBeEmpty();
+
+    [Fact]
     public void HostReferencingModuleInfrastructureIsReported() =>
         ArchitectureRules.CheckHostsWorkersConnectors([Project("IAM.Api", projects: ["IAM.Modules.Identity.Infrastructure"])]).ShouldNotBeEmpty();
 

@@ -198,7 +198,7 @@ public static class ArchitectureRules
     public static IReadOnlyList<string> CheckHostsWorkersConnectors(IReadOnlyList<ProjectInfo> projects)
     {
         var violations = new List<string>();
-        foreach (var p in projects.Where(p => p.Kind == ProjectKind.Host))
+        foreach (var p in projects.Where(p => p.Kind is ProjectKind.Host or ProjectKind.Tool))
         {
             foreach (var r in p.ProjectReferences)
             {

@@ -13,6 +13,7 @@
     <PackageReference Include="Shouldly" />
     <PackageReference Include="Testcontainers.MsSql" />
     <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
@@ -21,6 +22,8 @@
     <ProjectReference Include="..\..\src\BuildingBlocks\IAM.BuildingBlocks.Persistence\IAM.BuildingBlocks.Persistence.csproj" />
     <ProjectReference Include="..\..\src\Persistence\IAM.Persistence.PostgreSql\IAM.Persistence.PostgreSql.csproj" />
     <ProjectReference Include="..\..\src\Persistence\IAM.Persistence.SqlServer\IAM.Persistence.SqlServer.csproj" />
+    <ProjectReference Include="..\..\src\Host\IAM.Api\IAM.Api.csproj" />
+    <ProjectReference Include="..\..\src\Tools\IAM.Tools.AccessBootstrap\IAM.Tools.AccessBootstrap.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- The reviewed bootstrap scripts themselves are what the parity tests execute. -->
