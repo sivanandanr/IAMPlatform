@@ -50,12 +50,104 @@ public sealed class AttributeCatalogDomainTests
     public void InvalidKeysAreRejected(string? key) =>
         Should.Throw<AttributeDefinitionRejectedException>(() => AttributeDefinition.Register(key!, EeSubgroupCode())).Field.ShouldBe("Key");
 
+    private static readonly DateTimeOffset At = new(2026, 11, 13, 9, 0, 0, TimeSpan.Zero);
+
+    private static AttributePublishRefusal? PublishRefusal(Action action) => Should.Throw<AttributePublishRefusedException>(action).Refusal;
+
     [Fact]
-    public void PublishingIsLockedUntilMakerCheckerExists()
+    public void APublishRequestPinsTheExactDraftAndASecondPersonPublishesIt()
     {
         var definition = AttributeDefinition.Register("ee_subgroup_code", EeSubgroupCode());
-        Should.Throw<AttributeActivationLockedException>(definition.Publish).Message.ShouldContain("DL-007");
+        var draft = definition.CurrentDraft!;
+        var request = AttributePublishRequest.Propose(Guid.CreateVersion7(), definition, "author", "Needed for the matrix", At);
+        request.VersionNumber.ShouldBe(1);
+        request.ContentHash.ShouldBe(draft.ContentHash);
+        request.AttributeDefinitionVersionId.ShouldBe(draft.Id);
+        request.State.ShouldBe(IAM.BuildingBlocks.Abstractions.SecondPerson.SecondPersonState.Proposed);
+
+        PublishRefusal(() => request.Approve("author", null, definition, At)).ShouldBe(AttributePublishRefusal.MakerCannotDecide);
+        draft.State.ShouldBe(AttributeVersionState.Draft);
+
+        request.Approve("checker", "Checked", definition, At);
+        draft.State.ShouldBe(AttributeVersionState.Published);
+        draft.PublishedByRequestId.ShouldBe(request.Id);
+        definition.CurrentPublished.ShouldBe(draft);
+        definition.CurrentDraft.ShouldBeNull();
+        PublishRefusal(() => request.Approve("other", null, definition, At)).ShouldBe(AttributePublishRefusal.NotProposed);
+    }
+
+    [Fact]
+    public void ADraftEditedAfterTheProposalCannotBePublishedByIt()
+    {
+        var definition = AttributeDefinition.Register("ee_subgroup_code", EeSubgroupCode());
+        var request = AttributePublishRequest.Propose(Guid.CreateVersion7(), definition, "author", "Needed", At);
+        definition.UpdateDraft(EeSubgroupCode() with { DisplayName = "Changed after the proposal" });
+        PublishRefusal(() => request.Approve("checker", null, definition, At)).ShouldBe(AttributePublishRefusal.DraftChanged);
         definition.CurrentDraft!.State.ShouldBe(AttributeVersionState.Draft);
+        request.State.ShouldBe(IAM.BuildingBlocks.Abstractions.SecondPerson.SecondPersonState.Proposed);
+    }
+
+    [Fact]
+    public void PublishingANewVersionRetiresThePreviousOne()
+    {
+        var definition = AttributeDefinition.Register("ee_subgroup_code", EeSubgroupCode());
+        PublishRefusal(() => definition.StartNewDraft(EeSubgroupCode())).ShouldBe(AttributePublishRefusal.DraftExists);
+        AttributePublishRequest.Propose(Guid.CreateVersion7(), definition, "author", "v1", At).Approve("checker", null, definition, At);
+        var first = definition.CurrentPublished!;
+
+        var second = definition.StartNewDraft(EeSubgroupCode() with { DisplayName = "Employee subgroup (v2)" });
+        second.VersionNumber.ShouldBe(2);
+        PublishRefusal(() => definition.StartNewDraft(EeSubgroupCode())).ShouldBe(AttributePublishRefusal.DraftExists);
+        AttributePublishRequest.Propose(Guid.CreateVersion7(), definition, "author", "v2", At).Approve("checker", null, definition, At);
+
+        first.State.ShouldBe(AttributeVersionState.Retired);
+        second.State.ShouldBe(AttributeVersionState.Published);
+        definition.CurrentPublished.ShouldBe(second);
+        definition.Versions.Count(v => v.State == AttributeVersionState.Published).ShouldBe(1);
+    }
+
+    [Fact]
+    public void ANewDraftNeedsAPublishedVersionAndProposalsNeedADraft()
+    {
+        var definition = AttributeDefinition.Register("ee_subgroup_code", EeSubgroupCode());
+        AttributePublishRequest.Propose(Guid.CreateVersion7(), definition, "author", "v1", At).Approve("checker", null, definition, At);
+        PublishRefusal(() => AttributePublishRequest.Propose(Guid.CreateVersion7(), definition, "author", "again", At)).ShouldBe(AttributePublishRefusal.NoDraft);
+        PublishRefusal(() => AttributePublishRequest.Propose(Guid.Empty, definition, "author", "x", At)).ShouldBe(AttributePublishRefusal.InvalidRecord);
+
+        var fresh = AttributeDefinition.Register("company_code", EeSubgroupCode());
+        PublishRefusal(() => AttributePublishRequest.Propose(Guid.CreateVersion7(), fresh, "author", null, At)).ShouldBe(AttributePublishRefusal.InvalidReason);
+        PublishRefusal(() => AttributePublishRequest.Propose(Guid.CreateVersion7(), fresh, " author", "x", At)).ShouldBe(AttributePublishRefusal.NotAllowed);
+    }
+
+    [Fact]
+    public void RejectNeedsAReasonAndOnlyTheMakerWithdraws()
+    {
+        var definition = AttributeDefinition.Register("ee_subgroup_code", EeSubgroupCode());
+        var request = AttributePublishRequest.Propose(Guid.CreateVersion7(), definition, "author", "Needed", At);
+        PublishRefusal(() => request.Reject("checker", null, At)).ShouldBe(AttributePublishRefusal.InvalidReason);
+        PublishRefusal(() => request.Withdraw("checker", null, At)).ShouldBe(AttributePublishRefusal.NotMaker);
+        request.Withdraw("author", "Raised by mistake", At);
+        request.State.ShouldBe(IAM.BuildingBlocks.Abstractions.SecondPerson.SecondPersonState.Withdrawn);
+        definition.CurrentDraft!.State.ShouldBe(AttributeVersionState.Draft);
+    }
+
+    [Theory]
+    [InlineData("Approved", "author", "author")]
+    [InlineData("Approved", "author", null)]
+    [InlineData("Rejected", "author", "checker")]
+    [InlineData("Withdrawn", "author", "checker")]
+    [InlineData("Proposed", "author", "checker")]
+    public void DamagedStoredRequestsAreRefused(string state, string maker, string? checker)
+    {
+        var parsed = Enum.Parse<IAM.BuildingBlocks.Abstractions.SecondPerson.SecondPersonState>(state);
+        PublishRefusal(() => AttributePublishRequest.Restore(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1, new string('a', 64), maker, "r", At, parsed,
+            checker, null, parsed == IAM.BuildingBlocks.Abstractions.SecondPerson.SecondPersonState.Proposed ? null : At))
+            .ShouldBe(AttributePublishRefusal.InvalidRecord);
+        PublishRefusal(() => AttributePublishRequest.Restore(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1, new string('A', 64), "author", "r", At,
+            IAM.BuildingBlocks.Abstractions.SecondPerson.SecondPersonState.Proposed, null, null, null))
+            .ShouldBe(AttributePublishRefusal.InvalidRecord);
     }
 
     [Fact]

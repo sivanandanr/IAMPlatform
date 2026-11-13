@@ -131,6 +131,9 @@ namespace IAM.Persistence.SqlServer.Migrations.Identity
                         .UseCollation("Latin1_General_100_BIN2")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<Guid?>("PublishedByRequestId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("Sensitivity")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -167,6 +170,8 @@ namespace IAM.Persistence.SqlServer.Migrations.Identity
                         .HasColumnType("int");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("PublishedByRequestId");
 
                     b.HasIndex("AttributeDefinitionId", "VersionNumber")
                         .IsUnique();
@@ -238,6 +243,111 @@ namespace IAM.Persistence.SqlServer.Migrations.Identity
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("IAM.Modules.Identity.Infrastructure.Persistence.AttributePublishRequestRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AttributeDefinitionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AttributeDefinitionVersionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Checker")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength()
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTimeOffset?>("DecidedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("DecisionReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("Maker")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTimeOffset>("ProposedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AttributeDefinitionId");
+
+                    b.HasIndex("AttributeDefinitionVersionId");
+
+                    b.HasIndex("State", "ProposedAtUtc");
+
+                    b.ToTable("AttributePublishRequest", "identity", t =>
+                        {
+                            t.HasTrigger("TR_AttributePublishRequest_DecidedImmutable");
+
+                            t.HasCheckConstraint("CK_AttributePublishRequest_Checker_Code", "DATALENGTH([Checker]) > 0 AND DATALENGTH([Checker]) = DATALENGTH(LTRIM(RTRIM([Checker])))");
+
+                            t.HasCheckConstraint("CK_AttributePublishRequest_ContentHash_Code", "DATALENGTH([ContentHash]) > 0 AND DATALENGTH([ContentHash]) = DATALENGTH(LTRIM(RTRIM([ContentHash])))");
+
+                            t.HasCheckConstraint("CK_AttributePublishRequest_Maker_Code", "DATALENGTH([Maker]) > 0 AND DATALENGTH([Maker]) = DATALENGTH(LTRIM(RTRIM([Maker])))");
+
+                            t.HasCheckConstraint("CK_AttributePublishRequest_State_Code", "DATALENGTH([State]) > 0 AND DATALENGTH([State]) = DATALENGTH(LTRIM(RTRIM([State])))");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("IAM.Modules.Identity.Domain.Attributes.AttributeDefinitionVersion", b =>
                 {
                     b.HasOne("IAM.Modules.Identity.Domain.Attributes.AttributeDefinition", null)
@@ -245,6 +355,11 @@ namespace IAM.Persistence.SqlServer.Migrations.Identity
                         .HasForeignKey("AttributeDefinitionId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("IAM.Modules.Identity.Infrastructure.Persistence.AttributePublishRequestRow", null)
+                        .WithMany()
+                        .HasForeignKey("PublishedByRequestId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("IAM.Modules.Identity.Domain.Attributes.AttributeDefinitionVersionOperator", b =>
@@ -253,6 +368,21 @@ namespace IAM.Persistence.SqlServer.Migrations.Identity
                         .WithMany("Operators")
                         .HasForeignKey("AttributeDefinitionVersionId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("IAM.Modules.Identity.Infrastructure.Persistence.AttributePublishRequestRow", b =>
+                {
+                    b.HasOne("IAM.Modules.Identity.Domain.Attributes.AttributeDefinition", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("IAM.Modules.Identity.Domain.Attributes.AttributeDefinitionVersion", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeDefinitionVersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

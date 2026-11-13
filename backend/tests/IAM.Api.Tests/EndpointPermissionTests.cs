@@ -74,6 +74,15 @@ public sealed class EndpointPermissionTests
             ["Administration.ApproveChange"] = "administration.changes.approve",
             ["Administration.RejectChange"] = "administration.changes.approve",
             ["Administration.WithdrawChange"] = "administration.changes.propose",
+            ["Identity.GetAttributeDraft"] = "identity.attributes.read",
+            ["Identity.RegisterAttribute"] = "identity.attributes.manage",
+            ["Identity.UpdateAttributeDraft"] = "identity.attributes.manage",
+            ["Identity.StartAttributeDraft"] = "identity.attributes.manage",
+            ["Identity.ProposeAttributePublish"] = "identity.attributes.manage",
+            ["Identity.GetAttributePublishRequest"] = "identity.attributes.read",
+            ["Identity.ApproveAttributePublish"] = "identity.attributes.approve",
+            ["Identity.RejectAttributePublish"] = "identity.attributes.approve",
+            ["Identity.WithdrawAttributePublish"] = "identity.attributes.manage",
         };
         using var host = new ApiTestHost();
         var routed = host.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>()

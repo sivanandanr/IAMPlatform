@@ -8,7 +8,8 @@ namespace IAM.Modules.Identity.Domain.Attributes;
 /// <summary>
 /// One registered attribute of the shared catalog (IAM-WF-014, spec L.4, ADR-0015). Its <see cref="Id"/> and
 /// <see cref="Key"/> never change; its content lives in numbered <see cref="Versions"/>. At most one version is a
-/// draft. Publishing is locked in S1-08 (DL-007).
+/// draft and at most one is published. A draft is published only through an approved publish request (DL-007, DL-064),
+/// which retires the previously published version.
 /// </summary>
 public sealed class AttributeDefinition
 {
@@ -47,11 +48,43 @@ public sealed class AttributeDefinition
         return current.Apply(Key, draft);
     }
 
-    /// <summary>Always refused in S1-08: activation needs an independent second person (DL-007, IAM-WF-019).</summary>
-    public void Publish()
+    /// <summary>The version rules use, if any.</summary>
+    public AttributeDefinitionVersion? CurrentPublished => _versions.SingleOrDefault(v => v.State == AttributeVersionState.Published);
+
+    /// <summary>
+    /// Publishes exactly the draft the request named: the same version number and content hash, so a draft edited after
+    /// the proposal can't be published by it. The previously published version, if any, is retired. Only an approved
+    /// publish request calls this (<see cref="AttributePublishRequest.Approve"/>).
+    /// </summary>
+    internal void Publish(int versionNumber, string contentHash, Guid requestId)
     {
-        _ = CurrentDraft ?? throw new AttributeDefinitionRejectedException("Version", "has no draft to publish");
-        throw new AttributeActivationLockedException();
+        var draft = CurrentDraft ?? throw new AttributePublishRefusedException(AttributePublishRefusal.NoDraft);
+        if (draft.VersionNumber != versionNumber || !string.Equals(draft.ContentHash, contentHash, StringComparison.Ordinal))
+        {
+            throw new AttributePublishRefusedException(AttributePublishRefusal.DraftChanged);
+        }
+
+        CurrentPublished?.MarkRetired();
+        draft.MarkPublished(requestId);
+    }
+
+    /// <summary>Starts the next version as a draft, after one is published. Refused while a draft exists.</summary>
+    public AttributeDefinitionVersion StartNewDraft(AttributeDraft draft)
+    {
+        AttributeRules.ValidateDraft(draft);
+        if (CurrentDraft is not null)
+        {
+            throw new AttributePublishRefusedException(AttributePublishRefusal.DraftExists);
+        }
+
+        if (CurrentPublished is null)
+        {
+            throw new AttributePublishRefusedException(AttributePublishRefusal.NothingPublished);
+        }
+
+        var next = AttributeDefinitionVersion.CreateDraft(this, _versions.Max(v => v.VersionNumber) + 1, draft);
+        _versions.Add(next);
+        return next;
     }
 }
 
@@ -99,6 +132,9 @@ public sealed class AttributeDefinitionVersion
 
     /// <summary>Lower-case hex SHA-256 of the canonical content (see <see cref="ComputeContentHash"/>).</summary>
     public string ContentHash { get; private set; }
+
+    /// <summary>The approved publish request that published this version; none while it is a draft.</summary>
+    public Guid? PublishedByRequestId { get; private set; }
 
     public IReadOnlyList<AttributeDefinitionVersionOperator> Operators => _operators;
 
@@ -161,6 +197,23 @@ public sealed class AttributeDefinitionVersion
         }
 
         return Convert.ToHexStringLower(SHA256.HashData(buffer.WrittenSpan));
+    }
+
+    internal void MarkPublished(Guid requestId)
+    {
+        State = AttributeVersionState.Published;
+        PublishedByRequestId = requestId;
+    }
+
+    /// <summary>The only change a published version allows (the database refuses any other).</summary>
+    internal void MarkRetired()
+    {
+        if (State != AttributeVersionState.Published)
+        {
+            throw new AttributePublishRefusedException(AttributePublishRefusal.InvalidRecord);
+        }
+
+        State = AttributeVersionState.Retired;
     }
 
     /// <summary>The current content as a draft record.</summary>

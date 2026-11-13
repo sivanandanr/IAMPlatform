@@ -75,7 +75,7 @@ public enum AttributeVersionState
     /// <summary>Editable by its maker; never visible to rules.</summary>
     Draft = 1,
 
-    /// <summary>Immutable and visible to rules. Not reachable in S1-08: activation is locked until maker-checker exists (DL-007).</summary>
+    /// <summary>Immutable and visible to rules. Reached only through an approved publish request (DL-007, DL-064).</summary>
     Published = 2,
 
     /// <summary>Immutable and no longer usable in new rules.</summary>

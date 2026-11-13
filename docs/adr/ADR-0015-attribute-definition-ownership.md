@@ -53,11 +53,20 @@ Moving ownership later requires schema moves on both engines. Rollback: compensa
 ## Tests / evidence
 `tests/IAM.Persistence.Tests`: `Identity/AttributeCatalogDomainTests` (keys, field rules, operators per type, content hash, "01" ≠ "1", strict typed values, exact enum names in requests); `Parity/AttributeCatalogParityTests` on both engines (register + audit + read back; duplicate keys refused by pre-check and by the unique index; failed audit write leaves no registration; optimistic concurrency; publish refused and audited; drafts invisible to `IAttributeCatalog`; key immutable via SQL; published versions and their operators immutable for the app login and the schema owner; unknown `State` refused; a published version is returned by the reader). Results in ADR-0010.
 
-## Not implemented (S1-08)
-- Publishing/activation and maker-checker (DL-007); IAM-WF-013's acceptance ("publish and resolve without a schema migration") therefore waits for it.
+## Publishing with a second person (stage 2 PR 3, DL-007, DL-064)
+Drafted by Claude Code; not approved.
+- A person with `identity.attributes.manage` proposes publishing the current draft (`AttributePublishRequest`). The request names the draft's version number and content hash, so editing the draft afterwards makes it unapprovable (`DraftChanged`). A different person with `identity.attributes.approve` approves it; at approval the maker must still hold `manage`. One pending request per attribute. Rejection needs a reason; only the maker withdraws. The rules are the shared `SecondPersonDecision` (also used by access changes, DL-059b).
+- Approving publishes that draft and retires the previously published version, in one transaction with the audit event (`identity.attribute.publish_proposed` / `_approved` / `_rejected` / `_withdrawn`; refusals `publish_refused`, Denied, with the refusal code). After publishing, `StartNewDraft` begins the next version.
+- Database (`AttributePublishing` migrations, both engines): the S1-08 draft-only CHECK is replaced: a draft has no publishing request, a published or retired version names one, and that request names the version back (foreign keys). A trigger lets a version become published only for an approved request naming it, and lets a published version change only by being retired with its content unchanged (display names compared in binary). Publish requests: the shared state CHECK (no self-decision), hex hash, one pending per attribute, decided requests immutable, none deleted.
+- Review fixes (DL-065): the draft is frozen while a request is pending; the draft's creator and last editor can't approve it; the approver sends the content hash they reviewed (the review endpoint returns the request with the draft); the trigger also checks the request's attribute, version number and content hash; the service checks permissions on every write and audits every refusal. Approval saves the request first, then the retired version, then the published one, so the one-published index never sees two.
+- Rollback: the Down migrations restore the draft-only CHECK and drop `AttributePublishRequest`, so they lose publish-request history and fail once anything is published; after a publish, roll forward instead (DL-020).
+- HTTP: `/api/identity/attributes` (read a draft, register, edit, start a new draft, propose) and `/api/identity/attribute-publish-requests` (read, approve, reject, withdraw), with permission checks, validated bodies that refuse unknown fields, body and rate limits, and ProblemDetails with a field and rule or a refusal code at most.
+
+## Not implemented
 - Attribute values, `IdentitySnapshot` and `identity.Identity` (L.4); HR sync; freshness evaluation.
-- Retirement transition (needs a trigger change), new draft versions after publishing, `AttributeDefinitionPublished` event, hash re-verification on read.
-- HTTP endpoints and UI (permission model first).
+- `AttributeDefinitionPublished` event; hash re-verification on read; how existing rules move to a newer published version (Policy has no storage yet).
+- UI.
+- Existing deployments keep the Policy author/checker actions they were bootstrapped with: the new attribute actions must be added through an access change.
 
 ## Open questions and approvals
 - DL-038: spec L.1/L.3 write `EESubgroupCode IN (1,2,3,4,5,6)` as numbers; the blueprint writes `["1",…]`. Implemented as string codes (DL-006); spec owner to align L.1/L.3.
