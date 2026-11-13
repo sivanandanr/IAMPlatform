@@ -30,6 +30,15 @@
           "Microsoft.EntityFrameworkCore.Relational": "[10.0.14, )"
         }
       },
+      "iam.buildingblocks.security": {
+        "type": "Project"
+      },
+      "iam.modules.administration.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
       "iam.modules.audit.contracts": {
         "type": "Project",
         "dependencies": {

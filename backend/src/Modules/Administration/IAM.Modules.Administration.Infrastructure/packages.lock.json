@@ -105,6 +105,9 @@
           "Microsoft.EntityFrameworkCore.Relational": "[10.0.14, )"
         }
       },
+      "iam.buildingblocks.security": {
+        "type": "Project"
+      },
       "iam.modules.administration.application": {
         "type": "Project",
         "dependencies": {

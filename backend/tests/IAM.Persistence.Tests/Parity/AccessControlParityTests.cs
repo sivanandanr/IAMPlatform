@@ -26,10 +26,10 @@ namespace IAM.Persistence.Tests.Parity;
 [Trait("Category", "DatabaseParity")]
 public sealed class AccessControlParityTests(ParityDatabase db)
 {
-    private const string Administrator = "access-admin";
-    private const string Manager = "access-manager";
-    private const string SecondAdministrator = "access-admin-2";
-    private const string SecondManager = "access-manager-2";
+    internal const string Administrator = "access-admin";
+    internal const string Manager = "access-manager";
+    internal const string SecondAdministrator = "access-admin-2";
+    internal const string SecondManager = "access-manager-2";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -61,7 +61,7 @@ public sealed class AccessControlParityTests(ParityDatabase db)
         var deniedBefore = await AuditCountAsync(null, AccessAuditActions.Refused, "Denied");
         await using (var scope = Service("someone-else"))
         {
-            (await Should.ThrowAsync<AccessRefusedException>(() => scope.Service.BootstrapAsync("x-admin", "x-manager", Ct)))
+            (await Should.ThrowAsync<AccessRefusedException>(() => scope.Service.BootstrapAsync("x-admin", "x-manager", null, Ct)))
                 .Refusal.ShouldBe(AccessRefusal.AlreadyBootstrapped);
         }
 
@@ -712,6 +712,9 @@ public sealed class AccessControlParityTests(ParityDatabase db)
     /// normal approval path, so the concurrency tests have two different people who can approve. Each step is checked on
     /// its own, so a run that stopped half way is completed rather than skipped. Tests in one collection run one at a time.
     /// </summary>
+    /// <summary>The same shared setup, for the API tests in this collection (they use the same people).</summary>
+    internal Task EnsureAccessBootstrappedAsync() => EnsureBootstrappedAsync();
+
     private async Task EnsureBootstrappedAsync()
     {
         AccessModel model;
@@ -720,7 +723,7 @@ public sealed class AccessControlParityTests(ParityDatabase db)
             model = await scope.Service.CurrentModelAsync(Ct);
             if (model.Version == 0)
             {
-                await scope.Service.BootstrapAsync(Administrator, Manager, Ct);
+                await scope.Service.BootstrapAsync(Administrator, Manager, new BootstrapEvidence("PARITY-1", "parity-runner", "parity-host"), Ct);
             }
         }
 

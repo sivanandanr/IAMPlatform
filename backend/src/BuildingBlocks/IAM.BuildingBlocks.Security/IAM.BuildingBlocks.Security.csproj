@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Shared host security helpers (Blueprint §5 BuildingBlocks/Security). Hosts only; modules do not reference it. -->
+  <!-- Shared security helpers (Blueprint §5 BuildingBlocks/Security): host headers and OIDC guards, and the per-action permission
+       requirement that module endpoints declare (ADR-0008, P0-013 slice 3). -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>

@@ -282,6 +282,52 @@ public sealed class ParityDatabase : IAsyncLifetime
         }
     }
 
+    /// <summary>The connection string for <paramref name="login"/> on this database (the bootstrap login tests, slice 5).</summary>
+    public string ConnectionStringFor(string login, string password) => WithLogin(login, password);
+
+    /// <summary>Runs the reviewed grant-access-bootstrap.sql as administrator (DL-063a).</summary>
+    public Task GrantAccessBootstrapLoginAsync(string login, string password, CancellationToken ct) =>
+        RunAdminScriptAsync("grant-access-bootstrap.sql", [("@BootstrapLogin", "iam_bootstrap.login", login), ("@BootstrapPassword", "iam_bootstrap.password", password)], ct);
+
+    /// <summary>Runs the reviewed revoke-access-bootstrap.sql as administrator (DL-063a).</summary>
+    public Task RevokeAccessBootstrapLoginAsync(string login, CancellationToken ct) =>
+        RunAdminScriptAsync("revoke-access-bootstrap.sql", [("@BootstrapLogin", "iam_bootstrap.login", login)], ct);
+
+    [SuppressMessage("Security", "CA2100", Justification = "Executes a reviewed script from infra/db; every input is a bound parameter.")]
+    private async Task RunAdminScriptAsync(string file, (string SqlServerName, string PostgreSqlSetting, string Value)[] inputs, CancellationToken ct)
+    {
+        var dialect = Provider == DatabaseProvider.SqlServer ? "sqlserver" : "postgresql";
+        var script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "db", dialect, file), ct);
+        await using var connection = OpenConnection(_adminConnectionString);
+        if (Provider == DatabaseProvider.SqlServer)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = script;
+            foreach (var (name, _, value) in inputs)
+            {
+                AddParameter(command, name, value);
+            }
+
+            await command.ExecuteNonQueryAsync(ct);
+            return;
+        }
+
+        await using (var settings = connection.CreateCommand())
+        {
+            settings.CommandText = "SELECT " + string.Join(", ", inputs.Select((input, i) => $"set_config('{input.PostgreSqlSetting}', @p{i}, false)"));
+            for (var i = 0; i < inputs.Length; i++)
+            {
+                AddParameter(settings, $"@p{i}", inputs[i].Value);
+            }
+
+            await settings.ExecuteNonQueryAsync(ct);
+        }
+
+        await using var run = connection.CreateCommand();
+        run.CommandText = script;
+        await run.ExecuteNonQueryAsync(ct);
+    }
+
     private static void AddParameter(DbCommand command, string name, string value)
     {
         var parameter = command.CreateParameter();
@@ -295,6 +341,6 @@ public sealed class ParityDatabase : IAsyncLifetime
         : new NpgsqlConnectionStringBuilder(_adminConnectionString) { Username = login, Password = password, Pooling = false }.ConnectionString;
 
     /// <summary>Random per-run password that satisfies SQL Server's policy; never logged or persisted.</summary>
-    private static string NewPassword() =>
+    internal static string NewPassword() =>
         "Aa1-" + RandomNumberGenerator.GetString("abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789", 32);
 }

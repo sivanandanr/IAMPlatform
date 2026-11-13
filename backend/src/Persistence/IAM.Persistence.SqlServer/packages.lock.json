@@ -462,6 +462,9 @@
           "Microsoft.EntityFrameworkCore.Relational": "[10.0.14, )"
         }
       },
+      "iam.buildingblocks.security": {
+        "type": "Project"
+      },
       "iam.modules.administration.application": {
         "type": "Project",
         "dependencies": {
@@ -487,6 +490,7 @@
         "dependencies": {
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
           "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
           "IAM.Modules.Administration.Application": "[1.0.0, )",
           "IAM.Modules.Administration.Contracts": "[1.0.0, )",
           "IAM.Modules.Administration.Domain": "[1.0.0, )",

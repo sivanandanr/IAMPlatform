@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using IAM.BuildingBlocks.Security;
+using IAM.Modules.Administration.Contracts;
 using IAM.Modules.Identity.Infrastructure;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -29,7 +31,9 @@ public static class IdentityModule
         var group = endpoints.MapGroup(RoutePrefix).RequireAuthorization();
 
         // S1-05 secured sample endpoint: returns only the caller's subject identifier (no profile/PII).
-        group.MapGet("/me", GetCurrentSubject).WithName("Identity.GetCurrentSubject");
+        group.MapGet("/me", GetCurrentSubject)
+            .RequirePermission(AccessActions.SelfRead)
+            .WithName("Identity.GetCurrentSubject");
 
         return endpoints;
     }

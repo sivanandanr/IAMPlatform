@@ -20,10 +20,12 @@ public static class AccessAuditActions
     public const string Rejected = "administration.access_change.rejected";
     public const string Withdrawn = "administration.access_change.withdrawn";
     public const string Refused = "administration.access_change.refused";
+    public const string Denied = "administration.authorization.denied";
+    public const string ActionTargetType = "administration.action";
     public const string ModelTargetType = "administration.access_model";
     public const string ChangeTargetType = "administration.access_change_request";
 
-    public static IReadOnlyList<string> All { get; } = [Bootstrapped, IntegrityFailed, Proposed, Approved, Rejected, Withdrawn, Refused];
+    public static IReadOnlyList<string> All { get; } = [Bootstrapped, IntegrityFailed, Proposed, Approved, Rejected, Withdrawn, Refused, Denied];
 }
 
 /// <summary>
@@ -42,7 +44,8 @@ public sealed class AccessAdministrationService(
     IAuditWriter audit,
     TimeProvider clock,
     IIamDatabaseProvider databaseProvider,
-    IAuditActorAccessor actorAccessor) : IAccessAdministration
+    IAuditActorAccessor actorAccessor,
+    AccessIntegrityAuditThrottle? integrityThrottle = null) : IAccessAdministration
 {
     private const int ReadAttempts = 3;
 
@@ -181,7 +184,7 @@ public sealed class AccessAdministrationService(
             return View(change);
         }, cancellationToken);
 
-    public Task BootstrapAsync(string administrator, string manager, CancellationToken cancellationToken) =>
+    public Task BootstrapAsync(string administrator, string manager, BootstrapEvidence? evidence, CancellationToken cancellationToken) =>
         GuardAsync("bootstrap", null, async () =>
         {
             var actor = Actor();
@@ -221,6 +224,9 @@ public sealed class AccessAdministrationService(
                 [
                     new AuditPayloadField("administrator", administrator, AuditFieldClass.Plain),
                     new AuditPayloadField("manager", manager, AuditFieldClass.Plain),
+                    new AuditPayloadField("approvalReference", evidence?.ApprovalReference ?? "none", AuditFieldClass.Plain),
+                    new AuditPayloadField("operatingSystemUser", evidence?.OperatingSystemUser ?? "none", AuditFieldClass.Plain),
+                    new AuditPayloadField("host", evidence?.Host ?? "none", AuditFieldClass.Plain),
                 ],
             };
             await audit.AppendAsync(tx.GetDbTransaction(), record, cancellationToken).ConfigureAwait(false);
@@ -486,7 +492,11 @@ public sealed class AccessAdministrationService(
         {
             try
             {
-                await RecordIntegrityFailureAsync(step, id, integrity.Check, CancellationToken.None).ConfigureAwait(false);
+                var suppressed = 0;
+                if (integrityThrottle is null || integrityThrottle.TryEnter($"{step}:{integrity.Check}:{id}", out suppressed))
+                {
+                    await RecordIntegrityFailureAsync(step, id, integrity.Check, suppressed, CancellationToken.None).ConfigureAwait(false);
+                }
             }
             catch (Exception auditFailure)
             {
@@ -502,10 +512,10 @@ public sealed class AccessAdministrationService(
     }
 
     /// <summary>
-    /// Written with no caller cancellation, so a client that disconnects can't suppress it. Repeated failures are each
-    /// recorded; slice 3 must rate-limit before every request reads the model (R-033).
+    /// Written with no caller cancellation, so a client that disconnects can't suppress it. In the API, repeats are limited
+    /// by <see cref="AccessIntegrityAuditThrottle"/>; each written event says how many were left out before it.
     /// </summary>
-    private async Task RecordIntegrityFailureAsync(string step, Guid? id, string? check, CancellationToken cancellationToken)
+    private async Task RecordIntegrityFailureAsync(string step, Guid? id, string? check, int suppressed, CancellationToken cancellationToken)
     {
         db.ChangeTracker.Clear();
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
@@ -521,6 +531,7 @@ public sealed class AccessAdministrationService(
             [
                 new AuditPayloadField("step", step, AuditFieldClass.Plain),
                 new AuditPayloadField("check", check ?? "unknown", AuditFieldClass.Plain),
+                new AuditPayloadField("suppressedSincePrevious", suppressed.ToString(CultureInfo.InvariantCulture), AuditFieldClass.Plain),
             ],
         };
         await audit.AppendAsync(tx.GetDbTransaction(), record, cancellationToken).ConfigureAwait(false);
