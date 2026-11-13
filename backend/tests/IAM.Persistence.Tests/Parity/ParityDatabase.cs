@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using DotNet.Testcontainers.Containers;
 using IAM.BuildingBlocks.Persistence;
+using IAM.Modules.Administration.Infrastructure.Persistence;
 using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
 using IAM.Persistence.Tests.Probe;
@@ -34,6 +35,7 @@ public sealed class ParityDatabase : IAsyncLifetime
     public const string IdentityAppLogin = "iam_app_identity";
     public const string ProbeAppLogin = "iam_app_parity_probe";
     public const string AuditAppLogin = "iam_app_audit";
+    public const string AdministrationAppLogin = "iam_app_administration";
 
     private const string SqlServerImage = "mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718";
     private const string PostgreSqlImage = "postgres:17.11-alpine3.24@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac";
@@ -43,6 +45,7 @@ public sealed class ParityDatabase : IAsyncLifetime
     private readonly string _identityAppPassword = NewPassword();
     private readonly string _probeAppPassword = NewPassword();
     private readonly string _auditAppPassword = NewPassword();
+    private readonly string _administrationAppPassword = NewPassword();
     private IDatabaseContainer? _container;
     private string _adminConnectionString = string.Empty;
 
@@ -59,6 +62,12 @@ public sealed class ParityDatabase : IAsyncLifetime
     public string ProbeAppConnectionString => WithLogin(ProbeAppLogin, _probeAppPassword);
 
     public string AuditAppConnectionString => WithLogin(AuditAppLogin, _auditAppPassword);
+
+    public string AdministrationAppConnectionString => WithLogin(AdministrationAppLogin, _administrationAppPassword);
+
+    public IReadOnlyList<string> AdministrationFirstRunApplied { get; private set; } = [];
+
+    public IReadOnlyList<string> AdministrationSecondRunPending { get; private set; } = [];
 
     public IReadOnlyList<string> AuditFirstRunApplied { get; private set; } = [];
 
@@ -104,10 +113,11 @@ public sealed class ParityDatabase : IAsyncLifetime
         await BootstrapAsync(IdentityDbContext.SchemaName, IdentityAppLogin, _identityAppPassword, ct);
         await BootstrapAsync(ProbeDbContext.SchemaName, ProbeAppLogin, _probeAppPassword, ct);
         await BootstrapAsync(AuditDbContext.SchemaName, AuditAppLogin, _auditAppPassword, ct);
+        await BootstrapAsync(AdministrationDbContext.SchemaName, AdministrationAppLogin, _administrationAppPassword, ct);
 
         // Every module runtime login may append audit events in its own transaction; only the audit login may read
         // them (ADR-0018). Roles must exist before the audit migration grants to them.
-        foreach (var login in new[] { IdentityAppLogin, ProbeAppLogin, AuditAppLogin })
+        foreach (var login in new[] { IdentityAppLogin, ProbeAppLogin, AuditAppLogin, AdministrationAppLogin })
         {
             await GrantAuditRoleAsync(login, AuditDbContext.WriterRole, ct);
         }
@@ -139,6 +149,19 @@ public sealed class ParityDatabase : IAsyncLifetime
         {
             AuditSecondRunPending = (await audit.Database.GetPendingMigrationsAsync(ct)).ToList();
             await audit.Database.MigrateAsync(ct);
+        }
+
+        await using (var administration = TestSupport.CreateAdministration(Provider, MigratorConnectionString))
+        {
+            var pending = (await administration.Database.GetPendingMigrationsAsync(ct)).ToList();
+            await administration.Database.MigrateAsync(ct);
+            AdministrationFirstRunApplied = pending;
+        }
+
+        await using (var administration = TestSupport.CreateAdministration(Provider, MigratorConnectionString))
+        {
+            AdministrationSecondRunPending = (await administration.Database.GetPendingMigrationsAsync(ct)).ToList();
+            await administration.Database.MigrateAsync(ct);
         }
 
         // Probe tables, created by the migrator from the model with the provider's own DDL generator.

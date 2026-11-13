@@ -18,6 +18,13 @@ public interface IIamDatabaseProvider
     /// referencing a database driver.
     /// </summary>
     bool IsUniqueViolation(Exception exception);
+
+    /// <summary>
+    /// True if <paramref name="exception"/> (or an inner exception) means the database chose this transaction as the loser
+    /// of a concurrent one (SQL Server deadlock 1205, lock timeout 1222 or snapshot update conflict 3960; PostgreSQL 40001
+    /// serialization failure or 40P01 deadlock). Nothing was committed; the caller may report a conflict.
+    /// </summary>
+    bool IsConcurrencyFailure(Exception exception);
 }
 
 /// <summary>Supplies the connection string for a module schema. Each module connects with its own least-privilege login.</summary>

@@ -37,4 +37,17 @@ public sealed class PostgreSqlDatabaseProvider : IIamDatabaseProvider
 
         return false;
     }
+
+    public bool IsConcurrencyFailure(Exception exception)
+    {
+        for (var e = exception; e is not null; e = e.InnerException)
+        {
+            if (e is Npgsql.PostgresException { SqlState: Npgsql.PostgresErrorCodes.SerializationFailure or Npgsql.PostgresErrorCodes.DeadlockDetected })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
