@@ -25,7 +25,8 @@ public sealed class PermissionCheckTests
     /// <summary>Actions everyone signed in has skip the store: adding one is a security change and must be reviewed.</summary>
     [Fact]
     public void OnlyTheReviewedActionsBelongToEveryone() =>
-        ActionCatalog.EveryoneActions.Order(StringComparer.Ordinal).ShouldBe([ActionCatalog.OwnPermissionsRead, ActionCatalog.SelfRead]);
+        // DL-073: anyone may look at and act on approvals that concern them; the workflow service decides which those are.
+        ActionCatalog.EveryoneActions.Order(StringComparer.Ordinal).ShouldBe([ActionCatalog.OwnPermissionsRead, ActionCatalog.SelfRead, ActionCatalog.ApprovalsAct, ActionCatalog.InstancesView]);
 
     [Fact]
     public async Task UnknownActionsAndEmptySubjectsAreRefusedWithoutReadingTheStore()

@@ -24,6 +24,7 @@ public static class WorkflowAuditActions
 
     public const string EscalateAction = AccessActions.ApprovalsEscalate;
     public const string CancelAction = AccessActions.InstancesCancel;
+    public const string ReadAction = AccessActions.InstancesRead;
 
     /// <summary>One code per action kind, for example <c>workflow.approval.decided</c>.</summary>
     public static string For(ApprovalActionKind kind) => kind switch
@@ -62,6 +63,11 @@ public sealed class ApprovalWorkflowService(
     IPermissionEvaluator permissions,
     IApproverResolver resolver) : IApprovalWorkflow
 {
+    /// <summary>Bounds on the inbox: at most 100 a page and 1,000 pages, so a request can't ask the database for everything.</summary>
+    public const int MaxTaskPageSize = 100;
+
+    public const int MaxTaskPage = 1_000;
+
     public async Task<ApprovalInstanceView> StartAsync(ApprovalBinding binding, ApprovalRoute route, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(binding);
@@ -105,13 +111,56 @@ public sealed class ApprovalWorkflowService(
         List<(LoggedAction Action, long VersionAfter)> actions = [(bound, instance.Version)];
         await SupplyOpenedLevelsAsync(loaded, actions, now, cancellationToken).ConfigureAwait(false);
         await SaveAsync(tx, loaded, actions, cancellationToken).ConfigureAwait(false);
-        return View(loaded);
+        return View(loaded, oversight: false);
     }
 
     public async Task<ApprovalInstanceView?> FindAsync(Guid instanceId, CancellationToken cancellationToken)
     {
         var row = await db.Instances.AsNoTracking().SingleOrDefaultAsync(i => i.Id == instanceId, cancellationToken).ConfigureAwait(false);
-        return row is null ? null : View(await ReplayAsync(row, null, cancellationToken).ConfigureAwait(false));
+        return row is null ? null : View(await ReplayAsync(row, null, cancellationToken).ConfigureAwait(false), oversight: true);
+    }
+
+    public async Task<ApprovalInstanceView?> ReadAsync(Guid instanceId, CancellationToken cancellationToken)
+    {
+        if (!PersonId.TryCreate(actorAccessor.CurrentActor, out var actor))
+        {
+            return null;
+        }
+
+        var row = await db.Instances.AsNoTracking().SingleOrDefaultAsync(i => i.Id == instanceId, cancellationToken).ConfigureAwait(false);
+        if (row is null)
+        {
+            return null;
+        }
+
+        var loaded = await ReplayAsync(row, null, cancellationToken).ConfigureAwait(false);
+        var canRead = await CanAsync(actor, WorkflowAuditActions.ReadAction, cancellationToken).ConfigureAwait(false);
+        return canRead || IsParticipant(loaded.Instance, actor) ? View(loaded, oversight: canRead) : null;
+    }
+
+    public async Task<ApprovalTaskPage> MyTasksAsync(int page, int pageSize, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(page, MaxTaskPage);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxTaskPageSize);
+        if (!PersonId.TryCreate(actorAccessor.CurrentActor, out var actor))
+        {
+            return new ApprovalTaskPage([], page, pageSize, HasMore: false);
+        }
+
+        var person = actor.Value;
+        var rows = await (
+                from task in db.Tasks.AsNoTracking()
+                join instance in db.Instances.AsNoTracking() on task.InstanceId equals instance.Id
+                where task.Person == person
+                orderby task.DeadlineUtc == null, task.DeadlineUtc, task.InstanceId, task.StageId
+                select new ApprovalTaskView(task.InstanceId, task.RequestItemId, task.StageId, task.Sequence, task.Kind, task.DeadlineUtc, instance.EngineVersion))
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize + 1)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return new ApprovalTaskPage([.. rows.Take(pageSize)], page, pageSize, rows.Count > pageSize);
     }
 
     public Task<ApprovalInstanceView> DecideAsync(Guid instanceId, long expectedVersion, Guid decisionId, Guid stageId, PersonId? onBehalfOf, bool approve, string? reason, CancellationToken cancellationToken) =>
@@ -160,12 +209,22 @@ public sealed class ApprovalWorkflowService(
         var loaded = await ReplayAsync(row, tx, cancellationToken).ConfigureAwait(false);
         var now = Now();
         LoggedAction action;
+        var actor = default(PersonId);
         try
         {
-            var actor = default(PersonId);
             if (needsPerson && !PersonId.TryCreate(actorAccessor.CurrentActor, out actor))
             {
                 throw new ApprovalRefusedException(ApprovalRefusal.InvalidActor);
+            }
+
+            // Someone the instance doesn't concern, with no permission that reaches it, can't tell it exists (DL-073c).
+            if (needsPerson
+                && !IsParticipant(loaded.Instance, actor)
+                && !await CanAsync(actor, WorkflowAuditActions.ReadAction, cancellationToken).ConfigureAwait(false)
+                && !(permission is not null && await CanAsync(actor, permission, cancellationToken).ConfigureAwait(false)))
+            {
+                await RefuseAsync(tx, instanceId, step, "NotVisible", cancellationToken).ConfigureAwait(false);
+                throw new ApprovalInstanceNotFoundException();
             }
 
             if (permission is not null && !await permissions.CanAsync(actor.Value, permission, cancellationToken).ConfigureAwait(false))
@@ -185,8 +244,23 @@ public sealed class ApprovalWorkflowService(
         List<(LoggedAction Action, long VersionAfter)> actions = [(action, loaded.Instance.Version)];
         await SupplyOpenedLevelsAsync(loaded, actions, now, cancellationToken).ConfigureAwait(false);
         await SaveAsync(tx, loaded, actions, cancellationToken).ConfigureAwait(false);
-        return View(loaded);
+        return View(loaded, oversight: needsPerson && await CanAsync(actor, WorkflowAuditActions.ReadAction, cancellationToken).ConfigureAwait(false));
     }
+
+    private async Task<bool> CanAsync(PersonId person, string action, CancellationToken cancellationToken) =>
+        person.IsValid && await permissions.CanAsync(person.Value, action, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// The requester, the person getting access, anyone ever listed on a level (configured, resolved, escalated or proposed)
+    /// and anyone who acted on it (DL-072d).
+    /// </summary>
+    private static bool IsParticipant(ApprovalInstance instance, PersonId person) =>
+        person == instance.Binding.Requester
+        || person == instance.Binding.Beneficiary
+        || instance.History.Any(e => e.Actor == person)
+        || instance.Stages.Any(s => s.Candidates.Contains(person) || s.Source.People.Contains(person)
+            || (s.Resolution?.People.Contains(person) ?? false) || (s.PendingEscalation?.Candidates.Contains(person) ?? false))
+        || instance.Escalations.Any(e => e.PreviousCandidates.Contains(person) || e.NewCandidates.Contains(person));
 
     /// <summary>
     /// Gives every level that opened its approvers, resolved now from its source (DL-069), each as a logged action so a
@@ -320,6 +394,10 @@ public sealed class ApprovalWorkflowService(
         row.ActionCount = sequence;
         row.ProvisioningAuthorized = instance.ProvisioningAuthorized;
         row.NextDeadlineUtc = NextDeadline(loaded);
+
+        // The inbox is rebuilt for this instance in the same transaction (DL-073b).
+        await db.Tasks.Where(x => x.InstanceId == row.Id).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        db.Tasks.AddRange(TasksOf(loaded));
         try
         {
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -352,14 +430,50 @@ public sealed class ApprovalWorkflowService(
             .Min();
     }
 
-    private async Task RefuseAsync(IDbContextTransaction tx, Guid? instanceId, string step, ApprovalRefusedException refusal, CancellationToken cancellationToken)
+    private Task RefuseAsync(IDbContextTransaction tx, Guid? instanceId, string step, ApprovalRefusedException refusal, CancellationToken cancellationToken) =>
+        RefuseAsync(tx, instanceId, step, (refusal.Refusal ?? ApprovalRefusal.InvalidDecision).ToString(), cancellationToken);
+
+    private async Task RefuseAsync(IDbContextTransaction tx, Guid? instanceId, string step, string code, CancellationToken cancellationToken)
     {
         db.ChangeTracker.Clear();
         await audit.AppendAsync(
             tx.GetDbTransaction(),
-            Event(WorkflowAuditActions.Refused, instanceId, AuditOutcome.Denied, null, Field("step", step), Field("refusal", (refusal.Refusal ?? ApprovalRefusal.InvalidDecision).ToString())),
+            Event(WorkflowAuditActions.Refused, instanceId, AuditOutcome.Denied, null, Field("step", step), Field("refusal", code)),
             cancellationToken).ConfigureAwait(false);
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Who can act on which open level now: eligible people on an active level who haven't had their say, while the request
+    /// accepts decisions, or tasks once it is authorised (the engine's own rule). Only a lookup for the inbox.
+    /// </summary>
+    private static IEnumerable<ApprovalTaskRow> TasksOf(Loaded loaded)
+    {
+        var instance = loaded.Instance;
+        var open = instance.State == ApprovalState.InProgress;
+        var tasksOnly = instance.State == ApprovalState.Held && instance.ProvisioningAuthorized;
+        if (!open && !tasksOnly)
+        {
+            yield break;
+        }
+
+        foreach (var stage in instance.Stages.Where(s => s.State == StageState.Active && (open || s.Kind == StageKind.Action)))
+        {
+            var decided = instance.Decisions.Where(d => d.StageId == stage.StageId).SelectMany(d => new[] { d.Actor, d.Principal }).ToHashSet();
+            foreach (var person in stage.Eligible.Where(p => !decided.Contains(p)).Distinct())
+            {
+                yield return new ApprovalTaskRow
+                {
+                    InstanceId = instance.Binding.InstanceId,
+                    StageId = stage.StageId,
+                    Person = person.Value,
+                    RequestItemId = instance.Binding.RequestItemId,
+                    Sequence = stage.Sequence,
+                    Kind = stage.Kind.ToString(),
+                    DeadlineUtc = stage.DeadlineUtc,
+                };
+            }
+        }
     }
 
     private AuditEventRecord ActionRecord(ApprovalInstanceRow row, LoggedAction action, long versionAfter)
@@ -377,9 +491,16 @@ public sealed class ApprovalWorkflowService(
         return Event(WorkflowAuditActions.For(action.Kind), row.Id, AuditOutcome.Succeeded, null, [.. payload]);
     }
 
-    private static ApprovalInstanceView View(Loaded loaded)
+    /// <summary>
+    /// The participant view, and with <paramref name="oversight"/> the full history and evidence (DL-073a). Participants
+    /// see a decision's reason only for a rejection, and a closure's reason only for a return.
+    /// </summary>
+    private static ApprovalInstanceView View(Loaded loaded, bool oversight)
     {
         var instance = loaded.Instance;
+        var closure = instance.Closure is { } c
+            ? new ApprovalClosureView(c.Outcome.ToString(), c.Actor.Value, c.Outcome == ApprovalState.Returned ? c.Reason : null, c.AtUtc)
+            : null;
         return new ApprovalInstanceView(
             instance.Binding.InstanceId,
             instance.Binding.RequestItemId,
@@ -394,10 +515,37 @@ public sealed class ApprovalWorkflowService(
                 s.Mandatory,
                 s.Independent,
                 s.DeadlineUtc,
-                [.. s.Candidates.Select(c => c.Value)],
-                [.. s.Approvers.Select(a => a.Value)],
-                s.PendingEscalation is not null))]);
+                [.. s.Candidates.Select(p => p.Value)],
+                [.. s.Approvers.Select(p => p.Value)],
+                s.PendingEscalation is not null,
+                [.. instance.Decisions.Where(d => d.StageId == s.StageId).Select(d => Decision(d, withReason: d.Outcome == RecordedOutcome.Rejected))]))],
+            closure,
+            oversight ? Oversight(instance) : null);
     }
+
+    private static ApprovalDecisionView Decision(RecordedDecision d, bool withReason) =>
+        new(d.Principal.Value, d.Actor == d.Principal ? null : d.Actor.Value, d.Outcome.ToString(), withReason ? d.Reason : null, d.AtUtc);
+
+    private static ApprovalOversightView Oversight(ApprovalInstance instance) => new(
+        [.. instance.History.Select(e => new ApprovalHistoryEntryView(e.Version, e.AtUtc, e.Kind.ToString(), e.StageId, e.Actor is { } a ? a.Value : null))],
+        [.. instance.Escalations.Select(e => new ApprovalEscalationView(
+            e.StageId,
+            e.Actor.Value,
+            e.Reason,
+            e.SecondActor is { } second ? second.Value : null,
+            e.SecondReason,
+            [.. e.PreviousCandidates.Select(p => p.Value)],
+            [.. e.NewCandidates.Select(p => p.Value)],
+            e.AtUtc))],
+        [.. instance.EscalationWithdrawals.Select(w => new ApprovalEscalationWithdrawalView(w.StageId, w.Actor.Value, w.Reason, w.AtUtc))],
+        [.. instance.Stages.Where(s => s.Resolution is not null).Select(s => new ApprovalResolutionView(
+            s.StageId,
+            s.Source.Kind.ToString(),
+            s.Resolution!.Outcome.ToString(),
+            [.. s.Resolution.People.Select(p => p.Value)],
+            [.. s.Resolution.Steps.Select(x => new ApprovalResolutionStepView(x.Source.ToString(), x.Result.ToString(), x.Reference, x.Version, x.Hash, x.Found, x.Excluded))]))],
+        [.. instance.Decisions.Select(d => Decision(d, withReason: true))],
+        instance.Closure?.Reason);
 
     private DateTimeOffset Now() => UtcMicrosecondConverter.TruncateToMicroseconds(clock.GetUtcNow());
 

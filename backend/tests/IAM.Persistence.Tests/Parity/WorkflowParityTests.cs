@@ -45,7 +45,9 @@ public sealed class WorkflowParityTests(ParityDatabase db)
     [Fact]
     public async Task TheMigrationAppliesOnce()
     {
-        db.WorkflowFirstRunApplied.ShouldHaveSingleItem().ShouldEndWith("_WorkflowStorage");
+        db.WorkflowFirstRunApplied.Count.ShouldBe(2);
+        db.WorkflowFirstRunApplied[0].ShouldEndWith("_WorkflowStorage");
+        db.WorkflowFirstRunApplied[1].ShouldEndWith("_WorkflowTasks");
         db.WorkflowSecondRunPending.ShouldBeEmpty();
         (await AuditCountAsync(Guid.NewGuid(), WorkflowAuditActions.Refused, "Denied")).ShouldBe(0);
     }
@@ -72,7 +74,9 @@ public sealed class WorkflowParityTests(ParityDatabase db)
         done.ProvisioningAuthorized.ShouldBeTrue();
 
         // A fresh load replays the log to the same instance.
-        (await Service(null, clock).FindAsync(id, Ct)).ShouldNotBeNull().ShouldBeEquivalentTo(done);
+        var found = (await Service(null, clock).FindAsync(id, Ct)).ShouldNotBeNull();
+        found.Oversight.ShouldNotBeNull().History.Count.ShouldBe((int)done.Version);
+        (found with { Oversight = null }).ShouldBeEquivalentTo(done);
         (await CountAsync("ApprovalAction", id)).ShouldBe(5, "bound, supplied, decided, supplied, decided");
         (await CountAsync("ApprovalHistory", id)).ShouldBe(done.Version);
         (await AuditCountAsync(id, WorkflowAuditActions.For(ApprovalActionKind.Bound), "Succeeded")).ShouldBe(1);
@@ -88,8 +92,8 @@ public sealed class WorkflowParityTests(ParityDatabase db)
         var started = await Service(null, clock).StartAsync(Binding(id), Route(Level(1, A)), Ct);
         var stage = started.Stages[0].StageId;
 
-        (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(C.Value, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), stage, null, true, null, Ct)))
-            .Refusal.ShouldBe(ApprovalRefusal.NotEligible);
+        // Someone the request doesn't concern can't tell it exists (DL-073c); the refusal is still audited.
+        await Should.ThrowAsync<ApprovalInstanceNotFoundException>(() => Service(C.Value, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), stage, null, true, null, Ct));
         (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(A.Value, clock).DecideAsync(id, started.Version - 1, Guid.CreateVersion7(), stage, null, true, null, Ct)))
             .Refusal.ShouldBe(ApprovalRefusal.StaleVersion);
         (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(null, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), stage, null, true, null, Ct)))
@@ -112,7 +116,8 @@ public sealed class WorkflowParityTests(ParityDatabase db)
         started.State.ShouldBe("Held");
         var stage = started.Stages[0].StageId;
 
-        (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(Canceller, clock).EscalateAsync(id, started.Version, stage, [A], "Owner away", Ct)))
+        await Should.ThrowAsync<ApprovalInstanceNotFoundException>(() => Service(Canceller, clock).EscalateAsync(id, started.Version, stage, [A], "Owner away", Ct));
+        (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(Requester.Value, clock).EscalateAsync(id, started.Version, stage, [A], "Owner away", Ct)))
             .Refusal.ShouldBe(ApprovalRefusal.EscalatePermissionMissing);
         var escalated = await Service(Escalator, clock).EscalateAsync(id, started.Version, stage, [A], "Owner away", Ct);
         escalated.Stages[0].Candidates.ShouldBe([A.Value]);
@@ -120,7 +125,7 @@ public sealed class WorkflowParityTests(ParityDatabase db)
         (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(Escalator, clock).CancelAsync(id, escalated.Version, "No longer needed", Ct)))
             .Refusal.ShouldBe(ApprovalRefusal.CancelPermissionMissing);
         (await Service(Canceller, clock).CancelAsync(id, escalated.Version, "No longer needed", Ct)).State.ShouldBe("Cancelled");
-        (await AuditCountAsync(id, WorkflowAuditActions.Refused, "Denied")).ShouldBe(2);
+        (await AuditCountAsync(id, WorkflowAuditActions.Refused, "Denied")).ShouldBe(3);
         (await AuditCountAsync(id, WorkflowAuditActions.For(ApprovalActionKind.Escalated), "Succeeded")).ShouldBe(1);
     }
 
@@ -137,7 +142,7 @@ public sealed class WorkflowParityTests(ParityDatabase db)
             .Refusal.ShouldBe(ApprovalRefusal.ProposerCannotApproveEscalation);
         var approved = await Service(Escalator2, clock).ApproveEscalationAsync(id, proposed.Version, stage, [A], "Checked", Ct);
         approved.Stages[0].State.ShouldBe("Active");
-        (await Service(null, clock).FindAsync(id, Ct)).ShouldNotBeNull().ShouldBeEquivalentTo(approved);
+        ((await Service(null, clock).FindAsync(id, Ct)).ShouldNotBeNull() with { Oversight = null }).ShouldBeEquivalentTo(approved);
     }
 
     [Fact]

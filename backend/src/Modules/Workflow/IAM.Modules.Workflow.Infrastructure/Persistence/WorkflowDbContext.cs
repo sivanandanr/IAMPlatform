@@ -24,6 +24,8 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
 
     public DbSet<ApprovalHistoryRow> History => Set<ApprovalHistoryRow>();
 
+    public DbSet<ApprovalTaskRow> Tasks => Set<ApprovalTaskRow>();
+
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         var instance = modelBuilder.Entity<ApprovalInstanceRow>();
@@ -51,6 +53,14 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
         history.Property(x => x.Kind).IsRequired().IsCode(48);
         history.Property(x => x.Actor).IsCode(AuditColumns.ActorMaxLength);
         history.HasOne<ApprovalInstanceRow>().WithMany().HasForeignKey(x => x.InstanceId).OnDelete(DeleteBehavior.Restrict);
+
+        var task = modelBuilder.Entity<ApprovalTaskRow>();
+        task.ToTable("ApprovalTask");
+        task.HasKey(x => new { x.InstanceId, x.StageId, x.Person });
+        task.Property(x => x.Person).IsRequired().IsCode(AuditColumns.ActorMaxLength);
+        task.Property(x => x.Kind).IsRequired().IsCode(16);
+        task.HasIndex(x => new { x.Person, x.DeadlineUtc });
+        task.HasOne<ApprovalInstanceRow>().WithMany().HasForeignKey(x => x.InstanceId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -117,4 +127,26 @@ public sealed class ApprovalHistoryRow
     public Guid? StageId { get; init; }
 
     public string? Actor { get; init; }
+}
+
+/// <summary>
+/// One person who can act on one open level now, for the inbox (DL-073b). Rebuilt for the instance in the same transaction
+/// as every action. Only a lookup: acting still replays the instance and the engine decides, so a stale or changed row can
+/// never let anyone act.
+/// </summary>
+public sealed class ApprovalTaskRow
+{
+    public required Guid InstanceId { get; init; }
+
+    public required Guid StageId { get; init; }
+
+    public required string Person { get; init; }
+
+    public required Guid RequestItemId { get; init; }
+
+    public required int Sequence { get; init; }
+
+    public required string Kind { get; init; }
+
+    public DateTimeOffset? DeadlineUtc { get; init; }
 }

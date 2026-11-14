@@ -1,5 +1,5 @@
 # ADR-0028: Workflow storage as a replayed action log
-Status: Proposed (decisions taken by the owner as DL-072, 2026-11-14) — stage 5 slice 1 implemented; human sign-off pending | Date: 2026-11-14 | Decision owners: IAM Domain / Workflow lead, Database Architect, Security Architect (named approvers TBD)
+Status: Proposed (decisions taken by the owner as DL-072 and DL-073) — stage 5 slices 1 and 2 implemented; human sign-off pending | Date: 2026-11-14 | Decision owners: IAM Domain / Workflow lead, Database Architect, Security Architect (named approvers TBD)
 
 Source: ADR-0005 (durable approval state machine, "persisted in the Workflow module's tables with optimistic concurrency"), ADR-0017 (persistence conventions), ADR-0018 (audit atomicity), IAM-WF-001, -004, -006, -009; DL-048, DL-068 to DL-072; R-032, R-036; CLAUDE.md rules 3, 9 and 10. Drafted by Claude Code.
 
@@ -19,6 +19,12 @@ Option 1 (DL-072a).
 - **Starting** (DL-072b): `IApprovalWorkflow.StartAsync(binding, route)` is an internal interface (Workflow.Application) for the module that will own requests. There is no endpoint that starts an instance, so nobody can choose a route for their own request. A cross-module contract with its own DTOs comes with the Request module.
 - **Acting**: decide, complete, return, withdraw, cancel, escalate, propose, approve and withdraw escalation, and apply timeouts. The actor is the signed-in user (`IAuditActorAccessor`), never a parameter. Escalation needs `workflow.approvals.escalate` (DL-070c); cancelling needs a new `workflow.instances.cancel`, held by IAM Manager by default (DL-072e). Each call is one transaction: load and check, act, supply opened levels, save, audit each action with its inputs. A refusal changes nothing and is audited (`workflow.approval.refused`) with its code.
 - **Time** is the server's clock, truncated to microseconds before use so that what is stored replays exactly on both engines.
+
+## API (stage 5 slice 2, DL-073)
+- Routes under `/api/workflow`: `GET instances/{id}`, `GET my-tasks`, and `POST instances/{id}/` `decisions`, `completions`, `return`, `withdraw`, `cancel`, `stages/{stageId}/escalation`, `stages/{stageId}/escalation-proposals` (and `/approve`, `/withdraw`). Nothing starts an instance.
+- Every route names a permission: two everyone-actions, `workflow.instances.view` and `workflow.approvals.act`, for reading and acting, where the service and engine decide who may; `workflow.instances.cancel` and `workflow.approvals.escalate` for those actions. Reading: participants get the participant view; `workflow.instances.read` holders (IAM Manager and Auditor) also get the oversight. Anyone else gets 404 on reads and writes, audited as `NotVisible` on writes.
+- The inbox is the `ApprovalTask` table: who can act on which active level now, rebuilt for the instance in each action's transaction. It is only a lookup.
+- Bodies are typed records that refuse unknown fields (so there is no `onBehalfOf`, DL-073e), with FluentValidation filters, a 64 KB body limit and the write rate limit. Every write names the instance version; approve and complete carry client ids. Refusals map to 403, 409 or 422 by a fixed table, with the refusal code only.
 
 ## Security and privacy impact
 - Database guards on both engines: action and history rows are append-only and numbered without gaps (action versions never go back, the first action is the binding); the summary row's id, request item and people are immutable, it only moves forward, and a closed instance never changes state; nothing is deleted; PostgreSQL refuses TRUNCATE.
