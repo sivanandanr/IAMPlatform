@@ -13,5 +13,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Modules\Workflow\IAM.Modules.Workflow.Domain\IAM.Modules.Workflow.Domain.csproj" />
     <ProjectReference Include="..\..\src\Modules\Workflow\IAM.Modules.Workflow.Application\IAM.Modules.Workflow.Application.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Workflow\IAM.Modules.Workflow.Infrastructure\IAM.Modules.Workflow.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

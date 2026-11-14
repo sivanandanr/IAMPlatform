@@ -1,4 +1,5 @@
 using IAM.Modules.Workflow.Application.Approvers;
+using IAM.Modules.Workflow.Infrastructure.Approvers;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,7 +20,7 @@ public static class WorkflowModule
     public const string FallbackWorkgroupSetting = "Workflow:FallbackWorkgroup";
 
     /// <summary>
-    /// Registers approver resolution (DL-069). It reads the Catalog and Organization contracts, so the host must also add
+    /// Registers approver resolution (DL-069) and the escalation permission gate (DL-070). It reads the Catalog and Organization contracts, so the host must also add
     /// those modules. There are no endpoints yet: nothing calls resolution until workflow storage exists.
     /// </summary>
     public static IServiceCollection AddWorkflowModule(this IServiceCollection services)
@@ -27,6 +28,8 @@ public static class WorkflowModule
         ArgumentNullException.ThrowIfNull(services);
         services.TryAddSingleton(sp => new ApproverResolutionSettings(sp.GetRequiredService<IConfiguration>()[FallbackWorkgroupSetting]));
         services.TryAddScoped<IApproverResolver, ApproverResolver>();
+        services.TryAddSingleton(TimeProvider.System);
+        services.TryAddScoped<IApprovalEscalation, ApprovalEscalationService>();
         return services;
     }
 

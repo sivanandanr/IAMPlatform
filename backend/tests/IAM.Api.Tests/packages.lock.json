@@ -1284,6 +1284,8 @@
         "type": "Project",
         "dependencies": {
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
           "IAM.Modules.Workflow.Application": "[1.0.0, )",
           "IAM.Modules.Workflow.Contracts": "[1.0.0, )",
           "IAM.Modules.Workflow.Domain": "[1.0.0, )"

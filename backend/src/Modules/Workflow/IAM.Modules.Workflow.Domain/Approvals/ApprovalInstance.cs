@@ -84,6 +84,12 @@ public enum ApprovalEventKind
 
     /// <summary>A level's approvers were supplied, with the resolution as evidence. A failed resolution holds the level.</summary>
     ApproversSupplied = 26,
+
+    /// <summary>A new approver list was proposed for a mandatory or independent level; a second escalator must approve it (DL-070a).</summary>
+    EscalationProposed = 27,
+
+    /// <summary>A proposed approver list was withdrawn before it was approved.</summary>
+    EscalationWithdrawn = 28,
 }
 
 /// <summary>What the instance is bound to (IAM-WF-009, FR-POL-103). Taken once; a later policy change does not alter it.</summary>
@@ -154,7 +160,10 @@ public sealed record RecordedDecision(Guid DecisionId, Guid StageId, PersonId Ac
     public override string ToString() => $"{nameof(RecordedDecision)} {DecisionId}";
 }
 
-/// <summary>Who changed a stage's approvers, from whom to whom, why, and the stage's deadline afterwards (IAM-WF-006, IAM-WF-009).</summary>
+/// <summary>
+/// Who changed a stage's approvers, from whom to whom, why, and the stage's deadline afterwards (IAM-WF-006, IAM-WF-009).
+/// On a mandatory or independent stage <see cref="Actor"/> proposed the list and <see cref="SecondActor"/> approved it (DL-070a).
+/// </summary>
 public sealed record EscalationRecord(
     Guid StageId,
     PersonId Actor,
@@ -164,10 +173,18 @@ public sealed record EscalationRecord(
     IReadOnlyList<PersonId> PreviousRequired,
     IReadOnlyList<PersonId> NewRequired,
     DateTimeOffset DeadlineUtc,
-    DateTimeOffset AtUtc)
+    DateTimeOffset AtUtc,
+    PersonId? SecondActor = null)
 {
     /// <summary>The stage id only: logging this object must not expose a person or a reason.</summary>
     public override string ToString() => $"{nameof(EscalationRecord)} {StageId}";
+}
+
+/// <summary>A new approver list waiting for a second escalator (DL-070a). Only one waits per stage; a new proposal replaces it.</summary>
+public sealed record EscalationProposal(Guid StageId, PersonId Proposer, string Reason, IReadOnlyList<PersonId> Candidates, DateTimeOffset AtUtc)
+{
+    /// <summary>The stage id only: logging this object must not expose a person or a reason.</summary>
+    public override string ToString() => $"{nameof(EscalationProposal)} {StageId}";
 }
 
 /// <summary>Who cancelled, withdrew or returned the request, and why. <see cref="OnBehalfOf"/> is set when a delegate returned it for someone.</summary>
@@ -201,7 +218,8 @@ public sealed record StageView(
     IReadOnlyList<PersonId> Required,
     IReadOnlyList<PersonId> Eligible,
     IReadOnlyList<PersonId> Approvers,
-    int Escalations);
+    int Escalations,
+    EscalationProposal? PendingEscalation);
 
 /// <summary>
 /// Approval state machine (ADR-0005, IAM-WF-004, K.1), proof of concept (P0-009): in-memory, no storage, and it emits
@@ -226,6 +244,7 @@ public sealed class ApprovalInstance
     private readonly List<EscalationRecord> _escalations = [];
     private readonly HashSet<PersonId> _excluded;
     private readonly HashSet<PersonId> _escalators = [];
+    private readonly Dictionary<PersonId, HashSet<Guid>> _escalatedStages = [];
     private readonly HashSet<Guid> _decisionIds = [];
     private int _step = -1;
     private bool _authorizationRecorded;
@@ -538,9 +557,50 @@ public sealed class ApprovalInstance
     /// refused. Only a later decision can close the stage. Nobody on a list of an open or pending stage may escalate, and
     /// nor may anyone who decided on this request; an escalator cannot decide on it later. Before the deadline, only people
     /// who can no longer act may be replaced. A Reject or Cancel stage keeps its original deadline. An ALL list never gets
-    /// smaller than when the stage opened (DL-044), and nobody dropped after deciding can be listed again.
+    /// smaller than when the stage opened (DL-044), and nobody dropped after deciding can be listed again. A mandatory or
+    /// independent stage needs two escalators instead (<see cref="ProposeEscalation"/>, DL-057a, DL-070a). Whether the actor
+    /// holds the escalate permission is for the calling layer (DL-070c).
     /// </summary>
     public void Escalate(Guid stageId, IReadOnlyList<PersonId> newCandidates, PersonId actor, string? reason, long expectedVersion, DateTimeOffset now)
+    {
+        var at = RequireOpen(expectedVersion, now);
+        var stage = Stage(stageId);
+        var required = PlanEscalation(stage, newCandidates, actor, reason, at);
+        if (NeedsSecondEscalator(stage))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.EscalationNeedsSecondPerson);
+        }
+
+        ApplyEscalation(stage, newCandidates, required, actor, null, reason!, at);
+    }
+
+    /// <summary>
+    /// Proposes new approvers for a held mandatory or independent stage (DL-057a, DL-070a). It checks everything
+    /// <see cref="Escalate"/> does, changes no approver, and the stage stays held until a different escalator approves the
+    /// same list. A new proposal replaces a waiting one. The proposer counts as an escalator from now on.
+    /// </summary>
+    public void ProposeEscalation(Guid stageId, IReadOnlyList<PersonId> newCandidates, PersonId actor, string? reason, long expectedVersion, DateTimeOffset now)
+    {
+        var at = RequireOpen(expectedVersion, now);
+        var stage = Stage(stageId);
+        PlanEscalation(stage, newCandidates, actor, reason, at);
+        if (!NeedsSecondEscalator(stage))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.SingleEscalatorStage);
+        }
+
+        stage.Proposal = new EscalationProposal(stageId, actor, reason!, Array.AsReadOnly(newCandidates.ToArray()), at);
+        MarkEscalator(actor, stage);
+        Record(at, ApprovalEventKind.EscalationProposed, stageId, actor);
+    }
+
+    /// <summary>
+    /// Approves a waiting proposal and reopens the stage with it (DL-070a). The approver names the list they reviewed;
+    /// they may not be the proposer, anyone on the list, anyone who decided on this request, or the requester, the person
+    /// getting access or the policy maker. Every check of the escalation is made again now, so a proposal that has become
+    /// invalid (a deadline passed, someone decided) is refused.
+    /// </summary>
+    public void ApproveEscalation(Guid stageId, IReadOnlyList<PersonId> reviewedCandidates, PersonId approver, long expectedVersion, DateTimeOffset now)
     {
         var at = RequireOpen(expectedVersion, now);
         var stage = Stage(stageId);
@@ -549,25 +609,60 @@ public sealed class ApprovalInstance
             throw new ApprovalRefusedException(ApprovalRefusal.StageNotEscalatable);
         }
 
-        // The people the request is about, and whoever made the policy, cannot choose its approvers.
+        if (stage.Proposal is not { } proposal)
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.NoEscalationProposed);
+        }
+
+        if (reviewedCandidates is null || !reviewedCandidates.SequenceEqual(proposal.Candidates))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.EscalationProposalChanged);
+        }
+
+        if (approver == proposal.Proposer)
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.ProposerCannotApproveEscalation);
+        }
+
+        RequireEscalator(stage, approver, proposal.Candidates);
+        var required = PlanEscalation(stage, proposal.Candidates, proposal.Proposer, proposal.Reason, at);
+        ApplyEscalation(stage, proposal.Candidates, required, proposal.Proposer, approver, proposal.Reason, at);
+    }
+
+    /// <summary>
+    /// Withdraws a waiting proposal: the proposer, or a reviewer turning it down. The stage stays held. Nobody the request
+    /// is about may, and whether the actor holds the escalate permission is for the calling layer.
+    /// </summary>
+    public void WithdrawEscalation(Guid stageId, PersonId actor, long expectedVersion, DateTimeOffset now)
+    {
+        var at = RequireOpen(expectedVersion, now);
+        var stage = Stage(stageId);
+        if (stage.Proposal is null)
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.NoEscalationProposed);
+        }
+
         if (!actor.IsValid || _excluded.Contains(actor))
         {
             throw new ApprovalRefusedException(ApprovalRefusal.InvalidActor);
         }
 
-        if (!ApprovalRoute.CandidatesAreValid(newCandidates))
+        stage.Proposal = null;
+        Record(at, ApprovalEventKind.EscalationWithdrawn, stageId, actor);
+    }
+
+    /// <summary>A mandatory or independent stage is a control: one person must not choose its approvers alone (DL-057a).</summary>
+    private static bool NeedsSecondEscalator(StageRun stage) => stage.Definition.Mandatory || stage.Definition.Independent;
+
+    /// <summary>Every check of an escalation, changing nothing. Returns the people the new list requires.</summary>
+    private List<PersonId> PlanEscalation(StageRun stage, IReadOnlyList<PersonId> newCandidates, PersonId actor, string? reason, DateTimeOffset at)
+    {
+        if (stage.State != StageState.Held)
         {
-            throw new ApprovalRefusedException(ApprovalRefusal.InvalidCandidates);
+            throw new ApprovalRefusedException(ApprovalRefusal.StageNotEscalatable);
         }
 
-        // Choosing the approvers and being one are separate duties, in either order and on any stage of this request.
-        if (newCandidates.Contains(actor)
-            || _decisions.Any(d => d.Actor == actor || d.Principal == actor)
-            || _stages.Any(s => s.State is StageState.Pending or StageState.Active or StageState.AwaitingApprovers or StageState.Held && s.ActiveCandidates.Contains(actor)))
-        {
-            throw new ApprovalRefusedException(ApprovalRefusal.EscalatorConflict);
-        }
-
+        RequireEscalator(stage, actor, newCandidates);
         RequireValidReason(reason, required: true);
 
         if (stage.Escalations >= ApprovalLimits.MaxEscalationsPerStage)
@@ -616,31 +711,89 @@ public sealed class ApprovalInstance
             throw new ApprovalRefusedException(ApprovalRefusal.EscalationCannotReachQuorum);
         }
 
+        return required;
+    }
+
+    /// <summary>
+    /// May this person choose, or approve, this stage's approvers? Not the people the request is about or the policy maker;
+    /// not anyone on the new list, anyone who decided on this request, or anyone on a list of an open or pending stage;
+    /// and someone who chose approvers for an independent stage chooses for no other stage, nor the other way round (DL-070b).
+    /// </summary>
+    private void RequireEscalator(StageRun stage, PersonId actor, IReadOnlyList<PersonId> newCandidates)
+    {
+        // The people the request is about, and whoever made the policy, cannot choose its approvers.
+        if (!actor.IsValid || _excluded.Contains(actor))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.InvalidActor);
+        }
+
+        if (!ApprovalRoute.CandidatesAreValid(newCandidates))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.InvalidCandidates);
+        }
+
+        // Choosing the approvers and being one are separate duties, in either order and on any stage of this request.
+        if (newCandidates.Contains(actor)
+            || _decisions.Any(d => d.Actor == actor || d.Principal == actor)
+            || _stages.Any(s => s.State is StageState.Pending or StageState.Active or StageState.AwaitingApprovers or StageState.Held && s.ActiveCandidates.Contains(actor)))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.EscalatorConflict);
+        }
+
+        // A different escalator per independent stage (DL-048, DL-070b).
+        if (_escalatedStages.TryGetValue(actor, out var chosen)
+            && chosen.Any(s => s != stage.Definition.StageId && (stage.Definition.Independent || Stage(s).Definition.Independent)))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.IndependentEscalatorConflict);
+        }
+    }
+
+    private void MarkEscalator(PersonId person, StageRun stage)
+    {
+        _escalators.Add(person);
+        if (!_escalatedStages.TryGetValue(person, out var stages))
+        {
+            stages = [];
+            _escalatedStages[person] = stages;
+        }
+
+        stages.Add(stage.Definition.StageId);
+    }
+
+    private void ApplyEscalation(StageRun stage, IReadOnlyList<PersonId> newCandidates, List<PersonId> required, PersonId actor, PersonId? second, string reason, DateTimeOffset at)
+    {
         var previousCandidates = stage.ActiveCandidates;
         var previousRequired = stage.Required;
         stage.ActiveCandidates = [.. newCandidates];
         stage.Required = required;
         stage.Escalations++;
         stage.State = StageState.Active;
+        stage.Proposal = null;
         if (stage.Definition.OnTimeout == TimeoutAction.Escalate)
         {
             stage.DeadlineUtc = at + stage.Definition.Deadline;
         }
 
-        _escalators.Add(actor);
+        MarkEscalator(actor, stage);
+        if (second is { } approver)
+        {
+            MarkEscalator(approver, stage);
+        }
+
         _escalations.Add(new EscalationRecord(
-            stageId,
+            stage.Definition.StageId,
             actor,
-            reason!,
+            reason,
             Array.AsReadOnly(previousCandidates.ToArray()),
             Array.AsReadOnly(newCandidates.ToArray()),
             Array.AsReadOnly(previousRequired.ToArray()),
             Array.AsReadOnly(required.ToArray()),
             stage.DeadlineUtc!.Value,
-            at));
+            at,
+            second));
 
-        Record(at, ApprovalEventKind.StageEscalated, stageId, actor);
-        Record(at, ApprovalEventKind.StageActivated, stageId, null);
+        Record(at, ApprovalEventKind.StageEscalated, stage.Definition.StageId, second ?? actor);
+        Record(at, ApprovalEventKind.StageActivated, stage.Definition.StageId, null);
         Settle(at);
     }
 
@@ -1100,7 +1253,8 @@ public sealed class ApprovalInstance
         [.. stage.Required],
         [.. stage.ActiveCandidates.Where(c => IsEligible(stage, c))],
         ValidApprovers(stage),
-        stage.Escalations);
+        stage.Escalations,
+        stage.Proposal);
 
     private sealed class StageRun(StageDefinition definition)
     {
@@ -1116,6 +1270,9 @@ public sealed class ApprovalInstance
         public List<PersonId> Required { get; set; } = [];
 
         public ApproverResolution? Resolution { get; set; }
+
+        /// <summary>A new approver list waiting for a second escalator (DL-070a).</summary>
+        public EscalationProposal? Proposal { get; set; }
 
         /// <summary>The size of the required list when the stage opened: an ALL list never goes below it.</summary>
         public int MinimumRequired { get; set; }

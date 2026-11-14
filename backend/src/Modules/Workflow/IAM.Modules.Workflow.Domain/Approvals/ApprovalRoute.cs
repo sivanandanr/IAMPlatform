@@ -88,6 +88,23 @@ public enum ApprovalRefusal
     // 44 is reserved: it was IndependentStageCannotSkip, removed by DL-057.
     StageNotAwaitingApprovers = 45,
     InvalidResolution = 46,
+
+    /// <summary>A mandatory or independent stage needs a proposal and a second escalator's approval (DL-057a, DL-070a).</summary>
+    EscalationNeedsSecondPerson = 47,
+
+    /// <summary>A stage that is neither mandatory nor independent has one escalator; there is nothing to propose.</summary>
+    SingleEscalatorStage = 48,
+    NoEscalationProposed = 49,
+
+    /// <summary>The list approved is not the list proposed.</summary>
+    EscalationProposalChanged = 50,
+    ProposerCannotApproveEscalation = 51,
+
+    /// <summary>Someone who chose approvers for an independent stage chooses for no other stage on the request (DL-070b).</summary>
+    IndependentEscalatorConflict = 52,
+
+    /// <summary>The person doesn't hold the escalate permission now (DL-057a, DL-070c). Checked by the calling layer, before the engine.</summary>
+    EscalatePermissionMissing = 53,
 }
 
 /// <summary>An action was refused. The message gives the code only, never a person, reason text or other value.</summary>
