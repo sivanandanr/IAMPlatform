@@ -27,7 +27,8 @@ public sealed record WorkgroupChangeReview(WorkgroupChangeRequestView Request, W
 
 /// <summary>
 /// Workgroup administration (DL-068). Every call checks its permission; every refused write is audited; activating a
-/// member list needs a second person who is not the maker, an author of the draft or a member of it.
+/// member list needs a second person who is not the maker, the draft's creator or last editor, or a member of it. Earlier
+/// editors of the draft are not tracked (R-035); the manage and approve duties conflict, which covers most cases.
 /// </summary>
 public interface IWorkgroupAdministration
 {

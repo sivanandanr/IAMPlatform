@@ -10,15 +10,15 @@ namespace IAM.Modules.Workflow.Application.Approvers;
 /// </summary>
 public interface IApprovalEscalation
 {
-    /// <summary>One escalator, for a level that is neither mandatory nor independent.</summary>
+    /// <summary>One escalator, for a level that needs only one.</summary>
     Task EscalateAsync(ApprovalInstance instance, Guid stageId, IReadOnlyList<PersonId> newCandidates, PersonId actor, string? reason, long expectedVersion, CancellationToken cancellationToken);
 
-    /// <summary>The first of two escalators, for a mandatory or independent level.</summary>
+    /// <summary>The first of two escalators, for a mandatory or independent level, or one held as blocked (DL-071b).</summary>
     Task ProposeAsync(ApprovalInstance instance, Guid stageId, IReadOnlyList<PersonId> newCandidates, PersonId actor, string? reason, long expectedVersion, CancellationToken cancellationToken);
 
-    /// <summary>The second escalator, naming the list they reviewed.</summary>
-    Task ApproveAsync(ApprovalInstance instance, Guid stageId, IReadOnlyList<PersonId> reviewedCandidates, PersonId approver, long expectedVersion, CancellationToken cancellationToken);
+    /// <summary>The second escalator, naming the list they reviewed, with a reason.</summary>
+    Task ApproveAsync(ApprovalInstance instance, Guid stageId, IReadOnlyList<PersonId> reviewedCandidates, PersonId approver, string? reason, long expectedVersion, CancellationToken cancellationToken);
 
-    /// <summary>Withdraws a waiting proposal.</summary>
-    Task WithdrawAsync(ApprovalInstance instance, Guid stageId, PersonId actor, long expectedVersion, CancellationToken cancellationToken);
+    /// <summary>Withdraws a waiting proposal, with a reason.</summary>
+    Task WithdrawAsync(ApprovalInstance instance, Guid stageId, PersonId actor, string? reason, long expectedVersion, CancellationToken cancellationToken);
 }

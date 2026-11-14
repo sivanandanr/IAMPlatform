@@ -162,7 +162,7 @@ public sealed record RecordedDecision(Guid DecisionId, Guid StageId, PersonId Ac
 
 /// <summary>
 /// Who changed a stage's approvers, from whom to whom, why, and the stage's deadline afterwards (IAM-WF-006, IAM-WF-009).
-/// On a mandatory or independent stage <see cref="Actor"/> proposed the list and <see cref="SecondActor"/> approved it (DL-070a).
+/// Where two escalators are needed, <see cref="Actor"/> proposed the list and <see cref="SecondActor"/> approved it, with <see cref="SecondReason"/> (DL-070a, DL-071c).
 /// </summary>
 public sealed record EscalationRecord(
     Guid StageId,
@@ -174,7 +174,8 @@ public sealed record EscalationRecord(
     IReadOnlyList<PersonId> NewRequired,
     DateTimeOffset DeadlineUtc,
     DateTimeOffset AtUtc,
-    PersonId? SecondActor = null)
+    PersonId? SecondActor = null,
+    string? SecondReason = null)
 {
     /// <summary>The stage id only: logging this object must not expose a person or a reason.</summary>
     public override string ToString() => $"{nameof(EscalationRecord)} {StageId}";
@@ -185,6 +186,13 @@ public sealed record EscalationProposal(Guid StageId, PersonId Proposer, string 
 {
     /// <summary>The stage id only: logging this object must not expose a person or a reason.</summary>
     public override string ToString() => $"{nameof(EscalationProposal)} {StageId}";
+}
+
+/// <summary>A waiting proposal that was withdrawn, by whom and why (DL-071c).</summary>
+public sealed record EscalationWithdrawal(Guid StageId, PersonId Actor, string Reason, DateTimeOffset AtUtc)
+{
+    /// <summary>The stage id only: logging this object must not expose a person or a reason.</summary>
+    public override string ToString() => $"{nameof(EscalationWithdrawal)} {StageId}";
 }
 
 /// <summary>Who cancelled, withdrew or returned the request, and why. <see cref="OnBehalfOf"/> is set when a delegate returned it for someone.</summary>
@@ -242,6 +250,7 @@ public sealed class ApprovalInstance
     private readonly List<RecordedDecision> _decisions = [];
     private readonly List<ApprovalEvent> _history = [];
     private readonly List<EscalationRecord> _escalations = [];
+    private readonly List<EscalationWithdrawal> _withdrawals = [];
     private readonly HashSet<PersonId> _excluded;
     private readonly HashSet<PersonId> _escalators = [];
     private readonly Dictionary<PersonId, HashSet<Guid>> _escalatedStages = [];
@@ -274,6 +283,8 @@ public sealed class ApprovalInstance
     public IReadOnlyList<ApprovalEvent> History => _history.AsReadOnly();
 
     public IReadOnlyList<EscalationRecord> Escalations => _escalations.AsReadOnly();
+
+    public IReadOnlyList<EscalationWithdrawal> EscalationWithdrawals => _withdrawals.AsReadOnly();
 
     /// <summary>Set when the request is cancelled by a person, withdrawn or returned; null otherwise.</summary>
     public ApprovalClosure? Closure { get; private set; }
@@ -514,7 +525,13 @@ public sealed class ApprovalInstance
         stage.MinimumRequired = stage.Required.Count;
         stage.State = StageState.Active;
         Record(at, ApprovalEventKind.StageActivated, stageId, null);
-        CarryApprovals(stage, PreviousDecisionStep(stage.Definition.Sequence), at);
+
+        // A held instance accepts no decisions, automatic ones included: the people decide as usual (DL-071d).
+        if (State != ApprovalState.Held)
+        {
+            CarryApprovals(stage, PreviousDecisionStep(stage.Definition.Sequence), at);
+        }
+
         Settle(at);
     }
 
@@ -543,10 +560,15 @@ public sealed class ApprovalInstance
             return;
         }
 
-        foreach (var stage in expired.Where(s => s.State is StageState.Active or StageState.AwaitingApprovers))
+        foreach (var stage in expired.Where(s => s.State is StageState.Active or StageState.AwaitingApprovers || !s.TimeoutRecorded))
         {
+            // A level already held, by its resolution or a conflict, records its timeout once and stays held (DL-071d).
             Record(at, ApprovalEventKind.StageTimedOut, stage.Definition.StageId, null);
-            Hold(stage, at);
+            stage.TimeoutRecorded = true;
+            if (stage.State != StageState.Held)
+            {
+                Hold(stage, at);
+            }
         }
 
         UpdateHeldState(at);
@@ -571,7 +593,7 @@ public sealed class ApprovalInstance
             throw new ApprovalRefusedException(ApprovalRefusal.EscalationNeedsSecondPerson);
         }
 
-        ApplyEscalation(stage, newCandidates, required, actor, null, reason!, at);
+        ApplyEscalation(stage, newCandidates, required, actor, null, reason!, null, at);
     }
 
     /// <summary>
@@ -595,12 +617,12 @@ public sealed class ApprovalInstance
     }
 
     /// <summary>
-    /// Approves a waiting proposal and reopens the stage with it (DL-070a). The approver names the list they reviewed;
+    /// Approves a waiting proposal and reopens the stage with it (DL-070a). The approver names the list they reviewed and gives a reason;
     /// they may not be the proposer, anyone on the list, anyone who decided on this request, or the requester, the person
     /// getting access or the policy maker. Every check of the escalation is made again now, so a proposal that has become
     /// invalid (a deadline passed, someone decided) is refused.
     /// </summary>
-    public void ApproveEscalation(Guid stageId, IReadOnlyList<PersonId> reviewedCandidates, PersonId approver, long expectedVersion, DateTimeOffset now)
+    public void ApproveEscalation(Guid stageId, IReadOnlyList<PersonId> reviewedCandidates, PersonId approver, string? reason, long expectedVersion, DateTimeOffset now)
     {
         var at = RequireOpen(expectedVersion, now);
         var stage = Stage(stageId);
@@ -625,19 +647,22 @@ public sealed class ApprovalInstance
         }
 
         RequireEscalator(stage, approver, proposal.Candidates);
+        RequireValidReason(reason, required: true);
         var required = PlanEscalation(stage, proposal.Candidates, proposal.Proposer, proposal.Reason, at);
-        ApplyEscalation(stage, proposal.Candidates, required, proposal.Proposer, approver, proposal.Reason, at);
+        ApplyEscalation(stage, proposal.Candidates, required, proposal.Proposer, approver, proposal.Reason, reason, at);
     }
 
     /// <summary>
-    /// Withdraws a waiting proposal: the proposer, or a reviewer turning it down. The stage stays held. Nobody the request
-    /// is about may, and whether the actor holds the escalate permission is for the calling layer.
+    /// Withdraws a waiting proposal, with a reason: the proposer, or a reviewer who could have approved it (DL-071c). Someone
+    /// with a conflict on this request may not, so a conflicted person can't keep a level held. A reviewer who turns a
+    /// proposal down has acted on its approvers and counts as an escalator from then on. The stage stays held. Whether the
+    /// actor holds the escalate permission is for the calling layer.
     /// </summary>
-    public void WithdrawEscalation(Guid stageId, PersonId actor, long expectedVersion, DateTimeOffset now)
+    public void WithdrawEscalation(Guid stageId, PersonId actor, string? reason, long expectedVersion, DateTimeOffset now)
     {
         var at = RequireOpen(expectedVersion, now);
         var stage = Stage(stageId);
-        if (stage.Proposal is null)
+        if (stage.Proposal is not { } proposal)
         {
             throw new ApprovalRefusedException(ApprovalRefusal.NoEscalationProposed);
         }
@@ -647,12 +672,26 @@ public sealed class ApprovalInstance
             throw new ApprovalRefusedException(ApprovalRefusal.InvalidActor);
         }
 
+        if (actor != proposal.Proposer)
+        {
+            RequireEscalator(stage, actor, proposal.Candidates);
+        }
+
+        RequireValidReason(reason, required: true);
         stage.Proposal = null;
+        MarkEscalator(actor, stage);
+        _withdrawals.Add(new EscalationWithdrawal(stageId, actor, reason!, at));
         Record(at, ApprovalEventKind.EscalationWithdrawn, stageId, actor);
     }
 
-    /// <summary>A mandatory or independent stage is a control: one person must not choose its approvers alone (DL-057a).</summary>
-    private static bool NeedsSecondEscalator(StageRun stage) => stage.Definition.Mandatory || stage.Definition.Independent;
+    /// <summary>
+    /// A mandatory or independent stage is a control: one person must not choose its approvers alone (DL-057a). Nor may one
+    /// person fill a level that held because its required role had nobody active (DL-052) or its source has no data, such
+    /// as a line manager (DL-069d, DL-071b).
+    /// </summary>
+    private static bool NeedsSecondEscalator(StageRun stage) =>
+        stage.Definition.Mandatory || stage.Definition.Independent
+        || stage.Resolution?.Outcome is ResolutionOutcome.RequiredRoleEmpty or ResolutionOutcome.SourceUnavailable;
 
     /// <summary>Every check of an escalation, changing nothing. Returns the people the new list requires.</summary>
     private List<PersonId> PlanEscalation(StageRun stage, IReadOnlyList<PersonId> newCandidates, PersonId actor, string? reason, DateTimeOffset at)
@@ -760,7 +799,7 @@ public sealed class ApprovalInstance
         stages.Add(stage.Definition.StageId);
     }
 
-    private void ApplyEscalation(StageRun stage, IReadOnlyList<PersonId> newCandidates, List<PersonId> required, PersonId actor, PersonId? second, string reason, DateTimeOffset at)
+    private void ApplyEscalation(StageRun stage, IReadOnlyList<PersonId> newCandidates, List<PersonId> required, PersonId actor, PersonId? second, string reason, string? secondReason, DateTimeOffset at)
     {
         var previousCandidates = stage.ActiveCandidates;
         var previousRequired = stage.Required;
@@ -769,6 +808,7 @@ public sealed class ApprovalInstance
         stage.Escalations++;
         stage.State = StageState.Active;
         stage.Proposal = null;
+        stage.TimeoutRecorded = false;
         if (stage.Definition.OnTimeout == TimeoutAction.Escalate)
         {
             stage.DeadlineUtc = at + stage.Definition.Deadline;
@@ -790,7 +830,8 @@ public sealed class ApprovalInstance
             Array.AsReadOnly(required.ToArray()),
             stage.DeadlineUtc!.Value,
             at,
-            second));
+            second,
+            secondReason));
 
         Record(at, ApprovalEventKind.StageEscalated, stage.Definition.StageId, second ?? actor);
         Record(at, ApprovalEventKind.StageActivated, stage.Definition.StageId, null);
@@ -866,8 +907,33 @@ public sealed class ApprovalInstance
             ResolutionOutcome.RequiredRoleEmpty => source.Kind == ApproverSourceKind.ApplicationRole && resolution.People.Count == 0,
             _ => false,
         };
-        return shape && resolution.Steps[0].Source == source.Kind;
+        // The first step is the level's own source, read where the level points (DL-071e).
+        if (!shape || resolution.Steps[0].Source != source.Kind || !string.Equals(resolution.Steps[0].Reference, ExpectedReference(source), StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (resolution.Outcome != ResolutionOutcome.Resolved)
+        {
+            return true;
+        }
+
+        // The people are what the last step found, less those it excluded; named users only from the route's own list
+        // (a level that fell back gets the fallback workgroup's members instead).
+        var last = resolution.Steps[^1];
+        return last.Result == ResolutionStepResult.Found
+            && resolution.People.Count == last.Found - last.Excluded
+            && (last.Source != ApproverSourceKind.NamedUsers || (resolution.Steps.Count == 1 && resolution.People.All(source.People.Contains)));
     }
+
+    /// <summary>The reference a resolver records for this source: the workgroup key, or the application and role type ids.</summary>
+    private static string? ExpectedReference(ApproverSource source) => source.Kind switch
+    {
+        ApproverSourceKind.Workgroup => source.WorkgroupKey,
+        ApproverSourceKind.ApplicationOwner => source.ApplicationId?.ToString("D"),
+        ApproverSourceKind.ApplicationRole => $"{source.ApplicationId:D}:{source.RoleTypeId:D}",
+        _ => null,
+    };
 
     private static bool IsValid(ResolutionStep step) =>
         Enum.IsDefined(step.Source) && Enum.IsDefined(step.Result)
@@ -1167,10 +1233,11 @@ public sealed class ApprovalInstance
                 stage.State = state;
                 Record(at, kind, stage.Definition.StageId, null);
             }
-            else if (stage.State is StageState.Active or StageState.AwaitingApprovers || stage.Definition.OnTimeout != TimeoutAction.Escalate)
+            else if (!stage.TimeoutRecorded)
             {
                 // A stage already held by an earlier Escalate timeout recorded this then.
                 Record(at, ApprovalEventKind.StageTimedOut, stage.Definition.StageId, null);
+                stage.TimeoutRecorded = true;
             }
         }
     }
@@ -1226,6 +1293,12 @@ public sealed class ApprovalInstance
             Record(at, ApprovalEventKind.StageCancelled, stage.Definition.StageId, null);
         }
 
+        // A waiting proposal lapses with the request (DL-071d).
+        foreach (var stage in _stages)
+        {
+            stage.Proposal = null;
+        }
+
         State = state;
         Record(at, kind, null, actor);
     }
@@ -1273,6 +1346,9 @@ public sealed class ApprovalInstance
 
         /// <summary>A new approver list waiting for a second escalator (DL-070a).</summary>
         public EscalationProposal? Proposal { get; set; }
+
+        /// <summary>Its timeout since it last opened is in the history (DL-071d).</summary>
+        public bool TimeoutRecorded { get; set; }
 
         /// <summary>The size of the required list when the stage opened: an ALL list never goes below it.</summary>
         public int MinimumRequired { get; set; }

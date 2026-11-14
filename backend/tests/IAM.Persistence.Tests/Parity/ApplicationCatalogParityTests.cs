@@ -644,16 +644,23 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
         stillActive.Owner.ShouldBe("dir-owner");
         stillActive.VersionNumber.ShouldBe(1);
 
-        // Against both real databases: grp_dir_it isn't a workgroup in Organization, so the role goes to the owner.
+        // Against both real databases: the required role's workgroup grp_dir_it has no active list in Organization, so the
+        // role has nobody active and the level holds; the owner never fills a required role (DL-052, DL-071a).
         await using var organization = TestSupport.CreateOrganization(db.Provider, db.OrganizationAppConnectionString);
         var resolver = new ApproverResolver(directory, new WorkgroupDirectory(organization), new ApproverResolutionSettings());
-        var source = ApproverSource.ApplicationRole(registered.Id, role.RoleTypeId);
+        var roleResolution = await resolver.ResolveAsync(ApproverSource.ApplicationRole(registered.Id, role.RoleTypeId), new HashSet<PersonId>(), Ct);
+        roleResolution.Outcome.ShouldBe(ResolutionOutcome.RequiredRoleEmpty);
+        roleResolution.People.ShouldBeEmpty();
+        roleResolution.Steps.Select(s => (s.Source, s.Result)).ShouldBe(
+            [(ApproverSourceKind.ApplicationRole, ResolutionStepResult.NotFound), (ApproverSourceKind.Workgroup, ResolutionStepResult.NotFound)]);
+        roleResolution.Steps[0].Hash.ShouldBe(proposed.ContentHash);
+
+        // The owner comes from the active settings, with their version and hash as evidence.
+        var source = ApproverSource.ApplicationOwner(registered.Id);
         var resolution = await resolver.ResolveAsync(source, new HashSet<PersonId>(), Ct);
         resolution.Outcome.ShouldBe(ResolutionOutcome.Resolved);
         resolution.People.ShouldBe([PersonId.Create("dir-owner")]);
-        resolution.Steps.Select(s => (s.Source, s.Result)).ShouldBe(
-            [(ApproverSourceKind.ApplicationRole, ResolutionStepResult.NotFound), (ApproverSourceKind.Workgroup, ResolutionStepResult.NotFound), (ApproverSourceKind.ApplicationOwner, ResolutionStepResult.Found)]);
-        resolution.Steps[2].Hash.ShouldBe(proposed.ContentHash);
+        resolution.Steps.Single().Hash.ShouldBe(proposed.ContentHash);
 
         // The owner is the one getting access: the seeded fallback has no active members yet, so the level holds.
         var held = await resolver.ResolveAsync(source, new HashSet<PersonId> { PersonId.Create("dir-owner") }, Ct);

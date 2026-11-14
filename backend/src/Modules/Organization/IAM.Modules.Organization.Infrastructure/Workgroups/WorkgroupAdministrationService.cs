@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
 using IAM.BuildingBlocks.Abstractions.SecondPerson;
 using IAM.BuildingBlocks.Persistence;
 using IAM.BuildingBlocks.Security;
@@ -434,8 +435,8 @@ public sealed class WorkgroupAdministrationService(
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Members as a sorted, semicolon-separated list, so the audit trail alone shows who was in each list.</summary>
-    private static string MembersSnapshot(WorkgroupVersion version) => string.Join(';', version.People);
+    /// <summary>Members as a sorted JSON array, so the audit trail alone shows who was in each list, whatever an id contains (DL-071f).</summary>
+    private static string MembersSnapshot(WorkgroupVersion version) => JsonSerializer.Serialize(version.People);
 
     private AuditEventRecord VersionRecord(string action, Workgroup workgroup, WorkgroupVersion version) =>
         Event(action, workgroup.Id, AuditOutcome.Succeeded, null,

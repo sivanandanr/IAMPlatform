@@ -38,7 +38,7 @@ public interface IApproverResolver
 /// <summary>
 /// The resolution chain (DL-068d, DL-069c): the level's own source; for an application role that is empty and optional,
 /// or whose holders are all excluded, the application owner; then, for any source that left nobody, the fallback
-/// workgroup. A required role that is empty holds (DL-052). Manager, manager of manager, entitlement owner and matrix
+/// workgroup. A required role with nobody active holds (DL-052, DL-071a); one whose holders are all excluded goes on. Manager, manager of manager, entitlement owner and matrix
 /// have no data yet and hold with no fallback (DL-069d). Only active catalog settings and active member lists are read.
 /// </summary>
 public sealed class ApproverResolver(IApplicationApproverDirectory applications, IWorkgroupDirectory workgroups, ApproverResolutionSettings settings) : IApproverResolver
@@ -90,8 +90,9 @@ public sealed class ApproverResolver(IApplicationApproverDirectory applications,
                         return Resolved(holders, steps);
                     }
 
-                    // An empty required role blocks; it is never filled by the owner or the fallback group (DL-052).
-                    if (role is { Requirement: ApplicationRoleRequirement.Required } && roleStep.Result == ResolutionStepResult.Empty)
+                    // A required role with nobody active blocks: empty, a workgroup with no active list, or a damaged holder. It is
+                    // never filled by the owner or the fallback group (DL-052, DL-071a). Only all-excluded holders go on down the chain.
+                    if (role is { Requirement: ApplicationRoleRequirement.Required } && roleStep.Result is ResolutionStepResult.Empty or ResolutionStepResult.NotFound)
                     {
                         return new ApproverResolution(ResolutionOutcome.RequiredRoleEmpty, [], steps);
                     }

@@ -97,7 +97,7 @@ internal static class F
     public static void EscalateWithSecond(this ApprovalInstance instance, Guid stage, PersonId[] candidates, PersonId proposer, DateTimeOffset at)
     {
         instance.ProposeEscalation(stage, candidates, proposer, "r", instance.Version, at);
-        instance.ApproveEscalation(stage, candidates, SecondEscalator, instance.Version, at);
+        instance.ApproveEscalation(stage, candidates, SecondEscalator, "Checked", instance.Version, at);
     }
 
     public static StageView View(this ApprovalInstance instance, Guid stage) => instance.Stages.Single(s => s.StageId == stage);
@@ -2762,11 +2762,11 @@ public sealed class ApprovalInvariantTests
                     var reviewed = random.Next(8) == 0 ? list : pending.Candidates;
                     if (random.Next(6) == 0)
                     {
-                        instance.WithdrawEscalation(stage, escalator, instance.Version, at);
+                        instance.WithdrawEscalation(stage, escalator, "Checked", instance.Version, at);
                     }
                     else
                     {
-                        instance.ApproveEscalation(stage, reviewed, escalator, instance.Version, at);
+                        instance.ApproveEscalation(stage, reviewed, escalator, "Checked", instance.Version, at);
                     }
                 }
                 else

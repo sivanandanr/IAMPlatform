@@ -22,7 +22,8 @@ Option 2 (DL-068). The spec defines approval groups as internal; there is no dir
 
 ## Security and privacy impact
 - Database guards (`Workgroups` migrations, both engines): a member list becomes active only for an approved request with the same workgroup, version, number and hash, decided by someone not in the list; active and superseded lists and their members never change, except an active list being superseded; decided requests never change; nothing is deleted; PostgreSQL refuses TRUNCATE. SQL Server TRUNCATE fires no trigger (R-035).
-- Every change, decision and refusal is audited, with the member list as a sorted snapshot.
+- Every change, decision and refusal is audited, with the member list as a sorted JSON array, so ids containing ';' stay unambiguous (DL-071f).
+- The draft-author bar sees only the draft's creator and last editor (DL-071g, R-035).
 - Remaining risk (R-035): member ids are free text checked for shape (as owner ids, DL-067b); the Organization app login can write a fully matching forged approved request by SQL (as R-033, R-034); nothing resolves workgroup members into approvals until slice 2.
 
 ## SQL Server vs PostgreSQL impact

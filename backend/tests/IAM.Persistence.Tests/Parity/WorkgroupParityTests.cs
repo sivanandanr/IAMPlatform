@@ -107,6 +107,23 @@ public sealed class WorkgroupParityTests(ParityDatabase db)
     }
 
     [Fact]
+    public async Task TheAuditedMemberListIsUnambiguous()
+    {
+        // DL-071f: an id may contain a semicolon, so one member "x;y" must not read like two members "x" and "y".
+        var tag = Guid.NewGuid().ToString("N")[..8];
+        var registered = await RegisterAsync(NewKey("snap"), [$"m{tag};one", $"m{tag}two"]);
+        var sql = IsSqlServer
+            ? $"SELECT [PayloadCanonical] FROM [audit].[AuditEvent] WHERE [TargetId] = '{registered.Id}' AND [Action] = '{WorkgroupAuditActions.Registered}'"
+            : $"SELECT payload_canonical FROM audit.audit_event WHERE target_id = '{registered.Id}' AND action = '{WorkgroupAuditActions.Registered}'";
+        var payload = Convert.ToString(await db.ScalarAsync(db.AuditAppConnectionString, sql, Ct), CultureInfo.InvariantCulture).ShouldNotBeNull();
+        payload.ShouldContain($"m{tag};one");
+        payload.ShouldContain($"m{tag}two");
+        payload.ShouldContain("[");
+        payload.ShouldNotContain($"m{tag};one;m{tag}two");
+        payload.ShouldNotContain($"m{tag}two;m{tag};one");
+    }
+
+    [Fact]
     public async Task TheDraftsAuthorCannotApproveAndANewListSupersedesTheOld()
     {
         var both = new FakePermissions(("wg-both", WorkgroupAuditActions.ManageAction), ("wg-both", WorkgroupAuditActions.ApproveAction), ("wg-both", WorkgroupAuditActions.ReadAction), (Author, WorkgroupAuditActions.ManageAction), (Author, WorkgroupAuditActions.ReadAction));
