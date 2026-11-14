@@ -3,6 +3,7 @@ using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
 using IAM.Modules.Organization.Infrastructure.Persistence;
+using IAM.Modules.Workflow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 
@@ -61,5 +62,15 @@ internal sealed class OrganizationDesignTimeFactory : IDesignTimeDbContextFactor
         var options = new DbContextOptionsBuilder<OrganizationDbContext>();
         new SqlServerDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, OrganizationDbContext.SchemaName);
         return new OrganizationDbContext(options.Options);
+    }
+}
+
+internal sealed class WorkflowDesignTimeFactory : IDesignTimeDbContextFactory<WorkflowDbContext>
+{
+    public WorkflowDbContext CreateDbContext(string[] args)
+    {
+        var options = new DbContextOptionsBuilder<WorkflowDbContext>();
+        new SqlServerDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, WorkflowDbContext.SchemaName);
+        return new WorkflowDbContext(options.Options);
     }
 }
