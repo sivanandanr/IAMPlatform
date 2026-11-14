@@ -3,5 +3,7 @@
     <ProjectReference Include="..\..\..\BuildingBlocks\IAM.BuildingBlocks.Abstractions\IAM.BuildingBlocks.Abstractions.csproj" />
     <ProjectReference Include="..\IAM.Modules.Workflow.Domain\IAM.Modules.Workflow.Domain.csproj" />
     <ProjectReference Include="..\IAM.Modules.Workflow.Contracts\IAM.Modules.Workflow.Contracts.csproj" />
+    <ProjectReference Include="..\..\Catalog\IAM.Modules.Catalog.Contracts\IAM.Modules.Catalog.Contracts.csproj" />
+    <ProjectReference Include="..\..\Organization\IAM.Modules.Organization.Contracts\IAM.Modules.Organization.Contracts.csproj" />
   </ItemGroup>
 </Project>

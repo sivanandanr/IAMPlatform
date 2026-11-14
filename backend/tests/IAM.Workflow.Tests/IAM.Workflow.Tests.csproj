@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- S2-02 approval state machine tests (P0-009, ADR-0005). No database: the state machine is pure code. -->
+  <!-- S2-02 approval state machine tests (P0-009, ADR-0005) and approver resolution against in-memory directories (DL-069). No database. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
   </PropertyGroup>
@@ -12,5 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Modules\Workflow\IAM.Modules.Workflow.Domain\IAM.Modules.Workflow.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Workflow\IAM.Modules.Workflow.Application\IAM.Modules.Workflow.Application.csproj" />
   </ItemGroup>
 </Project>

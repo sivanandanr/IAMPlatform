@@ -1,4 +1,5 @@
 using System.Globalization;
+using IAM.BuildingBlocks.Abstractions.People;
 
 namespace IAM.Modules.Workflow.Domain.Approvals;
 
@@ -37,6 +38,12 @@ public enum StageState
 
     /// <summary>Someone at this level sent the request back for changes.</summary>
     Returned = 10,
+
+    /// <summary>
+    /// The level is open and its deadline runs, but nobody can act until its approvers are supplied (DL-069b). A timeout
+    /// applies as for an active level; nothing here can approve.
+    /// </summary>
+    AwaitingApprovers = 11,
 }
 
 public enum ApprovalEventKind
@@ -71,6 +78,12 @@ public enum ApprovalEventKind
 
     /// <summary>The same person decided the previous decision level themselves, so this one is approved for them (DL-057c, DL-058).</summary>
     DecisionApprovedAutomatically = 24,
+
+    /// <summary>A level opened and waits for its approvers to be resolved (DL-069b).</summary>
+    StageAwaitingApprovers = 25,
+
+    /// <summary>A level's approvers were supplied, with the resolution as evidence. A failed resolution holds the level.</summary>
+    ApproversSupplied = 26,
 }
 
 /// <summary>What the instance is bound to (IAM-WF-009, FR-POL-103). Taken once; a later policy change does not alter it.</summary>
@@ -81,9 +94,9 @@ public sealed record ApprovalBinding(
     string PolicyHash,
     Guid MatchedRuleId,
     Guid SnapshotReference,
-    Guid Requester,
-    Guid Beneficiary,
-    Guid PolicyMaker)
+    PersonId Requester,
+    PersonId Beneficiary,
+    PersonId PolicyMaker)
 {
     /// <summary>The instance id only: logging this object must not expose a person.</summary>
     public override string ToString() => $"{nameof(ApprovalBinding)} {InstanceId}";
@@ -96,8 +109,8 @@ public sealed record ApprovalBinding(
 public sealed record ApprovalDecision(
     Guid DecisionId,
     Guid StageId,
-    Guid Actor,
-    Guid? OnBehalfOf,
+    PersonId Actor,
+    PersonId? OnBehalfOf,
     bool Approve,
     string? Reason,
     long ExpectedVersion)
@@ -110,8 +123,8 @@ public sealed record ApprovalDecision(
 public sealed record ActionCompletion(
     Guid CompletionId,
     Guid StageId,
-    Guid Actor,
-    Guid? OnBehalfOf,
+    PersonId Actor,
+    PersonId? OnBehalfOf,
     string? Note,
     long ExpectedVersion)
 {
@@ -135,7 +148,7 @@ public enum RecordedOutcome
 /// automatic approval. <see cref="Principal"/> is whose approval it counts as: the delegator, or the actor.
 /// <see cref="CarriedFrom"/> is the previous level's decision an automatic approval came from.
 /// </summary>
-public sealed record RecordedDecision(Guid DecisionId, Guid StageId, Guid Actor, Guid Principal, RecordedOutcome Outcome, string? Reason, DateTimeOffset AtUtc, Guid? CarriedFrom = null)
+public sealed record RecordedDecision(Guid DecisionId, Guid StageId, PersonId Actor, PersonId Principal, RecordedOutcome Outcome, string? Reason, DateTimeOffset AtUtc, Guid? CarriedFrom = null)
 {
     /// <summary>The id only: logging this object must not expose a person or a reason.</summary>
     public override string ToString() => $"{nameof(RecordedDecision)} {DecisionId}";
@@ -144,12 +157,12 @@ public sealed record RecordedDecision(Guid DecisionId, Guid StageId, Guid Actor,
 /// <summary>Who changed a stage's approvers, from whom to whom, why, and the stage's deadline afterwards (IAM-WF-006, IAM-WF-009).</summary>
 public sealed record EscalationRecord(
     Guid StageId,
-    Guid Actor,
+    PersonId Actor,
     string Reason,
-    IReadOnlyList<Guid> PreviousCandidates,
-    IReadOnlyList<Guid> NewCandidates,
-    IReadOnlyList<Guid> PreviousRequired,
-    IReadOnlyList<Guid> NewRequired,
+    IReadOnlyList<PersonId> PreviousCandidates,
+    IReadOnlyList<PersonId> NewCandidates,
+    IReadOnlyList<PersonId> PreviousRequired,
+    IReadOnlyList<PersonId> NewRequired,
     DateTimeOffset DeadlineUtc,
     DateTimeOffset AtUtc)
 {
@@ -158,20 +171,20 @@ public sealed record EscalationRecord(
 }
 
 /// <summary>Who cancelled, withdrew or returned the request, and why. <see cref="OnBehalfOf"/> is set when a delegate returned it for someone.</summary>
-public sealed record ApprovalClosure(ApprovalState Outcome, Guid Actor, string? Reason, DateTimeOffset AtUtc, Guid? OnBehalfOf = null)
+public sealed record ApprovalClosure(ApprovalState Outcome, PersonId Actor, string? Reason, DateTimeOffset AtUtc, PersonId? OnBehalfOf = null)
 {
     /// <summary>The outcome only: logging this object must not expose a person or a reason.</summary>
     public override string ToString() => $"{nameof(ApprovalClosure)} {Outcome}";
 }
 
 /// <summary>One history entry, in order. Holds ids and codes only: no attribute values or reason text (IAM-WF-020).</summary>
-public sealed record ApprovalEvent(long Version, DateTimeOffset AtUtc, ApprovalEventKind Kind, Guid? StageId, Guid? Actor)
+public sealed record ApprovalEvent(long Version, DateTimeOffset AtUtc, ApprovalEventKind Kind, Guid? StageId, PersonId? Actor)
 {
     /// <summary>No actor: logging this object must not expose a person.</summary>
     public override string ToString() => $"{nameof(ApprovalEvent)} {Version} {Kind} {StageId}";
 }
 
-/// <summary>A read-only view of a stage. <see cref="ConfiguredCandidates"/> is the route's list; <see cref="Candidates"/> is the current one.</summary>
+/// <summary>A read-only view of a stage. <see cref="Source"/> is where its approvers come from; <see cref="Resolution"/> is what was found when it opened; <see cref="Candidates"/> is the current list.</summary>
 public sealed record StageView(
     Guid StageId,
     int Sequence,
@@ -182,11 +195,12 @@ public sealed record StageView(
     QuorumMode Quorum,
     int? MinimumApprovals,
     DateTimeOffset? DeadlineUtc,
-    IReadOnlyList<Guid> ConfiguredCandidates,
-    IReadOnlyList<Guid> Candidates,
-    IReadOnlyList<Guid> Required,
-    IReadOnlyList<Guid> Eligible,
-    IReadOnlyList<Guid> Approvers,
+    ApproverSource Source,
+    ApproverResolution? Resolution,
+    IReadOnlyList<PersonId> Candidates,
+    IReadOnlyList<PersonId> Required,
+    IReadOnlyList<PersonId> Eligible,
+    IReadOnlyList<PersonId> Approvers,
     int Escalations);
 
 /// <summary>
@@ -210,8 +224,8 @@ public sealed class ApprovalInstance
     private readonly List<RecordedDecision> _decisions = [];
     private readonly List<ApprovalEvent> _history = [];
     private readonly List<EscalationRecord> _escalations = [];
-    private readonly HashSet<Guid> _excluded;
-    private readonly HashSet<Guid> _escalators = [];
+    private readonly HashSet<PersonId> _excluded;
+    private readonly HashSet<PersonId> _escalators = [];
     private readonly HashSet<Guid> _decisionIds = [];
     private int _step = -1;
     private bool _authorizationRecorded;
@@ -272,7 +286,7 @@ public sealed class ApprovalInstance
         }
     }
 
-    /// <summary>Starts an instance on a validated route. If the first stage has no eligible approver the instance starts Held, never approved.</summary>
+    /// <summary>Starts an instance on a validated route. Its first levels open and wait for their approvers (DL-069b); it is never approved here.</summary>
     public static ApprovalInstance Bind(ApprovalBinding binding, ApprovalRoute route, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(binding);
@@ -319,7 +333,7 @@ public sealed class ApprovalInstance
     /// overdue, so it can't turn that outcome into one that can be resubmitted. Starting a new instance is for the Request
     /// story; this class only guarantees nothing carries over from this one (DL-055).
     /// </summary>
-    public void ReturnForChanges(Guid stageId, Guid actor, Guid? onBehalfOf, string? reason, long expectedVersion, DateTimeOffset now)
+    public void ReturnForChanges(Guid stageId, PersonId actor, PersonId? onBehalfOf, string? reason, long expectedVersion, DateTimeOffset now)
     {
         var at = RequireOpen(expectedVersion, now);
         if (DecisionsComplete)
@@ -338,12 +352,12 @@ public sealed class ApprovalInstance
             throw new ApprovalRefusedException(ApprovalRefusal.StageNotActive);
         }
 
-        if (at >= stage.DeadlineUtc || _stages.Exists(s => s.State == StageState.Active && at >= s.DeadlineUtc && s.Definition.OnTimeout != TimeoutAction.Escalate))
+        if (at >= stage.DeadlineUtc || _stages.Exists(s => s.State is StageState.Active or StageState.AwaitingApprovers && at >= s.DeadlineUtc && s.Definition.OnTimeout != TimeoutAction.Escalate))
         {
             throw new ApprovalRefusedException(ApprovalRefusal.StagePastDeadline);
         }
 
-        if (actor == Guid.Empty || onBehalfOf == Guid.Empty || onBehalfOf == actor)
+        if (!actor.IsValid || onBehalfOf is { IsValid: false } || onBehalfOf == actor)
         {
             throw new ApprovalRefusedException(ApprovalRefusal.InvalidActor);
         }
@@ -369,7 +383,7 @@ public sealed class ApprovalInstance
     private void Act(ApprovalDecision decision, StageKind kind, DateTimeOffset now)
     {
         var at = RequireOpen(decision.ExpectedVersion, now);
-        if (decision.DecisionId == Guid.Empty || decision.Actor == Guid.Empty || decision.OnBehalfOf == Guid.Empty || decision.OnBehalfOf == decision.Actor)
+        if (decision.DecisionId == Guid.Empty || !decision.Actor.IsValid || decision.OnBehalfOf is { IsValid: false } || decision.OnBehalfOf == decision.Actor)
         {
             throw new ApprovalRefusedException(ApprovalRefusal.InvalidDecision);
         }
@@ -434,6 +448,58 @@ public sealed class ApprovalInstance
     }
 
     /// <summary>
+    /// Gives an opened level its approvers, as resolved from its source when it opened (DL-069b). A resolution that found
+    /// nobody, or a source with no data yet, holds the level: it never approves and never skips. Supplied people must not be
+    /// the requester, the person getting access or the policy maker, as the resolver removes them (AR-2.7); the instance
+    /// checks again and refuses rather than quietly dropping them. Too late is too late: past the deadline the timeout applies.
+    /// </summary>
+    public void SupplyApprovers(Guid stageId, ApproverResolution resolution, long expectedVersion, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(resolution);
+        var at = RequireOpen(expectedVersion, now);
+        var stage = Stage(stageId);
+        if (stage.State != StageState.AwaitingApprovers)
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.StageNotAwaitingApprovers);
+        }
+
+        if (at >= stage.DeadlineUtc)
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.StagePastDeadline);
+        }
+
+        if (!IsValid(resolution, stage.Definition.Approvers))
+        {
+            throw new ApprovalRefusedException(ApprovalRefusal.InvalidResolution);
+        }
+
+        var copy = resolution with
+        {
+            People = Array.AsReadOnly(resolution.People.ToArray()),
+            Steps = Array.AsReadOnly(resolution.Steps.ToArray()),
+        };
+        stage.Resolution = copy;
+        Record(at, ApprovalEventKind.ApproversSupplied, stageId, null);
+        if (copy.Outcome != ResolutionOutcome.Resolved)
+        {
+            stage.ActiveCandidates = [];
+            Hold(stage, at);
+            UpdateHeldState(at);
+            return;
+        }
+
+        // Fixed when the stage gets its people. An independence conflict stays on the list and so holds the stage: ALL
+        // must not quietly need fewer people (DL-044).
+        stage.ActiveCandidates = [.. copy.People];
+        stage.Required = [.. copy.People];
+        stage.MinimumRequired = stage.Required.Count;
+        stage.State = StageState.Active;
+        Record(at, ApprovalEventKind.StageActivated, stageId, null);
+        CarryApprovals(stage, PreviousDecisionStep(stage.Definition.Sequence), at);
+        Settle(at);
+    }
+
+    /// <summary>
     /// Applies deadlines. If stages expire together, Reject wins, then Cancel, so the result does not depend on stage ids.
     /// Escalate holds the stage until new approvers are given. Nothing here can approve a stage. If nothing has expired,
     /// nothing changes.
@@ -441,7 +507,7 @@ public sealed class ApprovalInstance
     public void ApplyTimeouts(DateTimeOffset now, long expectedVersion)
     {
         var at = RequireOpen(expectedVersion, now);
-        var expired = _stages.Where(s => s.State is StageState.Active or StageState.Held && at >= s.DeadlineUtc).ToList();
+        var expired = _stages.Where(s => s.State is StageState.Active or StageState.AwaitingApprovers or StageState.Held && at >= s.DeadlineUtc).ToList();
 
         if (expired.Exists(s => s.Definition.OnTimeout == TimeoutAction.Reject))
         {
@@ -458,7 +524,7 @@ public sealed class ApprovalInstance
             return;
         }
 
-        foreach (var stage in expired.Where(s => s.State == StageState.Active))
+        foreach (var stage in expired.Where(s => s.State is StageState.Active or StageState.AwaitingApprovers))
         {
             Record(at, ApprovalEventKind.StageTimedOut, stage.Definition.StageId, null);
             Hold(stage, at);
@@ -474,7 +540,7 @@ public sealed class ApprovalInstance
     /// who can no longer act may be replaced. A Reject or Cancel stage keeps its original deadline. An ALL list never gets
     /// smaller than when the stage opened (DL-044), and nobody dropped after deciding can be listed again.
     /// </summary>
-    public void Escalate(Guid stageId, IReadOnlyList<Guid> newCandidates, Guid actor, string? reason, long expectedVersion, DateTimeOffset now)
+    public void Escalate(Guid stageId, IReadOnlyList<PersonId> newCandidates, PersonId actor, string? reason, long expectedVersion, DateTimeOffset now)
     {
         var at = RequireOpen(expectedVersion, now);
         var stage = Stage(stageId);
@@ -484,7 +550,7 @@ public sealed class ApprovalInstance
         }
 
         // The people the request is about, and whoever made the policy, cannot choose its approvers.
-        if (actor == Guid.Empty || _excluded.Contains(actor))
+        if (!actor.IsValid || _excluded.Contains(actor))
         {
             throw new ApprovalRefusedException(ApprovalRefusal.InvalidActor);
         }
@@ -497,7 +563,7 @@ public sealed class ApprovalInstance
         // Choosing the approvers and being one are separate duties, in either order and on any stage of this request.
         if (newCandidates.Contains(actor)
             || _decisions.Any(d => d.Actor == actor || d.Principal == actor)
-            || _stages.Any(s => s.State is StageState.Pending or StageState.Active or StageState.Held && s.ActiveCandidates.Contains(actor)))
+            || _stages.Any(s => s.State is StageState.Pending or StageState.Active or StageState.AwaitingApprovers or StageState.Held && s.ActiveCandidates.Contains(actor)))
         {
             throw new ApprovalRefusedException(ApprovalRefusal.EscalatorConflict);
         }
@@ -530,7 +596,7 @@ public sealed class ApprovalInstance
             throw new ApprovalRefusedException(ApprovalRefusal.EscalationRelistsEarlierDecider);
         }
 
-        List<Guid> required = [.. newCandidates.Where(c => !_excluded.Contains(c))];
+        List<PersonId> required = [.. newCandidates.Where(c => !_excluded.Contains(c))];
         if (stage.Definition.Quorum == QuorumMode.All)
         {
             if (required.Count < stage.MinimumRequired)
@@ -579,7 +645,7 @@ public sealed class ApprovalInstance
     }
 
     /// <summary>Withdraws the request. Only the requester may, and only before authorization: work may have started after it (DL-056).</summary>
-    public void Withdraw(Guid actor, string? reason, long expectedVersion, DateTimeOffset now)
+    public void Withdraw(PersonId actor, string? reason, long expectedVersion, DateTimeOffset now)
     {
         var at = RequireOpen(expectedVersion, now);
         if (actor != Binding.Requester)
@@ -601,10 +667,10 @@ public sealed class ApprovalInstance
     /// Cancels the request. Who may do this is for the calling layer's authorization, except that after authorization the
     /// requester, beneficiary and policy maker may not, and open tasks are recorded as having an unknown outcome (DL-056).
     /// </summary>
-    public void Cancel(Guid actor, string? reason, long expectedVersion, DateTimeOffset now)
+    public void Cancel(PersonId actor, string? reason, long expectedVersion, DateTimeOffset now)
     {
         var at = RequireOpen(expectedVersion, now);
-        if (actor == Guid.Empty)
+        if (!actor.IsValid)
         {
             throw new ApprovalRefusedException(ApprovalRefusal.InvalidActor);
         }
@@ -622,9 +688,41 @@ public sealed class ApprovalInstance
 
     private static bool IsValid(ApprovalBinding binding) =>
         binding.InstanceId != Guid.Empty && binding.RequestItemId != Guid.Empty && binding.PolicyVersionId != Guid.Empty
-        && binding.MatchedRuleId != Guid.Empty && binding.SnapshotReference != Guid.Empty && binding.Requester != Guid.Empty
-        && binding.Beneficiary != Guid.Empty && binding.PolicyMaker != Guid.Empty
+        && binding.MatchedRuleId != Guid.Empty && binding.SnapshotReference != Guid.Empty && binding.Requester.IsValid
+        && binding.Beneficiary.IsValid && binding.PolicyMaker.IsValid
         && binding.PolicyHash is { Length: 64 } && binding.PolicyHash.All(c => char.IsAsciiDigit(c) || c is >= 'a' and <= 'f');
+
+    /// <summary>
+    /// The shape of a resolution: a defined outcome; people only when resolved, valid, distinct and none excluded; 1 to
+    /// <see cref="ApproverResolution.MaxSteps"/> steps, the first being the level's own source; and an unavailable outcome
+    /// only for a source with no data, a required-role outcome only for a role.
+    /// </summary>
+    private bool IsValid(ApproverResolution resolution, ApproverSource source)
+    {
+        if (resolution.People is null || resolution.Steps is not { Count: > 0 and <= ApproverResolution.MaxSteps } || resolution.Steps.Any(s => s is null || !IsValid(s)))
+        {
+            return false;
+        }
+
+        var unbuilt = source.Kind is ApproverSourceKind.Manager or ApproverSourceKind.ManagerOfManager or ApproverSourceKind.EntitlementOwner or ApproverSourceKind.Matrix;
+        var shape = resolution.Outcome switch
+        {
+            ResolutionOutcome.Resolved => !unbuilt && ApprovalRoute.CandidatesAreValid(resolution.People) && !resolution.People.Any(_excluded.Contains),
+            ResolutionOutcome.SourceUnavailable => unbuilt && resolution.People.Count == 0,
+            ResolutionOutcome.NobodyAvailable => !unbuilt && resolution.People.Count == 0,
+            ResolutionOutcome.RequiredRoleEmpty => source.Kind == ApproverSourceKind.ApplicationRole && resolution.People.Count == 0,
+            _ => false,
+        };
+        return shape && resolution.Steps[0].Source == source.Kind;
+    }
+
+    private static bool IsValid(ResolutionStep step) =>
+        Enum.IsDefined(step.Source) && Enum.IsDefined(step.Result)
+        && step.Found is >= 0 and <= ApprovalLimits.MaxCandidatesPerStage
+        && step.Excluded >= 0 && step.Excluded <= step.Found
+        && step.Version is null or > 0
+        && (step.Hash is null || (step.Hash.Length == 64 && step.Hash.All(c => char.IsAsciiDigit(c) || c is >= 'a' and <= 'f')))
+        && (step.Reference is null || (step.Reference.Length is > 0 and <= ResolutionStep.MaxReferenceLength && step.Reference.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or ':')));
 
     private static void RequireValidReason(string? reason, bool required)
     {
@@ -706,7 +804,7 @@ public sealed class ApprovalInstance
     /// decided on an independent stage cannot decide elsewhere (DL-010). The rule applies in either order, though which
     /// person decides first can still change who is left to decide.
     /// </summary>
-    private bool IsEligible(StageRun stage, Guid person)
+    private bool IsEligible(StageRun stage, PersonId person)
     {
         if (_excluded.Contains(person) || _escalators.Contains(person))
         {
@@ -728,7 +826,7 @@ public sealed class ApprovalInstance
     }
 
     /// <summary>Has this person already had their say on this stage, for themselves or for someone else?</summary>
-    private bool HasDecided(StageRun stage, Guid person) =>
+    private bool HasDecided(StageRun stage, PersonId person) =>
         _decisions.Any(d => d.StageId == stage.Definition.StageId && (d.Principal == person || d.Actor == person));
 
     /// <summary>An action level can only ever hold completions, and they count as nobody's approval.</summary>
@@ -736,7 +834,7 @@ public sealed class ApprovalInstance
         _decisions.Exists(d => d.StageId == stage.Definition.StageId);
 
     /// <summary>People whose approval on this stage counts. The eligibility filter is a backstop: the checks on each action should mean it never removes anyone.</summary>
-    private List<Guid> ValidApprovers(StageRun stage) =>
+    private List<PersonId> ValidApprovers(StageRun stage) =>
         [.. _decisions.Where(d => d.StageId == stage.Definition.StageId && d.Outcome is RecordedOutcome.Approved or RecordedOutcome.ApprovedAutomatically && IsEligible(stage, d.Principal) && IsEligible(stage, d.Actor)).Select(d => d.Principal).Distinct()];
 
     private bool QuorumMet(StageRun stage)
@@ -757,7 +855,7 @@ public sealed class ApprovalInstance
     }
 
     /// <summary>True when the quorum can no longer be reached by the people available. That holds; it never passes.</summary>
-    private bool QuorumUnreachable(StageRun stage, IReadOnlyList<Guid> candidates, List<Guid> required)
+    private bool QuorumUnreachable(StageRun stage, IReadOnlyList<PersonId> candidates, List<PersonId> required)
     {
         var approvers = ValidApprovers(stage);
         var undecided = candidates.Count(c => IsEligible(stage, c) && !HasDecided(stage, c));
@@ -815,23 +913,13 @@ public sealed class ApprovalInstance
             return false;
         }
 
-        var previous = PreviousDecisionStep(next.Value);
         _step = next.Value;
         foreach (var stage in CurrentStep())
         {
-            stage.State = StageState.Active;
+            // Its approvers are found now, not when the route was built, so they are who holds the role today (DL-069b).
+            stage.State = StageState.AwaitingApprovers;
             stage.DeadlineUtc = at + stage.Definition.Deadline;
-
-            // Fixed when the stage opens. Excluded people are removed (K.1), but an independence conflict stays on the
-            // list and so holds the stage: ALL must not quietly need fewer people (DL-044).
-            stage.Required = [.. stage.ActiveCandidates.Where(c => !_excluded.Contains(c))];
-            stage.MinimumRequired = stage.Required.Count;
-            Record(at, ApprovalEventKind.StageActivated, stage.Definition.StageId, null);
-        }
-
-        foreach (var stage in CurrentStep())
-        {
-            CarryApprovals(stage, previous, at);
+            Record(at, ApprovalEventKind.StageAwaitingApprovers, stage.Definition.StageId, null);
         }
 
         return true;
@@ -926,7 +1014,7 @@ public sealed class ApprovalInstance
                 stage.State = state;
                 Record(at, kind, stage.Definition.StageId, null);
             }
-            else if (stage.State == StageState.Active || stage.Definition.OnTimeout != TimeoutAction.Escalate)
+            else if (stage.State is StageState.Active or StageState.AwaitingApprovers || stage.Definition.OnTimeout != TimeoutAction.Escalate)
             {
                 // A stage already held by an earlier Escalate timeout recorded this then.
                 Record(at, ApprovalEventKind.StageTimedOut, stage.Definition.StageId, null);
@@ -940,7 +1028,7 @@ public sealed class ApprovalInstance
         {
             // Every decision is made, so anything still open is a task.
             _tasksWithUnknownOutcome = Array.AsReadOnly(_stages
-                .Where(s => s.State is StageState.Active or StageState.Held)
+                .Where(s => s.State is StageState.Active or StageState.AwaitingApprovers or StageState.Held)
                 .Select(s => s.Definition.StageId)
                 .ToArray());
         }
@@ -977,9 +1065,9 @@ public sealed class ApprovalInstance
         }
     }
 
-    private void Close(ApprovalState state, ApprovalEventKind kind, DateTimeOffset at, Guid? actor)
+    private void Close(ApprovalState state, ApprovalEventKind kind, DateTimeOffset at, PersonId? actor)
     {
-        foreach (var stage in _stages.Where(s => s.State is StageState.Pending or StageState.Active or StageState.Held))
+        foreach (var stage in _stages.Where(s => s.State is StageState.Pending or StageState.Active or StageState.AwaitingApprovers or StageState.Held))
         {
             stage.State = StageState.Cancelled;
             Record(at, ApprovalEventKind.StageCancelled, stage.Definition.StageId, null);
@@ -989,7 +1077,7 @@ public sealed class ApprovalInstance
         Record(at, kind, null, actor);
     }
 
-    private void Record(DateTimeOffset at, ApprovalEventKind kind, Guid? stageId, Guid? actor)
+    private void Record(DateTimeOffset at, ApprovalEventKind kind, Guid? stageId, PersonId? actor)
     {
         Version++;
         _lastAt = at;
@@ -1006,7 +1094,8 @@ public sealed class ApprovalInstance
         stage.Definition.Quorum,
         stage.Definition.MinimumApprovals,
         stage.DeadlineUtc,
-        stage.Definition.Candidates,
+        stage.Definition.Approvers,
+        stage.Resolution,
         [.. stage.ActiveCandidates],
         [.. stage.Required],
         [.. stage.ActiveCandidates.Where(c => IsEligible(stage, c))],
@@ -1021,9 +1110,12 @@ public sealed class ApprovalInstance
 
         public DateTimeOffset? DeadlineUtc { get; set; }
 
-        public List<Guid> ActiveCandidates { get; set; } = [.. definition.Candidates];
+        /// <summary>Named people are known from the route; every other source's people come with the resolution.</summary>
+        public List<PersonId> ActiveCandidates { get; set; } = [.. definition.Approvers.People];
 
-        public List<Guid> Required { get; set; } = [];
+        public List<PersonId> Required { get; set; } = [];
+
+        public ApproverResolution? Resolution { get; set; }
 
         /// <summary>The size of the required list when the stage opened: an ALL list never goes below it.</summary>
         public int MinimumRequired { get; set; }

@@ -117,6 +117,11 @@ Results (local, Windows, 2026-11-10; not yet run in CI):
 - Mutation checks: 233 deliberate changes, one at a time, in a one-off script that is not in the repo and not part of CI: 228 caught, 5 missed, 0 inconclusive, run against the final code. The 5 can't change behaviour today: two backstops in `DecisionsComplete` for states no known sequence of actions reaches; two checks in `CarryApprovals` kept to state the rule (an independent level, and a level that isn't active); and counting action levels as the previous step, which the task rule (DL-058c) already stops.
 - Generated sequences use fixed seeds (3,000, 1,500 and 500 rounds), and include action levels, Return, delegated tasks, automatic approvals and a check at binding, with minimum counts for reaching each main outcome and rule. Their checks confirm each automatic approval against the route and history independently of the code, and that a stage closes only after an approving decision since it last opened or was escalated. Automatic approvals are rare in random routes, so their floor is low (15); the targeted tests cover them directly. This is sampling, not proof of every possible order.
 
+## Waiting for approvers (stage 4 slice 2, DL-069, ADR-0027)
+- People are `PersonId` sign-in ids, not Guids (DL-069a).
+- A stage carries an approver source instead of a list. When its step opens it is `AwaitingApprovers`: its deadline runs and its timeout applies, but nobody can decide, return or escalate it until `SupplyApprovers` gives it a checked resolution. A resolution that found nobody, or a source with no data, holds it. Carrying the same approver happens when the people are supplied.
+- A stage whose people are all excluded now holds without opening for anyone (it used to open and hold at once); `StageView` shows the source and the resolution in place of the configured list.
+
 ## Open questions and approvals
 - Module 7.3 timeout actions "Next level" and "Auto-approve (non-access only)" do not exist in the state machine (DL-013). The spec owner should align Module 7.3.
 - Escalation SLA numbers and reevaluation triggers (K.7, L.6 — DL-010 still open for these).

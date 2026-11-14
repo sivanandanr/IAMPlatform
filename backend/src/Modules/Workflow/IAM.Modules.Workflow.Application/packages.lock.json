@@ -5,6 +5,18 @@
       "iam.buildingblocks.abstractions": {
         "type": "Project"
       },
+      "iam.modules.catalog.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.organization.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
       "iam.modules.workflow.contracts": {
         "type": "Project",
         "dependencies": {
