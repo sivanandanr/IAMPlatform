@@ -66,8 +66,12 @@ public sealed class Application
         return draft.Apply(Key, settings);
     }
 
-    /// <summary>Starts the next settings version as a draft, once a version is active. Refused while a draft exists.</summary>
-    public ApplicationSettingsVersion StartNewDraft(ApplicationSettings settings)
+    /// <summary>
+    /// Starts the next settings version as a draft. Refused while a draft exists. Superseded versions need not be loaded, so
+    /// the caller passes the highest stored version number. An application always has a draft or an active version (the
+    /// first draft only ever leaves Draft by being activated); anything else is a damaged record.
+    /// </summary>
+    public ApplicationSettingsVersion StartNewDraft(ApplicationSettings settings, int highestVersionNumber)
     {
         CatalogRules.ValidateSettings(settings);
         if (CurrentDraft is not null)
@@ -75,12 +79,12 @@ public sealed class Application
             throw new ApplicationRefusedException(ApplicationRefusal.DraftExists);
         }
 
-        if (CurrentActive is null)
+        if (CurrentActive is null || highestVersionNumber < _versions.Max(v => v.VersionNumber))
         {
-            throw new ApplicationRefusedException(ApplicationRefusal.NothingActive);
+            throw new ApplicationRefusedException(ApplicationRefusal.InvalidRecord);
         }
 
-        var next = ApplicationSettingsVersion.CreateDraft(this, _versions.Max(v => v.VersionNumber) + 1, settings);
+        var next = ApplicationSettingsVersion.CreateDraft(this, highestVersionNumber + 1, settings);
         _versions.Add(next);
         return next;
     }
@@ -91,19 +95,21 @@ public sealed class Application
     /// </summary>
     internal void Activate(int versionNumber, string contentHash, Guid requestId)
     {
+        var draft = RequireActivatable(versionNumber, contentHash);
+        CurrentActive?.MarkSuperseded();
+        draft.MarkActive(requestId);
+    }
+
+    /// <summary>Checks, without changing anything, that the named draft is still there unchanged and has no empty required role.</summary>
+    internal ApplicationSettingsVersion RequireActivatable(int versionNumber, string contentHash)
+    {
         var draft = CurrentDraft ?? throw new ApplicationRefusedException(ApplicationRefusal.NoDraft);
         if (draft.VersionNumber != versionNumber || !string.Equals(draft.ContentHash, contentHash, StringComparison.Ordinal))
         {
             throw new ApplicationRefusedException(ApplicationRefusal.DraftChanged);
         }
 
-        if (draft.HasEmptyRequiredRole)
-        {
-            throw new ApplicationRefusedException(ApplicationRefusal.RequiredRoleEmpty);
-        }
-
-        CurrentActive?.MarkSuperseded();
-        draft.MarkActive(requestId);
+        return draft.HasEmptyRequiredRole ? throw new ApplicationRefusedException(ApplicationRefusal.RequiredRoleEmpty) : draft;
     }
 }
 
@@ -142,6 +148,10 @@ public sealed class ApplicationSettingsVersion
     public Guid? ActivatedByRequestId { get; private set; }
 
     public IReadOnlyList<ApplicationSettingsRole> Roles => _roles;
+
+    /// <summary>Whether <paramref name="person"/> is named as a person holding a role in this version (DL-067a).</summary>
+    public bool NamesPersonHolder(string? person) =>
+        person is not null && _roles.Any(r => r.HolderKind == RoleHolderKind.Person && string.Equals(r.HolderId, person, StringComparison.Ordinal));
 
     /// <summary>A required role with nobody holding it blocks activation (AR-2.3, DL-052).</summary>
     public bool HasEmptyRequiredRole => _roles.Any(r => r.Requirement == RoleRequirement.Required && r.HolderId is null);

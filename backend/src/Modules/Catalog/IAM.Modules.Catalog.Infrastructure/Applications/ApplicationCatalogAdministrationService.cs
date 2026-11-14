@@ -35,6 +35,7 @@ public static class CatalogAuditActions
     public const string RoleTypeTarget = "catalog.application_role_type";
 
     /// <summary>Action ids the catalog checks itself (Administration's contract, the same ids as its action catalog, DL-066).</summary>
+    public const string ReadAction = AccessActions.ApplicationsRead;
     public const string ManageAction = AccessActions.ApplicationsManage;
     public const string ApproveAction = AccessActions.ApplicationsApprove;
 
@@ -46,8 +47,9 @@ public static class CatalogAuditActions
 }
 
 /// <summary>
-/// Application catalog administration (DL-066). Each change and its audit event are saved in one transaction (ADR-0018);
-/// each refusal is audited as denied with its code. Permissions are checked here as well as at the endpoint (ADR-0008).
+/// Application catalog administration (DL-066, DL-067). Each change and its audit event are saved in one transaction
+/// (ADR-0018); every refused write, including a missing permission, is audited as denied with its code. Every call checks
+/// its permission here as well as at the endpoint (ADR-0008); a refused read is audited by the endpoint's denial recorder.
 /// </summary>
 public sealed class ApplicationCatalogAdministrationService(
     CatalogDbContext db,
@@ -59,18 +61,31 @@ public sealed class ApplicationCatalogAdministrationService(
 {
     private const string ProposedState = nameof(SecondPersonState.Proposed);
 
+    /// <summary>The most role types the list returns; the write rate limit bounds how fast more can be proposed.</summary>
+    private const int MaxListedRoleTypes = 500;
+
     public async Task<ApplicationView> RegisterAsync(RegisterApplicationRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        await RequireAsync(CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false);
-        var settings = await ToSettingsAsync(request.Settings, cancellationToken).ConfigureAwait(false);
-        var application = CatalogApplication.Register(request.Key, request.DisplayName, settings);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        CatalogApplication application;
+        try
+        {
+            await RequireAsync(CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false);
+            var settings = await ToSettingsAsync(request.Settings, cancellationToken).ConfigureAwait(false);
+            application = CatalogApplication.Register(request.Key, request.DisplayName, settings);
+        }
+        catch (ApplicationRefusedException refusal)
+        {
+            await RefuseAsync(tx, CatalogAuditActions.ChangeRefused, CatalogAuditActions.ApplicationTarget, null, Field("key", SafeCode(request.Key)), "register", refusal, null, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+
         if (await db.Applications.AnyAsync(a => a.Key == application.Key, cancellationToken).ConfigureAwait(false))
         {
             throw new ApplicationRejectedException("Key", "is already registered");
         }
 
-        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         db.Applications.Add(application);
         try
         {
@@ -81,97 +96,122 @@ public sealed class ApplicationCatalogAdministrationService(
             throw new ApplicationRejectedException("Key", "is already registered", ex);
         }
 
-        await audit.AppendAsync(tx.GetDbTransaction(), SettingsRecord(CatalogAuditActions.Registered, application, application.CurrentDraft!), cancellationToken).ConfigureAwait(false);
+        var codes = await RoleTypeCodesAsync(application, cancellationToken).ConfigureAwait(false);
+        await audit.AppendAsync(tx.GetDbTransaction(), SettingsRecord(CatalogAuditActions.Registered, application, application.CurrentDraft!, codes), cancellationToken).ConfigureAwait(false);
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return await ViewAsync(application, cancellationToken).ConfigureAwait(false);
+        return View(application, codes);
     }
 
+    /// <summary>A name is not access (rule 11), but it is frozen while a change is pending, so a reviewer sees what they approve.</summary>
     public async Task<ApplicationView> RenameAsync(Guid applicationId, long expectedConcurrencyVersion, string displayName, CancellationToken cancellationToken)
     {
-        await RequireAsync(CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false);
         var application = await LoadAsync(applicationId, cancellationToken).ConfigureAwait(false);
-        if (db.Entry(application).Property<long>(AuditColumns.Version).CurrentValue != expectedConcurrencyVersion)
-        {
-            throw new ApplicationConflictException();
-        }
-
-        var previous = application.DisplayName;
-        if (!application.Rename(displayName))
-        {
-            return await ViewAsync(application, cancellationToken).ConfigureAwait(false);
-        }
-
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        await SaveAsync(cancellationToken).ConfigureAwait(false);
-        await audit.AppendAsync(
-            tx.GetDbTransaction(),
-            Event(CatalogAuditActions.Renamed, CatalogAuditActions.ApplicationTarget, application.Id, AuditOutcome.Succeeded, null,
-                Field("key", application.Key), Field("previousDisplayName", previous), Field("displayName", application.DisplayName)),
-            cancellationToken).ConfigureAwait(false);
-        await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+        string previous;
+        bool changed;
+        try
+        {
+            await RequireAsync(CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false);
+            await RequireNothingPendingAsync(applicationId, cancellationToken).ConfigureAwait(false);
+            if (db.Entry(application).Property<long>(AuditColumns.Version).CurrentValue != expectedConcurrencyVersion)
+            {
+                throw new ApplicationConflictException();
+            }
+
+            previous = application.DisplayName;
+            changed = application.Rename(displayName);
+        }
+        catch (ApplicationRefusedException refusal)
+        {
+            await RefuseAsync(tx, application, "rename", refusal, null, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+
+        if (changed)
+        {
+            await SaveAsync(cancellationToken).ConfigureAwait(false);
+            await audit.AppendAsync(
+                tx.GetDbTransaction(),
+                Event(CatalogAuditActions.Renamed, CatalogAuditActions.ApplicationTarget, application.Id, AuditOutcome.Succeeded, null,
+                    Field("key", application.Key), Field("previousDisplayName", previous), Field("displayName", application.DisplayName)),
+                cancellationToken).ConfigureAwait(false);
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         return await ViewAsync(application, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ApplicationView> UpdateDraftAsync(Guid applicationId, long expectedConcurrencyVersion, ApplicationSettingsInput settings, CancellationToken cancellationToken)
     {
-        await RequireAsync(CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false);
-        var content = await ToSettingsAsync(settings, cancellationToken).ConfigureAwait(false);
         var application = await LoadAsync(applicationId, cancellationToken).ConfigureAwait(false);
-        var draft = application.CurrentDraft ?? throw new ApplicationRefusedException(ApplicationRefusal.NoDraft);
-        if (db.Entry(draft).Property<long>(AuditColumns.Version).CurrentValue != expectedConcurrencyVersion)
-        {
-            throw new ApplicationConflictException();
-        }
-
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-
-        // As DL-065: a draft is frozen while a request for it is pending, so what is approved is what was proposed.
-        if (await HasPendingRequestAsync(applicationId, cancellationToken).ConfigureAwait(false))
+        ApplicationSettingsVersion draft;
+        bool changed;
+        try
         {
-            var refusal = new ApplicationRefusedException(ApplicationRefusal.AlreadyPending);
-            await RefuseAsync(tx, application, "update_draft", refusal, cancellationToken).ConfigureAwait(false);
-            throw refusal;
+            await RequireAsync(CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false);
+
+            // As DL-065: a draft is frozen while a request for it is pending, so what is approved is what was proposed.
+            await RequireNothingPendingAsync(applicationId, cancellationToken).ConfigureAwait(false);
+            draft = application.CurrentDraft ?? throw new ApplicationRefusedException(ApplicationRefusal.NoDraft);
+            if (db.Entry(draft).Property<long>(AuditColumns.Version).CurrentValue != expectedConcurrencyVersion)
+            {
+                throw new ApplicationConflictException();
+            }
+
+            changed = application.UpdateDraft(await ToSettingsAsync(settings, cancellationToken).ConfigureAwait(false));
+        }
+        catch (ApplicationRefusedException refusal)
+        {
+            await RefuseAsync(tx, application, "update_draft", refusal, null, cancellationToken).ConfigureAwait(false);
+            throw;
         }
 
-        if (!application.UpdateDraft(content))
+        if (changed)
         {
-            return await ViewAsync(application, cancellationToken).ConfigureAwait(false);
+            // Edits and proposals both bump the application row's version (TouchApplication), so whichever of two racing
+            // ones commits second fails its concurrency check and a pending request always names the draft as it is.
+            TouchApplication(application);
+            await SaveAsync(cancellationToken).ConfigureAwait(false);
+            var codes = await RoleTypeCodesAsync(application, cancellationToken).ConfigureAwait(false);
+            await audit.AppendAsync(tx.GetDbTransaction(), SettingsRecord(CatalogAuditActions.DraftUpdated, application, draft, codes), cancellationToken).ConfigureAwait(false);
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        await SaveAsync(cancellationToken).ConfigureAwait(false);
-        await audit.AppendAsync(tx.GetDbTransaction(), SettingsRecord(CatalogAuditActions.DraftUpdated, application, draft), cancellationToken).ConfigureAwait(false);
-        await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
         return await ViewAsync(application, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ApplicationView> StartNewDraftAsync(Guid applicationId, ApplicationSettingsInput settings, CancellationToken cancellationToken)
     {
-        await RequireAsync(CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false);
-        var content = await ToSettingsAsync(settings, cancellationToken).ConfigureAwait(false);
         var application = await LoadAsync(applicationId, cancellationToken).ConfigureAwait(false);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         ApplicationSettingsVersion draft;
         try
         {
-            draft = application.StartNewDraft(content);
+            await RequireAsync(CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false);
+            var content = await ToSettingsAsync(settings, cancellationToken).ConfigureAwait(false);
+            var highest = await db.SettingsVersions.Where(v => v.ApplicationId == applicationId).MaxAsync(v => v.VersionNumber, cancellationToken).ConfigureAwait(false);
+            draft = application.StartNewDraft(content, highest);
         }
         catch (ApplicationRefusedException refusal)
         {
-            await RefuseAsync(tx, application, "start_draft", refusal, cancellationToken).ConfigureAwait(false);
+            await RefuseAsync(tx, application, "start_draft", refusal, null, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
         await SaveAsync(cancellationToken).ConfigureAwait(false);
-        await audit.AppendAsync(tx.GetDbTransaction(), SettingsRecord(CatalogAuditActions.NewDraftStarted, application, draft), cancellationToken).ConfigureAwait(false);
+        var codes = await RoleTypeCodesAsync(application, cancellationToken).ConfigureAwait(false);
+        await audit.AppendAsync(tx.GetDbTransaction(), SettingsRecord(CatalogAuditActions.NewDraftStarted, application, draft, codes), cancellationToken).ConfigureAwait(false);
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return await ViewAsync(application, cancellationToken).ConfigureAwait(false);
+        return View(application, codes);
     }
 
     public async Task<ApplicationView?> FindAsync(string key, CancellationToken cancellationToken)
     {
+        await RequireAsync(CatalogAuditActions.ReadAction, cancellationToken).ConfigureAwait(false);
         CatalogRules.ValidateKey(key, "Key");
-        var application = await db.Applications
-            .Include(a => a.Versions).ThenInclude(v => v.Roles)
+        // Tracked, because the concurrency version the caller sends back is a shadow column EF Core only reads for tracked rows.
+        var application = await Current(db.Applications)
             .SingleOrDefaultAsync(a => a.Key == key, cancellationToken)
             .ConfigureAwait(false);
         return application is null ? null : await ViewAsync(application, cancellationToken).ConfigureAwait(false);
@@ -185,21 +225,13 @@ public sealed class ApplicationCatalogAdministrationService(
         ApplicationSettingsRequest proposed;
         try
         {
-            if (!await permissions.CanAsync(actor, CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false))
-            {
-                throw new ApplicationRefusedException(ApplicationRefusal.NotAllowed);
-            }
-
-            if (await HasPendingRequestAsync(applicationId, cancellationToken).ConfigureAwait(false))
-            {
-                throw new ApplicationRefusedException(ApplicationRefusal.AlreadyPending);
-            }
-
+            await RequireAsync(CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false);
+            await RequireNothingPendingAsync(applicationId, cancellationToken).ConfigureAwait(false);
             proposed = ApplicationSettingsRequest.Propose(Guid.CreateVersion7(), application, actor, reason, Now());
         }
         catch (ApplicationRefusedException refusal)
         {
-            await RefuseAsync(tx, application, "propose", refusal, cancellationToken).ConfigureAwait(false);
+            await RefuseAsync(tx, application, "propose", refusal, null, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
@@ -216,16 +248,19 @@ public sealed class ApplicationCatalogAdministrationService(
             ProposedAtUtc = proposed.ProposedAtUtc,
             State = proposed.State.ToString(),
         });
+
+        // An edit that read the application before this proposal then fails its concurrency check (review finding).
+        TouchApplication(application);
         await SaveAsync(cancellationToken).ConfigureAwait(false);
-        await audit.AppendAsync(tx.GetDbTransaction(), RequestRecord(CatalogAuditActions.ChangeProposed, application, proposed, proposed.Reason), cancellationToken).ConfigureAwait(false);
+        var codes = await RoleTypeCodesAsync(application, cancellationToken).ConfigureAwait(false);
+        await audit.AppendAsync(tx.GetDbTransaction(), RequestRecord(CatalogAuditActions.ChangeProposed, application, proposed, proposed.Reason, codes), cancellationToken).ConfigureAwait(false);
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
         return View(proposed);
     }
 
     /// <summary>
-    /// Saves in a fixed order: the decided request (the database lets a version become active only for an approved request),
-    /// then the superseded version, then the activated draft, so the "one active version" index never sees two. Row versions
-    /// catch a concurrent decision or edit; nothing is saved then.
+    /// Every check runs before anything changes; then the decided request, the superseded version and the activated draft
+    /// are saved in that order (<see cref="OrderedSave"/>). Row versions catch a concurrent decision or edit; nothing is saved then.
     /// </summary>
     public async Task<ApplicationSettingsRequestView> ApproveAsync(Guid requestId, string reviewedContentHash, string? reason, CancellationToken cancellationToken)
     {
@@ -233,22 +268,17 @@ public sealed class ApplicationCatalogAdministrationService(
         var row = await LoadRequestAsync(requestId, cancellationToken).ConfigureAwait(false);
         var application = await LoadAsync(row.ApplicationId, cancellationToken).ConfigureAwait(false);
         var superseding = application.CurrentActive?.VersionNumber;
+        var codes = await RoleTypeCodesAsync(application, cancellationToken).ConfigureAwait(false);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         ApplicationSettingsRequest request;
         try
         {
             request = Restore(row);
-            request.RequireDecider(actor);
-            if (!await permissions.CanAsync(actor, CatalogAuditActions.ApproveAction, cancellationToken).ConfigureAwait(false))
-            {
-                throw new ApplicationRefusedException(ApplicationRefusal.NotAllowed);
-            }
+            request.RequireDecider(actor, application);
+            await RequireAsync(CatalogAuditActions.ApproveAction, cancellationToken).ConfigureAwait(false);
 
             // A request from someone who has since lost the right to propose is not approvable.
-            if (!await permissions.CanAsync(request.Maker, CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false))
-            {
-                throw new ApplicationRefusedException(ApplicationRefusal.MakerNoLongerAllowed);
-            }
+            await RequirePersonAsync(request.Maker, CatalogAuditActions.ManageAction, ApplicationRefusal.MakerNoLongerAllowed, cancellationToken).ConfigureAwait(false);
 
             // Whoever wrote the draft (its creator or last editor) can't approve it either, even after a role change.
             if (application.CurrentDraft is { } draft && IsAuthorOf(draft, actor))
@@ -266,32 +296,15 @@ public sealed class ApplicationCatalogAdministrationService(
         }
         catch (ApplicationRefusedException refusal)
         {
-            await RefuseAsync(tx, application, "approve", refusal, cancellationToken).ConfigureAwait(false);
+            await RefuseAsync(tx, application, "approve", refusal, requestId, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
-        // Hold the version changes back (marking an entry unchanged restores its loaded values), then apply exactly what
-        // the domain decided, one step at a time: only State (both) and ActivatedByRequestId (the draft) change.
         var activated = application.Versions.Single(v => v.ActivatedByRequestId == request.Id);
-        var decided = db.ChangeTracker.Entries<ApplicationSettingsVersion>()
-            .Where(e => e.State == EntityState.Modified)
-            .Select(e => (Entry: e, e.Entity.State, e.Entity.ActivatedByRequestId))
-            .ToList();
-        foreach (var (entry, _, _) in decided)
-        {
-            entry.State = EntityState.Unchanged;
-        }
-
         Apply(row, request);
-        await SaveAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var (entry, state, activatedBy) in decided.OrderBy(d => ReferenceEquals(d.Entry.Entity, activated) ? 1 : 0))
-        {
-            entry.Property(v => v.State).CurrentValue = state;
-            entry.Property(v => v.ActivatedByRequestId).CurrentValue = activatedBy;
-            await SaveAsync(cancellationToken).ConfigureAwait(false);
-        }
+        await db.SaveVersionsInOrderAsync(activated, SaveAsync, cancellationToken).ConfigureAwait(false);
 
-        var record = RequestRecord(CatalogAuditActions.ChangeApproved, application, request, request.DecisionReason);
+        var record = RequestRecord(CatalogAuditActions.ChangeApproved, application, request, request.DecisionReason, codes);
         record = record with { Payload = [.. record.Payload, Field("supersededVersionNumber", superseding?.ToString(CultureInfo.InvariantCulture) ?? "none")] };
         await audit.AppendAsync(tx.GetDbTransaction(), record, cancellationToken).ConfigureAwait(false);
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -303,28 +316,25 @@ public sealed class ApplicationCatalogAdministrationService(
         var actor = Actor();
         var row = await LoadRequestAsync(requestId, cancellationToken).ConfigureAwait(false);
         var application = await LoadAsync(row.ApplicationId, cancellationToken).ConfigureAwait(false);
+        var codes = await RoleTypeCodesAsync(application, cancellationToken).ConfigureAwait(false);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         ApplicationSettingsRequest request;
         try
         {
             request = Restore(row);
-            request.RequireDecider(actor);
-            if (!await permissions.CanAsync(actor, CatalogAuditActions.ApproveAction, cancellationToken).ConfigureAwait(false))
-            {
-                throw new ApplicationRefusedException(ApplicationRefusal.NotAllowed);
-            }
-
-            request.Reject(actor, reason, Now());
+            request.RequireDecider(actor, application);
+            await RequireAsync(CatalogAuditActions.ApproveAction, cancellationToken).ConfigureAwait(false);
+            request.Reject(actor, reason, application, Now());
         }
         catch (ApplicationRefusedException refusal)
         {
-            await RefuseAsync(tx, application, "reject", refusal, cancellationToken).ConfigureAwait(false);
+            await RefuseAsync(tx, application, "reject", refusal, requestId, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
         Apply(row, request);
         await SaveAsync(cancellationToken).ConfigureAwait(false);
-        await audit.AppendAsync(tx.GetDbTransaction(), RequestRecord(CatalogAuditActions.ChangeRejected, application, request, request.DecisionReason), cancellationToken).ConfigureAwait(false);
+        await audit.AppendAsync(tx.GetDbTransaction(), RequestRecord(CatalogAuditActions.ChangeRejected, application, request, request.DecisionReason, codes), cancellationToken).ConfigureAwait(false);
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
         return View(request);
     }
@@ -335,63 +345,76 @@ public sealed class ApplicationCatalogAdministrationService(
         var actor = Actor();
         var row = await LoadRequestAsync(requestId, cancellationToken).ConfigureAwait(false);
         var application = await LoadAsync(row.ApplicationId, cancellationToken).ConfigureAwait(false);
+        var codes = await RoleTypeCodesAsync(application, cancellationToken).ConfigureAwait(false);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         ApplicationSettingsRequest request;
         try
         {
             request = Restore(row);
-            if (!await permissions.CanAsync(actor, CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false))
-            {
-                throw new ApplicationRefusedException(ApplicationRefusal.NotAllowed);
-            }
-
+            await RequireAsync(CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false);
             request.Withdraw(actor, reason, Now());
         }
         catch (ApplicationRefusedException refusal)
         {
-            await RefuseAsync(tx, application, "withdraw", refusal, cancellationToken).ConfigureAwait(false);
+            await RefuseAsync(tx, application, "withdraw", refusal, requestId, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
         Apply(row, request);
         await SaveAsync(cancellationToken).ConfigureAwait(false);
-        await audit.AppendAsync(tx.GetDbTransaction(), RequestRecord(CatalogAuditActions.ChangeWithdrawn, application, request, request.DecisionReason), cancellationToken).ConfigureAwait(false);
+        await audit.AppendAsync(tx.GetDbTransaction(), RequestRecord(CatalogAuditActions.ChangeWithdrawn, application, request, request.DecisionReason, codes), cancellationToken).ConfigureAwait(false);
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
         return View(request);
     }
 
+    /// <summary>The request with the draft it would activate: only if that draft is still the one named, with the content named.</summary>
     public async Task<ApplicationSettingsReview?> ReviewRequestAsync(Guid requestId, CancellationToken cancellationToken)
     {
+        await RequireAsync(CatalogAuditActions.ReadAction, cancellationToken).ConfigureAwait(false);
         var row = await db.SettingsRequests.AsNoTracking().SingleOrDefaultAsync(r => r.Id == requestId, cancellationToken).ConfigureAwait(false);
         if (row is null)
         {
             return null;
         }
 
-        var application = await LoadAsync(row.ApplicationId, cancellationToken).ConfigureAwait(false);
-        var codes = await RoleTypeCodesAsync(cancellationToken).ConfigureAwait(false);
+        var application = await Current(db.Applications).SingleAsync(a => a.Id == row.ApplicationId, cancellationToken).ConfigureAwait(false);
+        var codes = await RoleTypeCodesAsync(application, cancellationToken).ConfigureAwait(false);
         var draft = application.CurrentDraft;
-        return new ApplicationSettingsReview(View(Restore(row)), draft is not null && draft.Id == row.SettingsVersionId ? View(draft, codes) : null);
+        var named = draft is not null && draft.Id == row.SettingsVersionId && string.Equals(draft.ContentHash, row.ContentHash, StringComparison.Ordinal);
+        return new ApplicationSettingsReview(View(Restore(row)), named ? View(draft!, codes) : null);
     }
 
+    /// <summary>Built-in, pending and approved role types (rejected and withdrawn ones stay in the audit trail), at most 500.</summary>
     public async Task<IReadOnlyList<ApplicationRoleTypeView>> ListRoleTypesAsync(CancellationToken cancellationToken)
     {
-        var types = await db.RoleTypes.AsNoTracking().OrderBy(t => t.Code).ToListAsync(cancellationToken).ConfigureAwait(false);
+        await RequireAsync(CatalogAuditActions.ReadAction, cancellationToken).ConfigureAwait(false);
+        var types = await db.RoleTypes.AsNoTracking()
+            .Where(t => t.State == RoleTypeState.BuiltIn || t.State == RoleTypeState.Proposed || t.State == RoleTypeState.Approved)
+            .OrderBy(t => t.Code)
+            .Take(MaxListedRoleTypes)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
         return types.Select(View).ToList();
     }
 
     public async Task<ApplicationRoleTypeView> ProposeRoleTypeAsync(string code, string displayName, string reason, CancellationToken cancellationToken)
     {
         var actor = Actor();
-        await RequireAsync(CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false);
-        var type = ApplicationRoleType.Propose(code, displayName, actor, reason, Now());
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var taken = await db.RoleTypes.AsNoTracking().Where(t => t.Code == type.Code).ToListAsync(cancellationToken).ConfigureAwait(false);
-        if (taken.Any(t => t.HoldsCode))
+        ApplicationRoleType type;
+        try
         {
-            var refusal = new ApplicationRefusedException(ApplicationRefusal.RoleTypeExists);
-            await RefuseRoleTypeAsync(tx, null, type.Code, "propose", refusal, cancellationToken).ConfigureAwait(false);
-            throw refusal;
+            await RequireAsync(CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false);
+            type = ApplicationRoleType.Propose(code, displayName, actor, reason, Now());
+            if (await db.RoleTypes.AnyAsync(t => t.Code == type.Code && (t.State == RoleTypeState.BuiltIn || t.State == RoleTypeState.Proposed || t.State == RoleTypeState.Approved), cancellationToken).ConfigureAwait(false))
+            {
+                throw new ApplicationRefusedException(ApplicationRefusal.RoleTypeExists);
+            }
+        }
+        catch (ApplicationRefusedException refusal)
+        {
+            await RefuseAsync(tx, CatalogAuditActions.RoleTypeRefused, CatalogAuditActions.RoleTypeTarget, null, Field("code", SafeCode(code)), "propose", refusal, null, cancellationToken).ConfigureAwait(false);
+            throw;
         }
 
         db.RoleTypes.Add(type);
@@ -401,7 +424,13 @@ public sealed class ApplicationCatalogAdministrationService(
         }
         catch (DbUpdateException ex) when (databaseProvider.IsUniqueViolation(ex))
         {
-            throw new ApplicationRefusedException(ApplicationRefusal.RoleTypeExists, ex);
+            // Someone proposed the same code at the same moment. The failed statement may have ended this transaction
+            // (PostgreSQL), so the refusal is audited in a new one.
+            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            var refusal = new ApplicationRefusedException(ApplicationRefusal.RoleTypeExists, ex);
+            await using var retry = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await RefuseAsync(retry, CatalogAuditActions.RoleTypeRefused, CatalogAuditActions.RoleTypeTarget, null, Field("code", type.Code), "propose", refusal, null, cancellationToken).ConfigureAwait(false);
+            throw refusal;
         }
 
         await audit.AppendAsync(tx.GetDbTransaction(), RoleTypeRecord(CatalogAuditActions.RoleTypeProposed, type, type.Reason), cancellationToken).ConfigureAwait(false);
@@ -413,8 +442,8 @@ public sealed class ApplicationCatalogAdministrationService(
         DecideRoleTypeAsync(roleTypeId, "approve", CatalogAuditActions.RoleTypeApproved, async (type, actor) =>
         {
             type.RequireDecider(actor);
-            await RequireActorAsync(actor, CatalogAuditActions.ApproveAction, ApplicationRefusal.NotAllowed, cancellationToken).ConfigureAwait(false);
-            await RequireActorAsync(type.Maker!, CatalogAuditActions.ManageAction, ApplicationRefusal.MakerNoLongerAllowed, cancellationToken).ConfigureAwait(false);
+            await RequireAsync(CatalogAuditActions.ApproveAction, cancellationToken).ConfigureAwait(false);
+            await RequirePersonAsync(type.Maker!, CatalogAuditActions.ManageAction, ApplicationRefusal.MakerNoLongerAllowed, cancellationToken).ConfigureAwait(false);
             type.Approve(actor, reason, Now());
         }, cancellationToken);
 
@@ -422,14 +451,14 @@ public sealed class ApplicationCatalogAdministrationService(
         DecideRoleTypeAsync(roleTypeId, "reject", CatalogAuditActions.RoleTypeRejected, async (type, actor) =>
         {
             type.RequireDecider(actor);
-            await RequireActorAsync(actor, CatalogAuditActions.ApproveAction, ApplicationRefusal.NotAllowed, cancellationToken).ConfigureAwait(false);
+            await RequireAsync(CatalogAuditActions.ApproveAction, cancellationToken).ConfigureAwait(false);
             type.Reject(actor, reason, Now());
         }, cancellationToken);
 
     public Task<ApplicationRoleTypeView> WithdrawRoleTypeAsync(Guid roleTypeId, string? reason, CancellationToken cancellationToken) =>
         DecideRoleTypeAsync(roleTypeId, "withdraw", CatalogAuditActions.RoleTypeWithdrawn, async (type, actor) =>
         {
-            await RequireActorAsync(actor, CatalogAuditActions.ManageAction, ApplicationRefusal.NotAllowed, cancellationToken).ConfigureAwait(false);
+            await RequireAsync(CatalogAuditActions.ManageAction, cancellationToken).ConfigureAwait(false);
             type.Withdraw(actor, reason, Now());
         }, cancellationToken);
 
@@ -447,7 +476,7 @@ public sealed class ApplicationCatalogAdministrationService(
         }
         catch (ApplicationRefusedException refusal)
         {
-            await RefuseRoleTypeAsync(tx, type.Id, type.Code, step, refusal, cancellationToken).ConfigureAwait(false);
+            await RefuseAsync(tx, CatalogAuditActions.RoleTypeRefused, CatalogAuditActions.RoleTypeTarget, type.Id, Field("code", type.Code), step, refusal, null, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
@@ -457,7 +486,7 @@ public sealed class ApplicationCatalogAdministrationService(
         return View(type);
     }
 
-    /// <summary>Maps role type codes to ids; only built-in or approved types may be used (DL-066c).</summary>
+    /// <summary>Maps role type codes to ids, reading only the types named; only built-in or approved types may be used (DL-066c).</summary>
     private async Task<ApplicationSettings> ToSettingsAsync(ApplicationSettingsInput? input, CancellationToken cancellationToken)
     {
         if (input is null || input.Roles is null)
@@ -470,16 +499,20 @@ public sealed class ApplicationCatalogAdministrationService(
             throw new ApplicationRejectedException("Roles", $"must be a list of at most {CatalogRules.MaxRoles} roles");
         }
 
-        var types = await db.RoleTypes.AsNoTracking().ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (input.Roles.Any(r => r is null))
+        {
+            throw new ApplicationRejectedException("Roles", "must not contain empty entries");
+        }
+
+        var requested = input.Roles.Select(r => r.RoleTypeCode).Distinct(StringComparer.Ordinal).ToList();
+        var types = await db.RoleTypes.AsNoTracking()
+            .Where(t => requested.Contains(t.Code) && (t.State == RoleTypeState.BuiltIn || t.State == RoleTypeState.Proposed || t.State == RoleTypeState.Approved))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
         var roles = new List<ApplicationRoleSetting>(input.Roles.Count);
         foreach (var role in input.Roles)
         {
-            if (role is null)
-            {
-                throw new ApplicationRejectedException("Roles", "must not contain empty entries");
-            }
-
-            var type = types.SingleOrDefault(t => string.Equals(t.Code, role.RoleTypeCode, StringComparison.Ordinal) && t.HoldsCode)
+            var type = types.SingleOrDefault(t => string.Equals(t.Code, role.RoleTypeCode, StringComparison.Ordinal))
                 ?? throw new ApplicationRejectedException("RoleTypeCode", "is not a known role type");
             if (!type.IsUsable)
             {
@@ -533,8 +566,19 @@ public sealed class ApplicationCatalogAdministrationService(
     /// <summary>The clock at storage precision, so what a call returns is exactly what a later read gives back.</summary>
     private DateTimeOffset Now() => UtcMicrosecondConverter.TruncateToMicroseconds(clock.GetUtcNow());
 
-    private Task<bool> HasPendingRequestAsync(Guid applicationId, CancellationToken cancellationToken) =>
-        db.SettingsRequests.AnyAsync(r => r.ApplicationId == applicationId && r.State == ProposedState, cancellationToken);
+    /// <summary>
+    /// Bumps the application row's version without changing it (only DisplayName is written, with its own value): the row
+    /// serialises edits and proposals. The draft row is left alone, so its CreatedBy/ModifiedBy still name its authors.
+    /// </summary>
+    private void TouchApplication(CatalogApplication application) => db.Entry(application).Property(a => a.DisplayName).IsModified = true;
+
+    private async Task RequireNothingPendingAsync(Guid applicationId, CancellationToken cancellationToken)
+    {
+        if (await db.SettingsRequests.AnyAsync(r => r.ApplicationId == applicationId && r.State == ProposedState, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ApplicationRefusedException(ApplicationRefusal.AlreadyPending);
+        }
+    }
 
     /// <summary>The draft's creator or last editor, from the server-side audit columns (ADR-0017).</summary>
     private bool IsAuthorOf(ApplicationSettingsVersion draft, string person) =>
@@ -543,9 +587,9 @@ public sealed class ApplicationCatalogAdministrationService(
 
     /// <summary>Defence in depth: the endpoint checks the same action first (ADR-0008).</summary>
     private Task RequireAsync(string action, CancellationToken cancellationToken) =>
-        RequireActorAsync(Actor(), action, ApplicationRefusal.NotAllowed, cancellationToken);
+        RequirePersonAsync(Actor(), action, ApplicationRefusal.NotAllowed, cancellationToken);
 
-    private async Task RequireActorAsync(string person, string action, ApplicationRefusal refusal, CancellationToken cancellationToken)
+    private async Task RequirePersonAsync(string person, string action, ApplicationRefusal refusal, CancellationToken cancellationToken)
     {
         if (!await permissions.CanAsync(person, action, cancellationToken).ConfigureAwait(false))
         {
@@ -560,11 +604,12 @@ public sealed class ApplicationCatalogAdministrationService(
         await db.SettingsRequests.SingleOrDefaultAsync(r => r.Id == requestId, cancellationToken).ConfigureAwait(false)
         ?? throw new ApplicationNotFoundException();
 
+    /// <summary>The application with its draft and active versions only: superseded ones are never needed, so loads stay bounded.</summary>
+    private static IQueryable<CatalogApplication> Current(IQueryable<CatalogApplication> applications) =>
+        applications.Include(a => a.Versions.Where(v => v.State != SettingsVersionState.Superseded)).ThenInclude(v => v.Roles);
+
     private async Task<CatalogApplication> LoadAsync(Guid applicationId, CancellationToken cancellationToken) =>
-        await db.Applications
-            .Include(a => a.Versions).ThenInclude(v => v.Roles)
-            .SingleOrDefaultAsync(a => a.Id == applicationId, cancellationToken)
-            .ConfigureAwait(false)
+        await Current(db.Applications).SingleOrDefaultAsync(a => a.Id == applicationId, cancellationToken).ConfigureAwait(false)
         ?? throw new ApplicationNotFoundException();
 
     private async Task SaveAsync(CancellationToken cancellationToken)
@@ -575,47 +620,79 @@ public sealed class ApplicationCatalogAdministrationService(
         }
         catch (DbUpdateException ex) when (ex is DbUpdateConcurrencyException || databaseProvider.IsUniqueViolation(ex) || databaseProvider.IsConcurrencyFailure(ex))
         {
-            // Another decision on the same request, a concurrent edit, or a second pending request.
+            // Another decision on the same request, a concurrent edit or proposal, or a second pending request.
             throw new ApplicationConflictException("The application, its request or the role type was changed by someone else; reload it and try again.", ex);
         }
     }
 
-    /// <summary>The refusal is evidence: audited as denied with the refusal code only, then committed.</summary>
-    private async Task RefuseAsync(IDbContextTransaction tx, CatalogApplication application, string step, ApplicationRefusedException refusal, CancellationToken cancellationToken)
+    /// <summary>The refusal is evidence: audited as denied with the refusal code (and the request, if any), then committed.</summary>
+    private Task RefuseAsync(IDbContextTransaction tx, CatalogApplication application, string step, ApplicationRefusedException refusal, Guid? requestId, CancellationToken cancellationToken) =>
+        RefuseAsync(tx, CatalogAuditActions.ChangeRefused, CatalogAuditActions.ApplicationTarget, application.Id, Field("key", application.Key), step, refusal, requestId, cancellationToken);
+
+    private async Task RefuseAsync(
+        IDbContextTransaction tx, string action, string targetType, Guid? targetId, AuditPayloadField label, string step, ApplicationRefusedException refusal, Guid? requestId, CancellationToken cancellationToken)
     {
         db.ChangeTracker.Clear();
-        var record = Event(CatalogAuditActions.ChangeRefused, CatalogAuditActions.ApplicationTarget, application.Id, AuditOutcome.Denied, null,
-            Field("key", application.Key), Field("step", step), Field("refusal", (refusal.Refusal ?? ApplicationRefusal.InvalidRecord).ToString()));
-        await audit.AppendAsync(tx.GetDbTransaction(), record, cancellationToken).ConfigureAwait(false);
+        List<AuditPayloadField> payload = [label, Field("step", step), Field("refusal", (refusal.Refusal ?? ApplicationRefusal.InvalidRecord).ToString())];
+        if (requestId is { } id)
+        {
+            payload.Add(Field("requestId", id.ToString()));
+        }
+
+        await audit.AppendAsync(tx.GetDbTransaction(), Event(action, targetType, targetId, AuditOutcome.Denied, null, [.. payload]), cancellationToken).ConfigureAwait(false);
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task RefuseRoleTypeAsync(IDbContextTransaction tx, Guid? roleTypeId, string code, string step, ApplicationRefusedException refusal, CancellationToken cancellationToken)
+    /// <summary>A key or code exactly as given if it is a valid one; anything else is recorded as invalid, never echoed.</summary>
+    private static string SafeCode(string? code)
     {
-        db.ChangeTracker.Clear();
-        var record = Event(CatalogAuditActions.RoleTypeRefused, CatalogAuditActions.RoleTypeTarget, roleTypeId, AuditOutcome.Denied, null,
-            Field("code", code), Field("step", step), Field("refusal", (refusal.Refusal ?? ApplicationRefusal.InvalidRecord).ToString()));
-        await audit.AppendAsync(tx.GetDbTransaction(), record, cancellationToken).ConfigureAwait(false);
-        await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            CatalogRules.ValidateKey(code, "Key");
+            return code!;
+        }
+        catch (ApplicationRejectedException)
+        {
+            return "(invalid)";
+        }
     }
 
-    private AuditEventRecord SettingsRecord(string action, CatalogApplication application, ApplicationSettingsVersion version) =>
+    /// <summary>
+    /// Who holds which role, so the audit trail alone shows every appointment: <c>code:Requirement:Kind:Id</c> per role,
+    /// sorted, separated by semicolons; an empty role is <c>code:Requirement:-</c>.
+    /// </summary>
+    private static string RolesSnapshot(ApplicationSettingsVersion version, Dictionary<Guid, string> codes) =>
+        string.Join(';', version.Roles
+            .Select(r => $"{(codes.TryGetValue(r.RoleTypeId, out var c) ? c : r.RoleTypeId.ToString())}:{r.Requirement}:{(r.HolderKind is { } k ? $"{k}:{r.HolderId}" : "-")}")
+            .Order(StringComparer.Ordinal));
+
+    private AuditEventRecord SettingsRecord(string action, CatalogApplication application, ApplicationSettingsVersion version, Dictionary<Guid, string> codes) =>
         Event(action, CatalogAuditActions.ApplicationTarget, application.Id, AuditOutcome.Succeeded, null,
             Field("key", application.Key),
             Field("versionNumber", version.VersionNumber.ToString(CultureInfo.InvariantCulture)),
             Field("owner", version.Owner),
-            Field("roleCount", version.Roles.Count.ToString(CultureInfo.InvariantCulture)),
+            Field("roles", RolesSnapshot(version, codes)),
             Field("contentHash", version.ContentHash));
 
-    private AuditEventRecord RequestRecord(string action, CatalogApplication application, ApplicationSettingsRequest request, string? reason) =>
-        Event(action, CatalogAuditActions.ApplicationTarget, application.Id, AuditOutcome.Succeeded, reason,
+    private AuditEventRecord RequestRecord(string action, CatalogApplication application, ApplicationSettingsRequest request, string? reason, Dictionary<Guid, string> codes)
+    {
+        List<AuditPayloadField> payload =
+        [
             Field("key", application.Key),
             Field("requestId", request.Id.ToString()),
             Field("versionNumber", request.VersionNumber.ToString(CultureInfo.InvariantCulture)),
             Field("contentHash", request.ContentHash),
             Field("proposedOwner", request.ProposedOwner),
             Field("maker", request.Maker),
-            Field("state", request.State.ToString()));
+            Field("state", request.State.ToString()),
+        ];
+        if (application.Versions.SingleOrDefault(v => v.Id == request.SettingsVersionId) is { } version)
+        {
+            payload.Add(Field("roles", RolesSnapshot(version, codes)));
+        }
+
+        return Event(action, CatalogAuditActions.ApplicationTarget, application.Id, AuditOutcome.Succeeded, reason, [.. payload]);
+    }
 
     private AuditEventRecord RoleTypeRecord(string action, ApplicationRoleType type, string? reason) =>
         Event(action, CatalogAuditActions.RoleTypeTarget, type.Id, AuditOutcome.Succeeded, reason,
@@ -635,21 +712,24 @@ public sealed class ApplicationCatalogAdministrationService(
 
     private static AuditPayloadField Field(string name, string value) => new(name, value, AuditFieldClass.Plain);
 
-    private async Task<Dictionary<Guid, string>> RoleTypeCodesAsync(CancellationToken cancellationToken) =>
-        await db.RoleTypes.AsNoTracking().ToDictionaryAsync(t => t.Id, t => t.Code, cancellationToken).ConfigureAwait(false);
-
-    private async Task<ApplicationView> ViewAsync(CatalogApplication application, CancellationToken cancellationToken)
+    /// <summary>Codes of only the role types the application's loaded versions use.</summary>
+    private async Task<Dictionary<Guid, string>> RoleTypeCodesAsync(CatalogApplication application, CancellationToken cancellationToken)
     {
-        var codes = await RoleTypeCodesAsync(cancellationToken).ConfigureAwait(false);
-        return new ApplicationView(
-            application.Id,
-            application.Key,
-            application.DisplayName,
-            application.CurrentActive is not null,
-            application.CurrentActive is { } active ? View(active, codes) : null,
-            application.CurrentDraft is { } draft ? View(draft, codes) : null,
-            db.Entry(application).Property<long>(AuditColumns.Version).CurrentValue);
+        var ids = application.Versions.SelectMany(v => v.Roles).Select(r => r.RoleTypeId).Distinct().ToList();
+        return await db.RoleTypes.AsNoTracking().Where(t => ids.Contains(t.Id)).ToDictionaryAsync(t => t.Id, t => t.Code, cancellationToken).ConfigureAwait(false);
     }
+
+    private async Task<ApplicationView> ViewAsync(CatalogApplication application, CancellationToken cancellationToken) =>
+        View(application, await RoleTypeCodesAsync(application, cancellationToken).ConfigureAwait(false));
+
+    private ApplicationView View(CatalogApplication application, Dictionary<Guid, string> codes) => new(
+        application.Id,
+        application.Key,
+        application.DisplayName,
+        application.CurrentActive is not null,
+        application.CurrentActive is { } active ? View(active, codes) : null,
+        application.CurrentDraft is { } draft ? View(draft, codes) : null,
+        db.Entry(application).Property<long>(AuditColumns.Version).CurrentValue);
 
     private ApplicationSettingsView View(ApplicationSettingsVersion version, Dictionary<Guid, string> codes) => new(
         version.Id,

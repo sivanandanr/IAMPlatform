@@ -101,7 +101,7 @@ public sealed class ApplicationCatalogDomainTests
 
         Should.Throw<ApplicationRefusedException>(() => request.Approve("maker", null, application, Now)).Refusal.ShouldBe(ApplicationRefusal.MakerCannotDecide);
         Should.Throw<ApplicationRefusedException>(() => request.Approve("owner-1", null, application, Now)).Refusal.ShouldBe(ApplicationRefusal.OwnerCannotDecide);
-        Should.Throw<ApplicationRefusedException>(() => request.Reject("owner-1", "No", Now)).Refusal.ShouldBe(ApplicationRefusal.OwnerCannotDecide);
+        Should.Throw<ApplicationRefusedException>(() => request.Reject("owner-1", "No", application, Now)).Refusal.ShouldBe(ApplicationRefusal.OwnerCannotDecide);
         application.CurrentActive.ShouldBeNull();
 
         request.Approve("checker", null, application, Now);
@@ -111,6 +111,40 @@ public sealed class ApplicationCatalogDomainTests
         active.ActivatedByRequestId.ShouldBe(request.Id);
         application.CurrentDraft.ShouldBeNull();
         Should.Throw<ApplicationRefusedException>(() => request.Approve("checker-2", null, application, Now)).Refusal.ShouldBe(ApplicationRefusal.NotProposed);
+    }
+
+    /// <summary>DL-067a: a person named as a role holder in the settings can't decide them, either way.</summary>
+    [Fact]
+    public void APersonNamedAsARoleHolderCannotDecide()
+    {
+        var settings = new ApplicationSettings("owner-1",
+        [
+            new ApplicationRoleSetting(BuiltInRoleTypes.ItAdmin, RoleRequirement.Required, RoleHolderKind.Group, "checker"),
+            new ApplicationRoleSetting(BuiltInRoleTypes.UserAdmin, RoleRequirement.Optional, RoleHolderKind.Person, "new-user-admin"),
+        ]);
+        var application = CatalogApplication.Register("crm3", "CRM", settings);
+        var request = ApplicationSettingsRequest.Propose(Guid.NewGuid(), application, "maker", "Ready", Now);
+        Should.Throw<ApplicationRefusedException>(() => request.Approve("new-user-admin", null, application, Now)).Refusal.ShouldBe(ApplicationRefusal.HolderCannotDecide);
+        Should.Throw<ApplicationRefusedException>(() => request.Reject("new-user-admin", "No", application, Now)).Refusal.ShouldBe(ApplicationRefusal.HolderCannotDecide);
+        request.State.ShouldBe(SecondPersonState.Proposed);
+        application.CurrentActive.ShouldBeNull();
+
+        // A group id equal to someone's id is not a person holder: groups are checked when they are resolved (stage 4).
+        request.Approve("checker", null, application, Now);
+        application.CurrentActive.ShouldNotBeNull();
+    }
+
+    /// <summary>A refused approval changes nothing: the request stays proposed and no version moves (review finding L6).</summary>
+    [Fact]
+    public void ARefusedApprovalChangesNothing()
+    {
+        var application = CatalogApplication.Register("hr2", "HR", Settings());
+        var request = ApplicationSettingsRequest.Propose(Guid.NewGuid(), application, "maker", "Ready", Now);
+        application.UpdateDraft(Settings(owner: "owner-2"));
+        Should.Throw<ApplicationRefusedException>(() => request.Approve("checker", "x", application, Now)).Refusal.ShouldBe(ApplicationRefusal.DraftChanged);
+        request.State.ShouldBe(SecondPersonState.Proposed);
+        request.Checker.ShouldBeNull();
+        application.CurrentDraft.ShouldNotBeNull().State.ShouldBe(SettingsVersionState.Draft);
     }
 
     [Fact]
@@ -127,12 +161,12 @@ public sealed class ApplicationCatalogDomainTests
     public void ANewVersionSupersedesTheActiveOne()
     {
         var application = CatalogApplication.Register("mail", "Mail", Settings());
-        Should.Throw<ApplicationRefusedException>(() => application.StartNewDraft(Settings())).Refusal.ShouldBe(ApplicationRefusal.DraftExists);
+        Should.Throw<ApplicationRefusedException>(() => application.StartNewDraft(Settings(), 1)).Refusal.ShouldBe(ApplicationRefusal.DraftExists);
         ApplicationSettingsRequest.Propose(Guid.NewGuid(), application, "maker", "Ready", Now).Approve("checker", null, application, Now);
 
-        var next = application.StartNewDraft(Settings(owner: "owner-2"));
+        var next = application.StartNewDraft(Settings(owner: "owner-2"), highestVersionNumber: 1);
         next.VersionNumber.ShouldBe(2);
-        Should.Throw<ApplicationRefusedException>(() => application.StartNewDraft(Settings())).Refusal.ShouldBe(ApplicationRefusal.DraftExists);
+        Should.Throw<ApplicationRefusedException>(() => application.StartNewDraft(Settings(), 2)).Refusal.ShouldBe(ApplicationRefusal.DraftExists);
         var request = ApplicationSettingsRequest.Propose(Guid.NewGuid(), application, "maker", "New owner", Now);
         Should.Throw<ApplicationRefusedException>(() => request.Approve("owner-2", null, application, Now)).Refusal.ShouldBe(ApplicationRefusal.OwnerCannotDecide);
         request.Approve("owner-1", null, application, Now);
@@ -147,7 +181,7 @@ public sealed class ApplicationCatalogDomainTests
         var application = CatalogApplication.Register("wiki", "Wiki", Settings());
         var request = ApplicationSettingsRequest.Propose(Guid.NewGuid(), application, "maker", "Ready", Now);
         request.Withdraw("maker", null, Now);
-        Should.Throw<ApplicationRefusedException>(() => application.StartNewDraft(Settings())).Refusal.ShouldBe(ApplicationRefusal.DraftExists);
+        Should.Throw<ApplicationRefusedException>(() => application.StartNewDraft(Settings(), 1)).Refusal.ShouldBe(ApplicationRefusal.DraftExists);
     }
 
     [Fact]

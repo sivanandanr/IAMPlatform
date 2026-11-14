@@ -176,6 +176,11 @@ public sealed class ApplicationApiParityTests(ParityDatabase db) : IDisposable
         var roles = Enumerable.Range(0, 33).Select(i => new { roleTypeCode = $"type_{i}", requirement = "Optional" }).ToArray();
         using var response = await PostAsync(admin, Applications, new { key = NewKey("many"), displayName = "X", settings = new { owner = "owner-1", roles } });
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+
+        // Refused for the count itself (the field validator), not for the unknown role type codes.
+        var errors = (await ReadAsync(response)).GetProperty("errors");
+        errors.EnumerateObject().Select(e => e.Name).ShouldContain(n => n.EndsWith("roles", StringComparison.OrdinalIgnoreCase));
+        errors.EnumerateObject().Select(e => e.Name).ShouldNotContain(n => n.Contains("roleTypeCode", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

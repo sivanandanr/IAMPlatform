@@ -153,8 +153,6 @@ namespace IAM.Persistence.SqlServer.Migrations.Catalog
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Code");
-
                     b.ToTable("ApplicationRoleType", "catalog", t =>
                         {
                             t.HasTrigger("TR_ApplicationRoleType_Guarded");

@@ -177,9 +177,6 @@ namespace IAM.Persistence.PostgreSql.Migrations.Catalog
                     b.HasKey("Id")
                         .HasName("pk_application_role_type");
 
-                    b.HasIndex("Code")
-                        .HasDatabaseName("ix_application_role_type_code");
-
                     b.ToTable("application_role_type", "catalog", t =>
                         {
                             t.HasTrigger("tr_application_role_type_guarded");

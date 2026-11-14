@@ -83,7 +83,8 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         type.Property(x => x.DecisionReason).HasMaxLength(1000);
         type.Ignore(x => x.IsUsable);
         type.Ignore(x => x.HoldsCode);
-        type.HasIndex(x => x.Code);
+
+        // Codes are looked up through the filtered unique index on live codes (hand-written in the ApplicationCatalog migrations).
     }
 }
 

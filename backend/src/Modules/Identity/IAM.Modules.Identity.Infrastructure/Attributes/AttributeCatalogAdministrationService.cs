@@ -238,26 +238,10 @@ public sealed class AttributeCatalogAdministrationService(
             throw;
         }
 
-        // Hold the version changes back (marking an entry unchanged restores its loaded values), then apply exactly what
-        // the domain decided, one step at a time. Publish changes only State (both versions) and PublishedByRequestId (draft).
+        // The decided request first, then the retired version, then the published one (OrderedSave).
         var published = definition.Versions.Single(v => v.PublishedByRequestId == request.Id);
-        var decided = db.ChangeTracker.Entries<AttributeDefinitionVersion>()
-            .Where(e => e.State == EntityState.Modified)
-            .Select(e => (Entry: e, e.Entity.State, e.Entity.PublishedByRequestId))
-            .ToList();
-        foreach (var (entry, _, _) in decided)
-        {
-            entry.State = EntityState.Unchanged;
-        }
-
         Apply(row, request);
-        await SaveAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var (entry, state, publishedBy) in decided.OrderBy(d => ReferenceEquals(d.Entry.Entity, published) ? 1 : 0))
-        {
-            entry.Property(v => v.State).CurrentValue = state;
-            entry.Property(v => v.PublishedByRequestId).CurrentValue = publishedBy;
-            await SaveAsync(cancellationToken).ConfigureAwait(false);
-        }
+        await db.SaveVersionsInOrderAsync(published, SaveAsync, cancellationToken).ConfigureAwait(false);
 
         var record = RequestRecord(AttributeAuditActions.PublishApproved, definition, request, request.DecisionReason);
         record = record with
