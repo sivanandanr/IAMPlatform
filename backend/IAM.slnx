@@ -19,6 +19,9 @@
     <Project Path="src/Host/IAM.Api/IAM.Api.csproj" />
     <Project Path="src/Host/IAM.Bff/IAM.Bff.csproj" />
   </Folder>
+  <Folder Name="/src/Workers/">
+    <Project Path="src/Workers/IAM.Workers.Workflow/IAM.Workers.Workflow.csproj" />
+  </Folder>
   <Folder Name="/src/Tools/">
     <Project Path="src/Tools/IAM.Tools.AccessBootstrap/IAM.Tools.AccessBootstrap.csproj" />
   </Folder>

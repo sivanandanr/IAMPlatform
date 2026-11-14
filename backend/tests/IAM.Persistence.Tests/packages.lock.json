@@ -1442,6 +1442,20 @@
           "IAM.Persistence.SqlServer": "[1.0.0, )"
         }
       },
+      "iam.workers.workflow": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
+          "IAM.Modules.Audit.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Catalog.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Organization.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Workflow.Application": "[1.0.0, )",
+          "IAM.Modules.Workflow.Infrastructure": "[1.0.0, )",
+          "IAM.Persistence.PostgreSql": "[1.0.0, )",
+          "IAM.Persistence.SqlServer": "[1.0.0, )"
+        }
+      },
       "FluentValidation": {
         "type": "CentralTransitive",
         "requested": "[12.2.0, )",

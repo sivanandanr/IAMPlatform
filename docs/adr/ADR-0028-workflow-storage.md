@@ -1,5 +1,5 @@
 # ADR-0028: Workflow storage as a replayed action log
-Status: Proposed (decisions taken by the owner as DL-072 and DL-073) — stage 5 slices 1 and 2 implemented; human sign-off pending | Date: 2026-11-14 | Decision owners: IAM Domain / Workflow lead, Database Architect, Security Architect (named approvers TBD)
+Status: Proposed (decisions taken by the owner as DL-072 to DL-074) — stage 5 implemented; human sign-off pending | Date: 2026-11-14 | Decision owners: IAM Domain / Workflow lead, Database Architect, Security Architect (named approvers TBD)
 
 Source: ADR-0005 (durable approval state machine, "persisted in the Workflow module's tables with optimistic concurrency"), ADR-0017 (persistence conventions), ADR-0018 (audit atomicity), IAM-WF-001, -004, -006, -009; DL-048, DL-068 to DL-072; R-032, R-036; CLAUDE.md rules 3, 9 and 10. Drafted by Claude Code.
 
@@ -26,6 +26,12 @@ Option 1 (DL-072a).
 - The inbox is the `ApprovalTask` table: who can act on which active level now, rebuilt for the instance in each action's transaction. It is only a lookup.
 - Bodies are typed records that refuse unknown fields (so there is no `onBehalfOf`, DL-073e), with FluentValidation filters, a 64 KB body limit and the write rate limit. Every write names the instance version; approve and complete carry client ids. Refusals map to 403, 409 or 422 by a fixed table, with the refusal code only.
 
+## Timeout worker (stage 5 slice 3, DL-074)
+- `IAM.Workers.Workflow` is a separate executable with no HTTP surface (ADR-0001). It composes the Workflow, Catalog, Organization and Audit Infrastructure, needs `IAM_DB_PROVIDER` and `ConnectionStrings:workflow`, `catalog` and `organization`, and refuses to start without them or with settings out of range.
+- Every `Workflow:Timeouts:IntervalSeconds` it takes up to `BatchSize` open instances whose `NextDeadlineUtc` has passed, earliest first, and calls `ApplyTimeoutsAsync` for each in its own scope: the same replay check, transaction, opened-level resolution and audit as any action, as `system:workflow-timeouts`, at the server's time. Every permission check says no.
+- Two workers, or a worker and an API call, can meet on one instance: the version check refuses the second save, and the instance is due again next pass. A damaged instance is audited once and set aside until restart.
+- Applying timeouts that change nothing is no longer stored.
+
 ## Security and privacy impact
 - Database guards on both engines: action and history rows are append-only and numbered without gaps (action versions never go back, the first action is the binding); the summary row's id, request item and people are immutable, it only moves forward, and a closed instance never changes state; nothing is deleted; PostgreSQL refuses TRUNCATE.
 - The audit trail holds each action's inputs (binding, route, decisions, resolutions with their evidence). These contain sign-in ids and reasons, like the rest of the audit trail, and no attribute values.
@@ -45,6 +51,5 @@ New `workflow` schema and runtime login; the API needs `ConnectionStrings:workfl
 
 ## Open questions and approvals
 - Slice 2: the API, with the reading rule for participants and `workflow.instances.read`.
-- Slice 3: the timeout worker.
 - Engine versioning for replay, a repair path for damaged instances, the outbox event for provisioning, and the Request module.
 - Independent security review and human sign-off.

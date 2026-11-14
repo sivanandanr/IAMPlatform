@@ -155,6 +155,8 @@ public sealed class WorkflowParityTests(ParityDatabase db)
 
         var early = await Service(null, clock).ApplyTimeoutsAsync(id, started.Version, Ct);
         early.State.ShouldBe("InProgress", "nothing has expired yet");
+        early.Version.ShouldBe(started.Version);
+        (await CountAsync("ApprovalAction", id)).ShouldBe(2, "timeouts that change nothing aren't stored (DL-074)");
         clock.Advance(TimeSpan.FromHours(4));
         var late = await Service(null, clock).ApplyTimeoutsAsync(id, early.Version, Ct);
         late.State.ShouldBe("Rejected");

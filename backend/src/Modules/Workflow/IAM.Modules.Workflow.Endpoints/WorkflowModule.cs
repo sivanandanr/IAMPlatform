@@ -1,10 +1,6 @@
-using IAM.Modules.Workflow.Application.Approvers;
 using IAM.Modules.Workflow.Infrastructure;
-using IAM.Modules.Workflow.Infrastructure.Approvers;
 using Microsoft.AspNetCore.Routing;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace IAM.Modules.Workflow.Endpoints;
 
@@ -18,7 +14,7 @@ public static class WorkflowModule
     public const string RoutePrefix = "/api/workflow";
 
     /// <summary>The configured fallback workgroup's key (DL-068c); <c>iam_managers</c> when not set.</summary>
-    public const string FallbackWorkgroupSetting = "Workflow:FallbackWorkgroup";
+    public const string FallbackWorkgroupSetting = WorkflowInfrastructure.FallbackWorkgroupSetting;
 
     /// <summary>
     /// Registers approver resolution (DL-069) and the escalation permission gate (DL-070). It reads the Catalog and Organization contracts, so the host must also add
@@ -27,10 +23,6 @@ public static class WorkflowModule
     public static IServiceCollection AddWorkflowModule(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
-        services.TryAddSingleton(sp => new ApproverResolutionSettings(sp.GetRequiredService<IConfiguration>()[FallbackWorkgroupSetting]));
-        services.TryAddScoped<IApproverResolver, ApproverResolver>();
-        services.TryAddSingleton(TimeProvider.System);
-        services.TryAddScoped<IApprovalEscalation, ApprovalEscalationService>();
         services.AddWorkflowInfrastructure();
         services.AddExceptionHandler<WorkflowExceptionHandler>();
         services.AddSingleton<FluentValidation.IValidator<DecisionBody>, DecisionBodyValidator>();
