@@ -361,7 +361,10 @@
       "iam.modules.catalog.endpoints": {
         "type": "Project",
         "dependencies": {
+          "FluentValidation": "[12.2.0, )",
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
           "IAM.Modules.Catalog.Application": "[1.0.0, )",
           "IAM.Modules.Catalog.Contracts": "[1.0.0, )",
           "IAM.Modules.Catalog.Infrastructure": "[1.0.0, )"

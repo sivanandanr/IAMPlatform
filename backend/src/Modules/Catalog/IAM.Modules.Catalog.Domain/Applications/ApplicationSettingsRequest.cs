@@ -65,7 +65,7 @@ public sealed class ApplicationSettingsRequest
             throw new ApplicationRefusedException(ApplicationRefusal.RequiredRoleEmpty);
         }
 
-        var decision = Shared(() => SecondPersonDecision.Propose(maker, reason, now));
+        var decision = CatalogSecondPerson.Shared(() => SecondPersonDecision.Propose(maker, reason, now));
         return new ApplicationSettingsRequest(id, application.Id, draft.Id, draft.VersionNumber, draft.ContentHash, draft.Owner, decision);
     }
 
@@ -106,64 +106,49 @@ public sealed class ApplicationSettingsRequest
         return new ApplicationSettingsRequest(id, applicationId, versionId, versionNumber, contentHash, proposedOwner, decision);
     }
 
-    /// <summary>Refuses unless <paramref name="checker"/> could decide now: still proposed, not the maker, not the proposed owner.</summary>
-    public void RequireDecider(string checker)
+    /// <summary>
+    /// Refuses unless <paramref name="checker"/> could decide now: still proposed, not the maker, not the proposed owner, and
+    /// not named as a person holding a role in the settings the request names (DL-067a; group holders are checked when groups
+    /// are resolved, stage 4).
+    /// </summary>
+    public void RequireDecider(string checker, Application application)
     {
-        Shared(() => _decision.RequireDecider(checker));
+        ArgumentNullException.ThrowIfNull(application);
+        CatalogSecondPerson.Shared(() => _decision.RequireDecider(checker));
         if (string.Equals(checker, ProposedOwner, StringComparison.Ordinal))
         {
             throw new ApplicationRefusedException(ApplicationRefusal.OwnerCannotDecide);
         }
-    }
 
-    /// <summary>Approves and activates the named draft (superseding the active version). The caller stores both together.</summary>
-    public void Approve(string checker, string? reason, Application application, DateTimeOffset now)
-    {
-        ArgumentNullException.ThrowIfNull(application);
-        RequireDecider(checker);
-        Shared(() => SecondPersonDecision.RequireOptionalReason(reason));
         if (application.Id != ApplicationId)
         {
             throw new ApplicationRefusedException(ApplicationRefusal.InvalidRecord);
         }
 
+        if (application.Versions.SingleOrDefault(v => v.Id == SettingsVersionId) is { } version && version.NamesPersonHolder(checker))
+        {
+            throw new ApplicationRefusedException(ApplicationRefusal.HolderCannotDecide);
+        }
+    }
+
+    /// <summary>
+    /// Approves and activates the named draft (superseding the active version). Every check runs before anything changes,
+    /// so a refusal leaves the request and the application as they were. The caller stores both together.
+    /// </summary>
+    public void Approve(string checker, string? reason, Application application, DateTimeOffset now)
+    {
+        RequireDecider(checker, application);
+        CatalogSecondPerson.Shared(() => SecondPersonDecision.RequireOptionalReason(reason));
+        application.RequireActivatable(VersionNumber, ContentHash);
+        CatalogSecondPerson.Shared(() => _decision.Approve(checker, reason, now));
         application.Activate(VersionNumber, ContentHash, Id);
-        Shared(() => _decision.Approve(checker, reason, now));
     }
 
-    public void Reject(string checker, string? reason, DateTimeOffset now)
+    public void Reject(string checker, string? reason, Application application, DateTimeOffset now)
     {
-        RequireDecider(checker);
-        Shared(() => _decision.Reject(checker, reason, now));
+        RequireDecider(checker, application);
+        CatalogSecondPerson.Shared(() => _decision.Reject(checker, reason, now));
     }
 
-    public void Withdraw(string actor, string? reason, DateTimeOffset now) => Shared(() => _decision.Withdraw(actor, reason, now));
-
-    internal static T Shared<T>(Func<T> rule)
-    {
-        try
-        {
-            return rule();
-        }
-        catch (SecondPersonRefusedException ex)
-        {
-            throw new ApplicationRefusedException(Map(ex.Refusal), ex);
-        }
-    }
-
-    internal static void Shared(Action rule) => Shared(() =>
-    {
-        rule();
-        return true;
-    });
-
-    private static ApplicationRefusal Map(SecondPersonRefusal? refusal) => refusal switch
-    {
-        SecondPersonRefusal.NotProposed => ApplicationRefusal.NotProposed,
-        SecondPersonRefusal.MakerCannotDecide => ApplicationRefusal.MakerCannotDecide,
-        SecondPersonRefusal.NotMaker => ApplicationRefusal.NotMaker,
-        SecondPersonRefusal.InvalidReason => ApplicationRefusal.InvalidReason,
-        SecondPersonRefusal.InvalidPerson => ApplicationRefusal.NotAllowed,
-        _ => ApplicationRefusal.InvalidRecord,
-    };
+    public void Withdraw(string actor, string? reason, DateTimeOffset now) => CatalogSecondPerson.Shared(() => _decision.Withdraw(actor, reason, now));
 }

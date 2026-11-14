@@ -8,10 +8,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace IAM.Modules.Catalog.Infrastructure;
 
-/// <summary>
-/// Registers the application catalog (DL-066). Not yet called by the API host: registering a module makes the host require
-/// its connection string, so this is wired in with the endpoints (stage 3, slice 2).
-/// </summary>
+/// <summary>Registers the application catalog (DL-066). Called by <c>CatalogModule</c>; the host then needs <c>ConnectionStrings:catalog</c>.</summary>
 public static class CatalogInfrastructure
 {
     public static IServiceCollection AddCatalogInfrastructure(this IServiceCollection services)

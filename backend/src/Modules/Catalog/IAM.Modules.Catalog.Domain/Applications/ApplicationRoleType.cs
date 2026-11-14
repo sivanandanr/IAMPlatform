@@ -46,14 +46,14 @@ public sealed class ApplicationRoleType
     {
         CatalogRules.ValidateKey(code, "Code");
         CatalogRules.ValidateDisplayName(displayName, CatalogRules.RoleTypeDisplayNameMaxLength, "DisplayName");
-        var decision = ApplicationSettingsRequest.Shared(() => SecondPersonDecision.Propose(maker, reason, now));
+        var decision = CatalogSecondPerson.Shared(() => SecondPersonDecision.Propose(maker, reason, now));
         var type = new ApplicationRoleType { Id = Guid.CreateVersion7(), Code = code, DisplayName = displayName };
         type.CopyFrom(decision);
         return type;
     }
 
     /// <summary>Refuses unless <paramref name="checker"/> could decide now: still proposed and not the maker.</summary>
-    public void RequireDecider(string checker) => ApplicationSettingsRequest.Shared(() => Decision().RequireDecider(checker));
+    public void RequireDecider(string checker) => CatalogSecondPerson.Shared(() => Decision().RequireDecider(checker));
 
     public void Approve(string checker, string? reason, DateTimeOffset now) => Decide(d => d.Approve(checker, reason, now));
 
@@ -80,7 +80,7 @@ public sealed class ApplicationRoleType
     private void Decide(Action<SecondPersonDecision> step)
     {
         var decision = Decision();
-        ApplicationSettingsRequest.Shared(() => step(decision));
+        CatalogSecondPerson.Shared(() => step(decision));
         CopyFrom(decision);
     }
 

@@ -7,6 +7,7 @@ using IAM.Modules.Catalog.Application.Applications;
 using IAM.Modules.Catalog.Domain.Applications;
 using IAM.Modules.Catalog.Infrastructure.Applications;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using Shouldly;
 
 namespace IAM.Persistence.Tests.Parity;
@@ -27,9 +28,13 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
 
     private static readonly FakePermissions DefaultPermissions = new(
         (Author, CatalogAuditActions.ManageAction),
+        (Author, CatalogAuditActions.ReadAction),
         (OtherAuthor, CatalogAuditActions.ManageAction),
+        (OtherAuthor, CatalogAuditActions.ReadAction),
         (Checker, CatalogAuditActions.ApproveAction),
-        (OwnerChecker, CatalogAuditActions.ApproveAction));
+        (Checker, CatalogAuditActions.ReadAction),
+        (OwnerChecker, CatalogAuditActions.ApproveAction),
+        (OwnerChecker, CatalogAuditActions.ReadAction));
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -40,7 +45,9 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
     [Fact]
     public async Task TheMigrationAppliesOnceAndSeedsTheBuiltInRoleTypes()
     {
-        db.CatalogFirstRunApplied.ShouldHaveSingleItem().ShouldEndWith("_ApplicationCatalog");
+        db.CatalogFirstRunApplied.Count.ShouldBe(2);
+        db.CatalogFirstRunApplied[0].ShouldEndWith("_ApplicationCatalog");
+        db.CatalogFirstRunApplied[1].ShouldEndWith("_ApplicationCatalogHardening");
         db.CatalogSecondRunPending.ShouldBeEmpty();
 
         var tables = IsSqlServer
@@ -133,13 +140,29 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
         await Refused(Checker, ApplicationRefusal.MakerNoLongerAllowed, permissions: new FakePermissions((Checker, CatalogAuditActions.ApproveAction)));
 
         // Someone who wrote the draft can't approve it, even holding the approve permission now.
-        var both = new FakePermissions((OtherAuthor, CatalogAuditActions.ManageAction), (OtherAuthor, CatalogAuditActions.ApproveAction), (Author, CatalogAuditActions.ManageAction));
+        var both = new FakePermissions(
+            (OtherAuthor, CatalogAuditActions.ManageAction), (OtherAuthor, CatalogAuditActions.ApproveAction), (OtherAuthor, CatalogAuditActions.ReadAction),
+            (Author, CatalogAuditActions.ManageAction), (Author, CatalogAuditActions.ReadAction));
         var edited = await RegisterAsync(NewKey("hr2"), as_: OtherAuthor);
         var second = await ProposeAsync(edited.Id);
         await using (var scope = Service(OtherAuthor, both))
         {
             (await Should.ThrowAsync<ApplicationRefusedException>(() => scope.Service.ApproveAsync(second.Id, second.ContentHash, null, Ct)))
-                .Refusal.ShouldBe(ApplicationRefusal.MakerCannotDecide);
+                .Refusal.ShouldBe(ApplicationRefusal.MakerCannotDecide, "the draft's creator");
+        }
+
+        // The last editor too: created by the author, edited by someone who now holds the approve permission.
+        var lastEdited = await RegisterAsync(NewKey("hr3"));
+        await using (var scope = Service(OtherAuthor, both))
+        {
+            await scope.Service.UpdateDraftAsync(lastEdited.Id, lastEdited.Draft!.ConcurrencyVersion, Settings(owner: "owner-9"), Ct);
+        }
+
+        var third = await ProposeAsync(lastEdited.Id);
+        await using (var scope = Service(OtherAuthor, both))
+        {
+            (await Should.ThrowAsync<ApplicationRefusedException>(() => scope.Service.ApproveAsync(third.Id, third.ContentHash, null, Ct)))
+                .Refusal.ShouldBe(ApplicationRefusal.MakerCannotDecide, "the draft's last editor");
         }
 
         (await AuditCountAsync(registered.Id, CatalogAuditActions.ChangeRefused, "Denied")).ShouldBe(5);
@@ -150,6 +173,78 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
             (await scope.Service.RejectAsync(proposed.Id, "Wrong owner", Ct)).State.ShouldBe("Rejected");
             (await Should.ThrowAsync<ApplicationRefusedException>(() => scope.Service.ApproveAsync(proposed.Id, proposed.ContentHash, null, Ct)))
                 .Refusal.ShouldBe(ApplicationRefusal.NotProposed);
+        }
+    }
+
+    /// <summary>DL-067a: a checker named as a person holding a role in the settings can't approve or reject them.</summary>
+    [Fact]
+    public async Task APersonNamedAsARoleHolderCannotDecide()
+    {
+        var settings = new ApplicationSettingsInput("owner-1",
+        [
+            new ApplicationRoleInput("it_admin", RoleRequirement.Required, RoleHolderKind.Group, "grp-1"),
+            new ApplicationRoleInput("user_admin", RoleRequirement.Optional, RoleHolderKind.Person, Checker),
+        ]);
+        var registered = await RegisterAsync(NewKey("holder"), settings);
+        var proposed = await ProposeAsync(registered.Id);
+        await using (var scope = Service(Checker))
+        {
+            (await Should.ThrowAsync<ApplicationRefusedException>(() => scope.Service.ApproveAsync(proposed.Id, proposed.ContentHash, null, Ct)))
+                .Refusal.ShouldBe(ApplicationRefusal.HolderCannotDecide);
+            (await Should.ThrowAsync<ApplicationRefusedException>(() => scope.Service.RejectAsync(proposed.Id, "Mine", Ct)))
+                .Refusal.ShouldBe(ApplicationRefusal.HolderCannotDecide);
+        }
+
+        (await AuditCountAsync(registered.Id, CatalogAuditActions.ChangeRefused, "Denied")).ShouldBe(2);
+        var payload = IsSqlServer ? "[PayloadCanonical]" : "payload_canonical";
+        var table = IsSqlServer ? "[audit].[AuditEvent]" : "audit.audit_event";
+        var action = IsSqlServer ? "[Action]" : "action";
+        Convert.ToInt64(await db.ScalarAsync(db.AuditAppConnectionString, $"SELECT COUNT(*) FROM {table} WHERE {action} = '{CatalogAuditActions.ChangeRefused}' AND {payload} LIKE '%{proposed.Id}%'", Ct), CultureInfo.InvariantCulture)
+            .ShouldBe(2L, "each refused decision names the request it refused");
+        await using (var scope = Service(OwnerChecker))
+        {
+            (await scope.Service.ApproveAsync(proposed.Id, proposed.ContentHash, null, Ct)).State.ShouldBe("Approved");
+        }
+    }
+
+    /// <summary>
+    /// Review finding: an edit and a proposal both bump the application row, so an edit working from a copy read before a
+    /// proposal fails instead of changing a draft under it. The stale copy is held by a scope that loaded it first.
+    /// </summary>
+    [Fact]
+    public async Task AnEditRacingAProposalLoses()
+    {
+        var registered = await RegisterAsync(NewKey("race"));
+        await using (var stale = Service())
+        {
+            await stale.LoadApplicationAsync(registered.Id);
+            var proposed = await ProposeAsync(registered.Id);
+            await using (var scope = Service())
+            {
+                await scope.Service.WithdrawAsync(proposed.Id, null, Ct);
+            }
+
+            await Should.ThrowAsync<ApplicationConflictException>(() =>
+                stale.Service.UpdateDraftAsync(registered.Id, registered.Draft!.ConcurrencyVersion, Settings(owner: "owner-2"), Ct));
+        }
+
+        // The draft's authors are untouched by the proposal: it still names its creator, not the proposer's bump.
+        await using (var scope = Service())
+        {
+            var found = (await scope.Service.FindAsync(registered.Key, Ct)).ShouldNotBeNull();
+            found.ConcurrencyVersion.ShouldBeGreaterThan(registered.ConcurrencyVersion, "the proposal bumped the application row");
+            found.Draft.ShouldNotBeNull().ConcurrencyVersion.ShouldBe(registered.Draft!.ConcurrencyVersion, "the draft row is untouched");
+        }
+
+        // A draft changed under a pending request (only possible by SQL) is not shown as what the request proposes.
+        var second = await ProposeAsync(registered.Id);
+        await db.ExecuteAsync(
+            db.CatalogAppConnectionString,
+            $"UPDATE {Table("ApplicationSettingsVersion")} SET {Col("ContentHash")} = '{new string('b', 64)}' WHERE {Col("Id")} = '{registered.Draft!.VersionId}'",
+            Ct);
+        await using (var scope = Service(Checker))
+        {
+            (await scope.Service.ReviewRequestAsync(second.Id, Ct)).ShouldNotBeNull().Draft.ShouldBeNull();
         }
     }
 
@@ -171,7 +266,7 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
 
         started.Active.ShouldNotBeNull().Owner.ShouldBe("owner-1");
         started.Draft.ShouldNotBeNull().VersionNumber.ShouldBe(2);
-        (await AuditCountAsync(registered.Id, CatalogAuditActions.ChangeRefused, "Denied")).ShouldBe(1, "a refused new draft is audited");
+        (await AuditCountAsync(registered.Id, CatalogAuditActions.ChangeRefused, "Denied")).ShouldBe(2, "the refused edit (no draft) and the refused new draft");
 
         var proposed = await ProposeAsync(registered.Id);
         await using (var scope = Service())
@@ -206,9 +301,10 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
     {
         var registered = await RegisterAsync(NewKey("wiki"));
         var proposed = await ProposeAsync(registered.Id);
+        var refusedKey = NewKey("no");
         await using (var scope = Service("outsider"))
         {
-            (await Should.ThrowAsync<ApplicationRefusedException>(() => scope.Service.RegisterAsync(new RegisterApplicationRequest(NewKey("no"), "No", Settings()), Ct)))
+            (await Should.ThrowAsync<ApplicationRefusedException>(() => scope.Service.RegisterAsync(new RegisterApplicationRequest(refusedKey, "No", Settings()), Ct)))
                 .Refusal.ShouldBe(ApplicationRefusal.NotAllowed);
             (await Should.ThrowAsync<ApplicationRefusedException>(() => scope.Service.RenameAsync(registered.Id, registered.ConcurrencyVersion, "No", Ct)))
                 .Refusal.ShouldBe(ApplicationRefusal.NotAllowed);
@@ -221,6 +317,12 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
             (await Should.ThrowAsync<ApplicationRefusedException>(() => scope.Service.RejectAsync(proposed.Id, "No", Ct)))
                 .Refusal.ShouldBe(ApplicationRefusal.NotAllowed);
             (await Should.ThrowAsync<ApplicationRefusedException>(() => scope.Service.ProposeRoleTypeAsync(NewKey("rt"), "No", "No", Ct)))
+                .Refusal.ShouldBe(ApplicationRefusal.NotAllowed);
+            (await Should.ThrowAsync<ApplicationRefusedException>(() => scope.Service.FindAsync(registered.Key, Ct)))
+                .Refusal.ShouldBe(ApplicationRefusal.NotAllowed, "reads check the read permission too");
+            (await Should.ThrowAsync<ApplicationRefusedException>(() => scope.Service.ReviewRequestAsync(proposed.Id, Ct)))
+                .Refusal.ShouldBe(ApplicationRefusal.NotAllowed);
+            (await Should.ThrowAsync<ApplicationRefusedException>(() => scope.Service.ListRoleTypesAsync(Ct)))
                 .Refusal.ShouldBe(ApplicationRefusal.NotAllowed);
         }
 
@@ -236,7 +338,12 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
         }
 
         (await AuditCountAsync(registered.Id, CatalogAuditActions.ChangeWithdrawn, "Succeeded")).ShouldBe(1);
-        (await AuditCountAsync(registered.Id, CatalogAuditActions.ChangeRefused, "Denied")).ShouldBe(3, "propose-side refusals: withdraw twice and reject");
+        (await AuditCountAsync(registered.Id, CatalogAuditActions.ChangeRefused, "Denied")).ShouldBe(6, "rename, edit, new draft, withdraw and reject by the outsider, and withdraw by another manager");
+        var payload = IsSqlServer ? "[PayloadCanonical]" : "payload_canonical";
+        var table = IsSqlServer ? "[audit].[AuditEvent]" : "audit.audit_event";
+        var action = IsSqlServer ? "[Action]" : "action";
+        Convert.ToInt64(await db.ScalarAsync(db.AuditAppConnectionString, $"SELECT COUNT(*) FROM {table} WHERE {action} = '{CatalogAuditActions.ChangeRefused}' AND {payload} LIKE '%{refusedKey}%'", Ct), CultureInfo.InvariantCulture)
+            .ShouldBe(1L, "a refused registration is audited too, by its key");
     }
 
     [Fact]
@@ -250,6 +357,12 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
         await using var stale = Service();
         await Should.ThrowAsync<ApplicationConflictException>(() => stale.Service.RenameAsync(registered.Id, registered.ConcurrencyVersion, "Other", Ct));
         (await AuditCountAsync(registered.Id, CatalogAuditActions.Renamed, "Succeeded")).ShouldBe(1);
+
+        // Frozen while a change is pending, so the reviewer approves the application they saw (review finding).
+        await ProposeAsync(registered.Id);
+        await using var pending = Service();
+        (await Should.ThrowAsync<ApplicationRefusedException>(() => pending.Service.RenameAsync(registered.Id, renamed.ConcurrencyVersion + 1, "Sandbox", Ct)))
+            .Refusal.ShouldBe(ApplicationRefusal.AlreadyPending);
     }
 
     // ---- Role types ---------------------------------------------------------------------------------------------
@@ -326,6 +439,65 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
                     .ShouldMatch("(?i)(cannot be deleted|immutable|second person|check|constraint)", sql);
             }
         }
+    }
+
+    /// <summary>
+    /// Review finding M2: on SQL Server foreign keys are checked before AFTER triggers, so rows something references are
+    /// refused by the key, not the trigger. These rows are referenced by nothing, so the trigger itself refuses them.
+    /// </summary>
+    [Fact]
+    public async Task UnreferencedRowsAreRefusedByTheTriggersThemselves()
+    {
+        ApplicationRoleTypeView type;
+        await using (var scope = Service())
+        {
+            type = await scope.Service.ProposeRoleTypeAsync(NewKey("lonely"), "Nobody uses this", "Test", Ct);
+        }
+
+        var registered = await RegisterAsync(NewKey("lonely_app"));
+        var withdrawn = await ProposeAsync(registered.Id);
+        await using (var scope = Service())
+        {
+            await scope.Service.WithdrawAsync(withdrawn.Id, null, Ct);
+        }
+
+        foreach (var login in Logins)
+        {
+            (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(login, $"DELETE FROM {Table("ApplicationRoleType")} WHERE {Col("Id")} = '{type.Id}'", Ct)))
+                .Message.ShouldContain("cannot be deleted", Case.Insensitive);
+            (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(login, $"DELETE FROM {Table("ApplicationSettingsRequest")} WHERE {Col("Id")} = '{withdrawn.Id}'", Ct)))
+                .Message.ShouldContain("cannot be deleted", Case.Insensitive);
+            (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(login, $"UPDATE {Table("ApplicationSettingsRequest")} SET {Col("State")} = 'Proposed', {Col("Checker")} = NULL, {Col("DecidedAtUtc")} = NULL WHERE {Col("Id")} = '{withdrawn.Id}'", Ct)))
+                .Message.ShouldContain("immutable", Case.Insensitive);
+        }
+
+        // PostgreSQL also refuses TRUNCATE of settings versions and their roles (SQL Server TRUNCATE fires no trigger: R-034).
+        if (!IsSqlServer)
+        {
+            foreach (var table in new[] { "application_settings_role", "application_settings_version", "application_settings_request", "application" })
+            {
+                (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(db.MigratorConnectionString, $"TRUNCATE catalog.{table} CASCADE", Ct)))
+                    .Message.ShouldMatch("(?i)(truncate|cannot be deleted|immutable)", table);
+            }
+        }
+    }
+
+    /// <summary>DL-067a in the database: a forged approved request decided by a person holder can't activate the settings.</summary>
+    [Fact]
+    public async Task ARoleHolderWhoApprovedCannotActivateBySql()
+    {
+        var settings = new ApplicationSettingsInput("owner-1",
+        [
+            new ApplicationRoleInput("it_admin", RoleRequirement.Required, RoleHolderKind.Person, "p-holder"),
+        ]);
+        var registered = await RegisterAsync(NewKey("holder_sql"), settings);
+        var draft = registered.Draft!;
+        var forged = await ForgeApprovedRequestAsync(registered.Id, draft.VersionId, 1, draft.ContentHash, "owner-1", checker: "p-holder");
+        (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(
+            db.CatalogAppConnectionString,
+            $"UPDATE {Table("ApplicationSettingsVersion")} SET {Col("State")} = 'Active', {Col("ActivatedByRequestId")} = '{forged}' WHERE {Col("Id")} = '{draft.VersionId}'",
+            Ct)))
+            .Message.ShouldContain("role holder", Case.Insensitive);
     }
 
     [Fact]
@@ -490,6 +662,11 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
     private sealed class ServiceScope(CatalogDbContext context, ApplicationCatalogAdministrationService service) : IAsyncDisposable
     {
         public ApplicationCatalogAdministrationService Service { get; } = service;
+
+        /// <summary>Loads and tracks the application now, so a later call in this scope works from this (possibly stale) copy.</summary>
+        public Task<IAM.Modules.Catalog.Domain.Applications.Application> LoadApplicationAsync(Guid id) => context.Applications
+            .Include(a => a.Versions).ThenInclude(v => v.Roles)
+            .SingleAsync(a => a.Id == id, TestContext.Current.CancellationToken);
 
         public ValueTask DisposeAsync() => context.DisposeAsync();
     }

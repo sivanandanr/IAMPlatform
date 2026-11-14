@@ -55,11 +55,13 @@ public enum ApplicationRefusal
     InvalidRecord = 9,
     AlreadyPending = 10,
     DraftExists = 11,
-    NothingActive = 12,
     MakerNoLongerAllowed = 13,
     RequiredRoleEmpty = 14,
     RoleTypeNotUsable = 15,
     RoleTypeExists = 16,
+
+    /// <summary>The checker is named as a person holding a role in the settings they would decide (DL-067a).</summary>
+    HolderCannotDecide = 17,
 }
 
 /// <summary>A catalog change was refused by a rule (see <see cref="ApplicationRefusal"/>).</summary>
@@ -198,4 +200,36 @@ public static partial class CatalogRules
 
     [GeneratedRegex("^[a-z][a-z0-9_]{1,63}\\z", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
     private static partial Regex KeyPattern();
+}
+
+/// <summary>Runs a shared second-person rule and reports its refusal as a catalog refusal code.</summary>
+internal static class CatalogSecondPerson
+{
+    internal static T Shared<T>(Func<T> rule)
+    {
+        try
+        {
+            return rule();
+        }
+        catch (SecondPersonRefusedException ex)
+        {
+            throw new ApplicationRefusedException(Map(ex.Refusal), ex);
+        }
+    }
+
+    internal static void Shared(Action rule) => Shared(() =>
+    {
+        rule();
+        return true;
+    });
+
+    private static ApplicationRefusal Map(SecondPersonRefusal? refusal) => refusal switch
+    {
+        SecondPersonRefusal.NotProposed => ApplicationRefusal.NotProposed,
+        SecondPersonRefusal.MakerCannotDecide => ApplicationRefusal.MakerCannotDecide,
+        SecondPersonRefusal.NotMaker => ApplicationRefusal.NotMaker,
+        SecondPersonRefusal.InvalidReason => ApplicationRefusal.InvalidReason,
+        SecondPersonRefusal.InvalidPerson => ApplicationRefusal.NotAllowed,
+        _ => ApplicationRefusal.InvalidRecord,
+    };
 }

@@ -1,5 +1,5 @@
 # ADR-0025: Application catalog — owner, application roles and second-person activation
-Status: Proposed (decisions taken by the owner as DL-066, 2026-11-14) — stage 3 slice 1 implemented; human sign-off pending | Date: 2026-11-14 | Decision owners: IAM Domain lead, Security Architect (named approvers TBD)
+Status: Proposed (decisions taken by the owner as DL-066, 2026-11-14) — stage 3 slices 1-2 implemented; human sign-off pending | Date: 2026-11-14 | Decision owners: IAM Domain lead, Security Architect (named approvers TBD)
 
 Source: Spec v3.2 Module 2.2 (onboarding: "Submitting needs a second person. The maker can't approve it."), 2.3 (Owner; "There is no business owner field"), IAM-FR-010 (application owner, technical custodian and entitlement owner distinguishable and independently assignable); `requirements.md` AR-2.1 to AR-2.4; DL-051, DL-052, DL-055(h, i), DL-066; CLAUDE.md rules 4, 5 and 11. Drafted by Claude Code.
 
@@ -20,6 +20,20 @@ Option 2 (DL-066). Reuses the reviewed attribute publishing design and the share
 - **Role types** (DL-066c): User Admin, IT Admin and Technical custodian are built in (fixed ids, seeded by the migration) and can't be removed or changed. A deployment's own type is proposed and is usable only after a second person approves it; nothing is deleted; a withdrawn or rejected type frees its code.
 - **Permissions** (DL-066d): `catalog.applications.read`, `.manage`, `.approve`; manage and approve are conflicting duties; new default roles Application administrator (read, manage) and Application checker (read, approve), an incompatible pair; Auditor reads.
 
+## HTTP API (stage 3 slice 2)
+- `/api/catalog/applications`: `GET {key}` (read), `POST` register, `PUT {id}/name`, `PUT {id}/draft`, `POST {id}/drafts`, `POST {id}/change-requests` (manage).
+- `/api/catalog/application-change-requests`: `GET {id}` returns the request with the draft it would activate (read); `POST {id}/approve` with the reviewed `contentHash` and `{id}/reject` (approve); `{id}/withdraw` (manage).
+- `/api/catalog/application-role-types`: `GET` list (read); `POST` propose and `{id}/withdraw` (manage); `{id}/approve` and `{id}/reject` (approve).
+- Every route names its action (`EndpointPermissionTests`) and the service checks it again. Bodies are narrow records that refuse unknown fields; enum values must be exact names (no numbers or other case); a reason is required to propose or reject; FluentValidation bounds lengths and counts (32 roles); 32 KB body limit (413) and the administration write rate limit. Failures are ProblemDetails with a field and rule or a refusal code, never values.
+
+## Review fixes (DL-067)
+- A person named as a role holder can't decide the settings that name them (`HolderCannotDecide`; trigger 51116 / PostgreSQL function). Group holders: stage 4.
+- Every refused write is audited (`catalog.application.change_refused`, `catalog.role_type.refused`), including a missing permission, with the request id on decision refusals; changes record a role snapshot (`code:Requirement:Kind:Id`), so the audit trail alone shows every appointment. Refused reads are audited by the endpoint's denial recorder.
+- Edits and proposals both bump the application row's version, so a racing edit fails and a pending request always names the draft as it is; the review shows the draft only if it still has the proposed hash. Renames are refused while a change is pending.
+- Reads check `catalog.applications.read` in the service. Loads take only the draft and active versions and the role types used; the role type list returns built-in, pending and approved types, at most 500.
+- Approval runs every check before changing anything. The ordered save is the shared `OrderedSave` helper (also used by attribute publishing).
+- `ApplicationCatalogHardening` migrations: the holder check on activation; PostgreSQL refuses TRUNCATE of settings versions and roles. SQL Server TRUNCATE fires no trigger and needs ALTER, which only the schema owner has (R-034).
+
 ## Security and privacy impact
 - Database guards (`ApplicationCatalog` migrations, both engines), so the Catalog app login can't bypass the service: a settings version becomes active only for an approved request with the same application, version, number, content hash and owner; not with an empty required role; not with a role type that isn't built in or approved. Active and superseded versions, their role rows and decided requests never change; requests, applications and role types are never deleted; a new role type row must be Proposed; built-in and decided types never change. CHECKs: state shapes (no self-decision, the proposed owner never decides), hex hashes, key formats, one pending request per application.
 - Remaining risk (R-034): the app login can still write a forged approved request whose details all match a draft, or supersede an active version, by SQL (same class as R-033). A draft's role rows can be changed by SQL while a request is pending; the trigger checks the hash column, not the rows. Group ids are not validated against a directory.
@@ -32,10 +46,10 @@ Hand-written CHECKs, filtered unique indexes and triggers on both engines; SQL S
 None: the catalog is central data; no connector is involved yet.
 
 ## Operational consequences and rollback
-New `catalog` schema and runtime login (`iam_app_catalog`, bootstrap script as other modules). The Down migrations drop the catalog with its history and are only valid where no catalog data matters; otherwise roll forward (DL-020). Existing deployments must add the new default roles through an access change. The module is not yet wired into the API host (slice 2).
+New `catalog` schema and runtime login (`iam_app_catalog`, bootstrap script as other modules); the API host now requires `ConnectionStrings:catalog` and refuses to start without it. The Down migrations drop the catalog with its history and are only valid where no catalog data matters; otherwise roll forward (DL-020). Existing deployments must add the new default roles through an access change.
 
 ## Tests / evidence
-`tests/IAM.Persistence.Tests/Catalog/ApplicationCatalogDomainTests` (keys, settings rules, hash, empty required roles, owner and maker can't decide, edited draft refused, supersede, role types); `Parity/ApplicationCatalogParityTests` on both engines (migration and seed, activation with audit, empty required role, every refusal path with audit, freeze while pending, owner change through a new version, permission checks, rename, role types, SQL refusals). Results are recorded in the PR.
+`tests/IAM.Persistence.Tests/Catalog/ApplicationCatalogDomainTests` (keys, settings rules, hash, empty required roles, owner and maker can't decide, edited draft refused, supersede, role types); `Parity/ApplicationCatalogParityTests` on both engines (migration and seed, activation with audit, empty required role, every refusal path with audit, freeze while pending, owner change through a new version, permission checks, rename, role types, SQL refusals); `Parity/ApplicationApiParityTests` through the real host on both engines (roles granted by access changes, activation by a checker who is not the owner, refusal codes, unknown fields, bad enum text, duplicate keys, too many roles, oversized bodies, role types); `IAM.Api.Tests/EndpointPermissionTests` (each route's action). Results are recorded in the PRs.
 
 ## Open questions and approvals
 - Retiring an application, AR-2.6 (empty optional roles at request time) and the "Application role" approver type: stage 4.
