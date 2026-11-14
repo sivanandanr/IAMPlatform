@@ -126,7 +126,7 @@ public sealed record ResolutionStep(
 /// </summary>
 public sealed record ApproverResolution(ResolutionOutcome Outcome, IReadOnlyList<PersonId> People, IReadOnlyList<ResolutionStep> Steps)
 {
-    /// <summary>A role, then the owner, then the fallback workgroup: three steps at most today.</summary>
+    /// <summary>A role, its workgroup, the owner, then the fallback workgroup: four steps at most today.</summary>
     public const int MaxSteps = 8;
 
     /// <summary>The outcome only: logging this object must not expose a person.</summary>

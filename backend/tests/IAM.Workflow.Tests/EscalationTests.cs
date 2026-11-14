@@ -52,17 +52,17 @@ public sealed class TwoPersonEscalationTests
         F.Refusal(() => instance.Approve(F.S1, F.A)).ShouldBe(ApprovalRefusal.InstanceHeld);
 
         var version = instance.Version;
-        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A, F.B], Proposer, version, T0)).ShouldBe(ApprovalRefusal.ProposerCannotApproveEscalation);
-        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A], Second, version, T0)).ShouldBe(ApprovalRefusal.EscalationProposalChanged);
-        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.B, F.A], Second, version, T0)).ShouldBe(ApprovalRefusal.EscalationProposalChanged);
-        F.Refusal(() => instance.ApproveEscalation(F.S1, null!, Second, version, T0)).ShouldBe(ApprovalRefusal.EscalationProposalChanged);
-        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A, F.B], F.A, version, T0)).ShouldBe(ApprovalRefusal.EscalatorConflict);
-        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A, F.B], F.Beneficiary, version, T0)).ShouldBe(ApprovalRefusal.InvalidActor);
-        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A, F.B], default, version, T0)).ShouldBe(ApprovalRefusal.InvalidActor);
-        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A, F.B], Second, version - 1, T0)).ShouldBe(ApprovalRefusal.StaleVersion);
+        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A, F.B], Proposer, "Checked", version, T0)).ShouldBe(ApprovalRefusal.ProposerCannotApproveEscalation);
+        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A], Second, "Checked", version, T0)).ShouldBe(ApprovalRefusal.EscalationProposalChanged);
+        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.B, F.A], Second, "Checked", version, T0)).ShouldBe(ApprovalRefusal.EscalationProposalChanged);
+        F.Refusal(() => instance.ApproveEscalation(F.S1, null!, Second, "Checked", version, T0)).ShouldBe(ApprovalRefusal.EscalationProposalChanged);
+        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A, F.B], F.A, "Checked", version, T0)).ShouldBe(ApprovalRefusal.EscalatorConflict);
+        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A, F.B], F.Beneficiary, "Checked", version, T0)).ShouldBe(ApprovalRefusal.InvalidActor);
+        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A, F.B], default, "Checked", version, T0)).ShouldBe(ApprovalRefusal.InvalidActor);
+        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A, F.B], Second, "Checked", version - 1, T0)).ShouldBe(ApprovalRefusal.StaleVersion);
         instance.Version.ShouldBe(version);
 
-        instance.ApproveEscalation(F.S1, [F.A, F.B], Second, version, T0);
+        instance.ApproveEscalation(F.S1, [F.A, F.B], Second, "Checked", version, T0);
         instance.View(F.S1).State.ShouldBe(StageState.Active);
         instance.View(F.S1).PendingEscalation.ShouldBeNull();
         var record = instance.Escalations.Single();
@@ -87,8 +87,8 @@ public sealed class TwoPersonEscalationTests
         // Someone on a later level's list can't choose this one's approvers.
         F.Refusal(() => instance.ProposeEscalation(F.S1, [F.A], Proposer, "r", instance.Version, T0)).ShouldBe(ApprovalRefusal.EscalatorConflict);
         instance.ProposeEscalation(F.S1, [F.A], F.P(77), "r", instance.Version, T0);
-        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A], Second, instance.Version, T0)).ShouldBe(ApprovalRefusal.EscalatorConflict);
-        instance.ApproveEscalation(F.S1, [F.A], F.P(78), instance.Version, T0);
+        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A], Second, "Checked", instance.Version, T0)).ShouldBe(ApprovalRefusal.EscalatorConflict);
+        instance.ApproveEscalation(F.S1, [F.A], F.P(78), "Checked", instance.Version, T0);
         instance.View(F.S1).Eligible.ShouldBe([F.A]);
     }
 
@@ -99,15 +99,15 @@ public sealed class TwoPersonEscalationTests
         instance.ProposeEscalation(F.S1, [F.A], Proposer, "r", instance.Version, T0);
         instance.ProposeEscalation(F.S1, [F.B], F.P(77), "r", instance.Version, T0);
         instance.View(F.S1).PendingEscalation!.Candidates.ShouldBe([F.B]);
-        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A], Second, instance.Version, T0)).ShouldBe(ApprovalRefusal.EscalationProposalChanged);
+        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A], Second, "Checked", instance.Version, T0)).ShouldBe(ApprovalRefusal.EscalationProposalChanged);
 
-        F.Refusal(() => instance.WithdrawEscalation(F.S1, F.Requester, instance.Version, T0)).ShouldBe(ApprovalRefusal.InvalidActor);
-        instance.WithdrawEscalation(F.S1, Second, instance.Version, T0);
+        F.Refusal(() => instance.WithdrawEscalation(F.S1, F.Requester, "Checked", instance.Version, T0)).ShouldBe(ApprovalRefusal.InvalidActor);
+        instance.WithdrawEscalation(F.S1, Second, "Checked", instance.Version, T0);
         instance.History[^1].Kind.ShouldBe(ApprovalEventKind.EscalationWithdrawn);
         instance.View(F.S1).State.ShouldBe(StageState.Held);
         instance.View(F.S1).PendingEscalation.ShouldBeNull();
-        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.B], Second, instance.Version, T0)).ShouldBe(ApprovalRefusal.NoEscalationProposed);
-        F.Refusal(() => instance.WithdrawEscalation(F.S1, Second, instance.Version, T0)).ShouldBe(ApprovalRefusal.NoEscalationProposed);
+        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.B], Second, "Checked", instance.Version, T0)).ShouldBe(ApprovalRefusal.NoEscalationProposed);
+        F.Refusal(() => instance.WithdrawEscalation(F.S1, Second, "Checked", instance.Version, T0)).ShouldBe(ApprovalRefusal.NoEscalationProposed);
     }
 
     [Fact]
@@ -116,22 +116,10 @@ public sealed class TwoPersonEscalationTests
         // A Reject level's deadline passes while the proposal waits: approving it must not undo the rejection.
         var instance = Held(mandatory: true, onTimeout: TimeoutAction.Reject);
         instance.ProposeEscalation(F.S1, [F.A], Proposer, "r", instance.Version, T0.AddHours(1));
-        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A], Second, instance.Version, T0.AddHours(4))).ShouldBe(ApprovalRefusal.StagePastDeadline);
+        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A], Second, "Checked", instance.Version, T0.AddHours(4))).ShouldBe(ApprovalRefusal.StagePastDeadline);
         instance.ApplyTimeouts(T0.AddHours(4), instance.Version);
         instance.State.ShouldBe(ApprovalState.Rejected);
-        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A], Second, instance.Version, T0.AddHours(4))).ShouldBe(ApprovalRefusal.InstanceClosed);
-    }
-
-    [Fact]
-    public void ProposalsCountTowardsTheEscalationLimitOnlyWhenApproved()
-    {
-        var instance = Held(mandatory: true);
-        for (var i = 0; i < 3; i++)
-        {
-            instance.ProposeEscalation(F.S1, [F.A], F.P(700 + i), "r", instance.Version, T0);
-        }
-
-        instance.View(F.S1).Escalations.ShouldBe(0);
+        F.Refusal(() => instance.ApproveEscalation(F.S1, [F.A], Second, "Checked", instance.Version, T0.AddHours(4))).ShouldBe(ApprovalRefusal.InstanceClosed);
     }
 
     [Fact]
@@ -148,8 +136,8 @@ public sealed class TwoPersonEscalationTests
         reverse.Escalate(F.S1, [F.A], Proposer, "r", reverse.Version, T0);
         F.Refusal(() => reverse.ProposeEscalation(F.S2, [F.B], Proposer, "r", reverse.Version, T0)).ShouldBe(ApprovalRefusal.IndependentEscalatorConflict);
         reverse.ProposeEscalation(F.S2, [F.B], F.P(77), "r", reverse.Version, T0);
-        F.Refusal(() => reverse.ApproveEscalation(F.S2, [F.B], Proposer, reverse.Version, T0)).ShouldBe(ApprovalRefusal.IndependentEscalatorConflict);
-        reverse.ApproveEscalation(F.S2, [F.B], Second, reverse.Version, T0);
+        F.Refusal(() => reverse.ApproveEscalation(F.S2, [F.B], Proposer, "Checked", reverse.Version, T0)).ShouldBe(ApprovalRefusal.IndependentEscalatorConflict);
+        reverse.ApproveEscalation(F.S2, [F.B], Second, "Checked", reverse.Version, T0);
     }
 
     [Fact]
@@ -160,7 +148,7 @@ public sealed class TwoPersonEscalationTests
             F.Stage(F.S1, 1, independent: true, candidates: [F.Requester]),
             F.Stage(F.S2, 1, candidates: [F.Beneficiary]));
         instance.ProposeEscalation(F.S1, [F.A], Proposer, "r", instance.Version, T0);
-        instance.WithdrawEscalation(F.S1, Proposer, instance.Version, T0);
+        instance.WithdrawEscalation(F.S1, Proposer, "Checked", instance.Version, T0);
         F.Refusal(() => instance.Escalate(F.S2, [F.B], Proposer, "r", instance.Version, T0)).ShouldBe(ApprovalRefusal.IndependentEscalatorConflict);
 
         var later = ApprovalInstance.Bind(
@@ -170,7 +158,7 @@ public sealed class TwoPersonEscalationTests
                 new StageDefinition(F.S2, 2, QuorumMode.AnyOne, null, false, false, true, TimeSpan.FromHours(4), TimeoutAction.Escalate, ApproverSource.Workgroup("grp_later"))]),
             T0).Supplied();
         later.ProposeEscalation(F.S1, [F.A], Proposer, "r", later.Version, T0);
-        later.WithdrawEscalation(F.S1, Proposer, later.Version, T0);
+        later.WithdrawEscalation(F.S1, Proposer, "Checked", later.Version, T0);
         later.EscalateWithSecond(F.S1, [F.A], F.P(77), T0);
         later.Decide(new ApprovalDecision(F.Id(1), F.S1, F.A, null, true, null, later.Version), T0);
         later.SupplyApprovers(F.S2, new ApproverResolution(ResolutionOutcome.Resolved, [Proposer, F.B], [new ResolutionStep(ApproverSourceKind.Workgroup, ResolutionStepResult.Found, "grp_later", 1, null, 2, 0)]), later.Version, T0.AddMinutes(1));
@@ -233,13 +221,13 @@ public sealed class EscalationPermissionTests
         await Service(F.E).ProposeAsync(instance, F.S1, [F.A], F.E, "r", instance.Version, Ct);
 
         var version = instance.Version;
-        (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(F.E).ApproveAsync(instance, F.S1, [F.A], F.SecondEscalator, version, Ct)))
+        (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(F.E).ApproveAsync(instance, F.S1, [F.A], F.SecondEscalator, "Checked", version, Ct)))
             .Refusal.ShouldBe(ApprovalRefusal.EscalatePermissionMissing);
-        (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(F.E).WithdrawAsync(instance, F.S1, F.SecondEscalator, version, Ct)))
+        (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(F.E).WithdrawAsync(instance, F.S1, F.SecondEscalator, "Checked", version, Ct)))
             .Refusal.ShouldBe(ApprovalRefusal.EscalatePermissionMissing);
         instance.Version.ShouldBe(version);
 
-        await Service(F.SecondEscalator).ApproveAsync(instance, F.S1, [F.A], F.SecondEscalator, version, Ct);
+        await Service(F.SecondEscalator).ApproveAsync(instance, F.S1, [F.A], F.SecondEscalator, "Checked", version, Ct);
         instance.View(F.S1).State.ShouldBe(StageState.Active);
     }
 

@@ -29,18 +29,18 @@ public sealed class ApprovalEscalationService(IPermissionEvaluator permissions, 
         instance.ProposeEscalation(stageId, newCandidates, actor, reason, expectedVersion, clock.GetUtcNow());
     }
 
-    public async Task ApproveAsync(ApprovalInstance instance, Guid stageId, IReadOnlyList<PersonId> reviewedCandidates, PersonId approver, long expectedVersion, CancellationToken cancellationToken)
+    public async Task ApproveAsync(ApprovalInstance instance, Guid stageId, IReadOnlyList<PersonId> reviewedCandidates, PersonId approver, string? reason, long expectedVersion, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(instance);
         await RequirePermissionAsync(approver, cancellationToken).ConfigureAwait(false);
-        instance.ApproveEscalation(stageId, reviewedCandidates, approver, expectedVersion, clock.GetUtcNow());
+        instance.ApproveEscalation(stageId, reviewedCandidates, approver, reason, expectedVersion, clock.GetUtcNow());
     }
 
-    public async Task WithdrawAsync(ApprovalInstance instance, Guid stageId, PersonId actor, long expectedVersion, CancellationToken cancellationToken)
+    public async Task WithdrawAsync(ApprovalInstance instance, Guid stageId, PersonId actor, string? reason, long expectedVersion, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(instance);
         await RequirePermissionAsync(actor, cancellationToken).ConfigureAwait(false);
-        instance.WithdrawEscalation(stageId, actor, expectedVersion, clock.GetUtcNow());
+        instance.WithdrawEscalation(stageId, actor, reason, expectedVersion, clock.GetUtcNow());
     }
 
     private async Task RequirePermissionAsync(PersonId person, CancellationToken cancellationToken)

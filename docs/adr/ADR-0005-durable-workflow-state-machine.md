@@ -125,6 +125,7 @@ Results (local, Windows, 2026-11-10; not yet run in CI):
 ## Who may choose approvers (stage 4 slice 3, DL-070)
 - A held mandatory or independent level is escalated by two people: `ProposeEscalation` (the level stays held, nobody can decide) and `ApproveEscalation` by a different escalator naming the same list. Every check of an escalation is made at both steps. `Escalate` alone is refused there (`EscalationNeedsSecondPerson`); other levels keep one escalator. A waiting proposal can be replaced or withdrawn.
 - Whoever proposed or approved approvers for an independent level chooses for no other level on the request, and the other way round (`IndependentEscalatorConflict`).
+- Review fixes (DL-071): a level held as `RequiredRoleEmpty` or `SourceUnavailable` also takes two escalators; the second escalator gives a reason, kept as `SecondReason`; a proposal is withdrawn only by its proposer or someone who could approve it, with a reason, kept in `EscalationWithdrawals`; nothing is carried automatically while the instance is held; a level held by its resolution or a conflict records its timeout once; a waiting proposal lapses when the request closes.
 - `ApprovalEscalationService` (Workflow.Infrastructure) checks `workflow.approvals.escalate` for every person who acts, before the engine, with time from the server clock. Nothing calls it until workflow storage exists.
 
 ## Open questions and approvals

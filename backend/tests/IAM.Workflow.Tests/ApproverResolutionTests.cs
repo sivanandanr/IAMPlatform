@@ -19,11 +19,20 @@ public sealed class ApproverSupplyTests
     private static StageDefinition Level(Guid id, int sequence, ApproverSource source, QuorumMode quorum = QuorumMode.AnyOne, int? minimum = null, TimeoutAction onTimeout = TimeoutAction.Escalate) =>
         new(id, sequence, quorum, minimum, false, false, true, TimeSpan.FromHours(4), onTimeout, source);
 
+    /// <summary>The reference a resolver records for these tests' sources (DL-071e).</summary>
+    private static string? Reference(ApproverSourceKind kind) => kind switch
+    {
+        ApproverSourceKind.Workgroup => "grp_a",
+        ApproverSourceKind.ApplicationOwner => App.ToString("D"),
+        ApproverSourceKind.ApplicationRole => $"{App:D}:{Role:D}",
+        _ => null,
+    };
+
     private static ApproverResolution Resolved(ApproverSourceKind kind, params PersonId[] people) =>
-        new(ResolutionOutcome.Resolved, people, [new ResolutionStep(kind, ResolutionStepResult.Found, null, null, null, people.Length, 0)]);
+        new(ResolutionOutcome.Resolved, people, [new ResolutionStep(kind, ResolutionStepResult.Found, Reference(kind), null, null, people.Length, 0)]);
 
     private static ApproverResolution Failed(ApproverSourceKind kind, ResolutionOutcome outcome, ResolutionStepResult result = ResolutionStepResult.Empty) =>
-        new(outcome, [], [new ResolutionStep(kind, result, null, null, null, 0, 0)]);
+        new(outcome, [], [new ResolutionStep(kind, result, Reference(kind), null, null, 0, 0)]);
 
     [Fact]
     public void AnOpenedLevelWaitsAndNobodyCanActUntilItsApproversAreSupplied()
