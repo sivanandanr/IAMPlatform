@@ -90,6 +90,16 @@ internal static class F
         instance.Supplied();
     }
 
+    /// <summary>A second escalator, for mandatory and independent stages (DL-070a).</summary>
+    public static readonly PersonId SecondEscalator = P(88);
+
+    /// <summary>Proposes a list as <paramref name="proposer"/> and approves it as <see cref="SecondEscalator"/>.</summary>
+    public static void EscalateWithSecond(this ApprovalInstance instance, Guid stage, PersonId[] candidates, PersonId proposer, DateTimeOffset at)
+    {
+        instance.ProposeEscalation(stage, candidates, proposer, "r", instance.Version, at);
+        instance.ApproveEscalation(stage, candidates, SecondEscalator, instance.Version, at);
+    }
+
     public static StageView View(this ApprovalInstance instance, Guid stage) => instance.Stages.Single(s => s.StageId == stage);
 
     public static ApprovalRefusal? Refusal(Action action) => Should.Throw<ApprovalRefusedException>(action).Refusal;
@@ -972,7 +982,7 @@ public sealed class ApprovalReviewRegressionTests
 
         F.Refusal(() => instance.Escalate(F.S1, [F.C, F.D], F.E, "r", instance.Version, T0.AddMinutes(30))).ShouldBe(ApprovalRefusal.EscalationRemovesAvailableApprover);
 
-        instance.Escalate(F.S1, [F.B, F.C], F.E, "r", instance.Version, T0.AddMinutes(30));
+        instance.EscalateWithSecond(F.S1, [F.B, F.C], F.E, T0.AddMinutes(30));
         instance.View(F.S1).State.ShouldBe(StageState.Active);
         instance.View(F.S1).DeadlineUtc.ShouldBe(T0.AddHours(1));
         instance.ApplyTimeouts(T0.AddHours(1), instance.Version);
@@ -986,7 +996,7 @@ public sealed class ApprovalReviewRegressionTests
         instance.Approve(F.S1, F.B);
         instance.Approve(F.S2, F.A);
         F.Refusal(() => instance.Escalate(F.S1, [F.C, F.D], F.E, "r", instance.Version, T0.AddHours(1))).ShouldBe(ApprovalRefusal.EscalationRemovesAvailableApprover);
-        instance.Escalate(F.S1, [F.B, F.C], F.E, "r", instance.Version, T0.AddHours(1));
+        instance.EscalateWithSecond(F.S1, [F.B, F.C], F.E, T0.AddHours(1));
         instance.Approve(F.S1, F.C, at: T0.AddHours(2));
         instance.ProvisioningAuthorized.ShouldBeTrue();
     }
@@ -1113,7 +1123,7 @@ public sealed class ApprovalReviewRegressionTests
         F.Refusal(() => instance.Approve(F.S2, F.B)).ShouldBe(ApprovalRefusal.InstanceHeld);
 
         // A replacement resolves it, and both must still approve.
-        instance.Escalate(F.S2, [F.B, F.C], F.E, "r", instance.Version, T0.AddHours(1));
+        instance.EscalateWithSecond(F.S2, [F.B, F.C], F.E, T0.AddHours(1));
         instance.Approve(F.S2, F.B, at: T0.AddHours(2));
         instance.ProvisioningAuthorized.ShouldBeFalse();
         instance.Approve(F.S2, F.C, at: T0.AddHours(2));
@@ -2460,10 +2470,12 @@ public sealed class ApprovalInvariantTests
         var completed = 0;
         var held = 0;
         var escalated = 0;
+        var twoPerson = 0;
         var overridden = 0;
         var approvedAfterEscalation = 0;
         var refusals = new Dictionary<ApprovalRefusal, int>();
-        for (var round = 0; round < 3_000; round++)
+        // 6,000 rounds: waiting levels and two-person escalation spend steps that used to reach carried approvals.
+        for (var round = 0; round < 6_000; round++)
         {
             var stages = RandomStages(random);
             var route = ApprovalRoute.Create(stages);
@@ -2518,6 +2530,7 @@ public sealed class ApprovalInvariantTests
             authorizedBeforeApproved += everAuthorizedEarly ? 1 : 0;
 
             escalated += instance.Escalations.Count;
+            twoPerson += instance.Escalations.Count(e => e.SecondActor is not null);
             approved += instance.State == ApprovalState.Approved ? 1 : 0;
             rejected += instance.State == ApprovalState.Rejected ? 1 : 0;
             cancelled += instance.State == ApprovalState.Cancelled ? 1 : 0;
@@ -2539,6 +2552,7 @@ public sealed class ApprovalInvariantTests
         completed.ShouldBeGreaterThan(50);
         held.ShouldBeGreaterThan(100);
         escalated.ShouldBeGreaterThan(100);
+        twoPerson.ShouldBeGreaterThan(10);
         overridden.ShouldBeGreaterThan(100);
         approvedAfterEscalation.ShouldBeGreaterThan(0);
         foreach (var rule in new[]
@@ -2554,6 +2568,10 @@ public sealed class ApprovalInvariantTests
             ApprovalRefusal.AlreadyDecided,
             ApprovalRefusal.StaleVersion,
             ApprovalRefusal.WrongActionForStage,
+            ApprovalRefusal.EscalationNeedsSecondPerson,
+            ApprovalRefusal.ProposerCannotApproveEscalation,
+            ApprovalRefusal.EscalationProposalChanged,
+            ApprovalRefusal.IndependentEscalatorConflict,
         })
         {
             refusals.GetValueOrDefault(rule).ShouldBeGreaterThan(0, rule.ToString());
@@ -2731,7 +2749,31 @@ public sealed class ApprovalInvariantTests
             case 3:
                 // Half from people outside the lists, or nearly every attempt stops at the first check.
                 var escalator = random.Next(2) == 0 ? person : F.P(800 + random.Next(4));
-                instance.Escalate(stage, [.. People.OrderBy(_ => random.Next()).Take(random.Next(1, 5))], escalator, "r", instance.Version, at);
+                PersonId[] list = [.. People.OrderBy(_ => random.Next()).Take(random.Next(1, 5))];
+                var pending = instance.Stages.Single(s => s.StageId == stage).PendingEscalation;
+
+                // Mandatory and independent stages take a proposal and a second escalator (DL-070a); try the wrong way too.
+                if (!(chosen.Mandatory || chosen.Independent) || random.Next(6) == 0)
+                {
+                    instance.Escalate(stage, list, escalator, "r", instance.Version, at);
+                }
+                else if (pending is not null && random.Next(5) != 0)
+                {
+                    var reviewed = random.Next(8) == 0 ? list : pending.Candidates;
+                    if (random.Next(6) == 0)
+                    {
+                        instance.WithdrawEscalation(stage, escalator, instance.Version, at);
+                    }
+                    else
+                    {
+                        instance.ApproveEscalation(stage, reviewed, escalator, instance.Version, at);
+                    }
+                }
+                else
+                {
+                    instance.ProposeEscalation(stage, list, escalator, "r", instance.Version, at);
+                }
+
                 break;
             case 4:
                 var forSomeone = random.Next(3) == 0 ? People[random.Next(People.Length)] : (PersonId?)null;
@@ -2791,6 +2833,16 @@ public sealed class ApprovalInvariantTests
         // Choosing approvers and being one stay separate, and excluded people choose nobody.
         var deciders = instance.Decisions.SelectMany(d => new[] { d.Actor, d.Principal }).ToHashSet();
         instance.Escalations.Any(e => deciders.Contains(e.Actor) || excluded.Contains(e.Actor) || e.NewCandidates.Contains(e.Actor)).ShouldBeFalse();
+
+        // A mandatory or independent stage got its list from two different escalators, each as free of conflicts as one (DL-070a).
+        instance.Escalations.Any(e => (definitions[e.StageId].Mandatory || definitions[e.StageId].Independent) != e.SecondActor is not null).ShouldBeFalse();
+        instance.Escalations.Where(e => e.SecondActor is not null).Any(e => e.SecondActor == e.Actor
+            || deciders.Contains(e.SecondActor!.Value) || excluded.Contains(e.SecondActor!.Value) || e.NewCandidates.Contains(e.SecondActor!.Value)).ShouldBeFalse();
+
+        // Whoever chose approvers for an independent stage chose them for no other stage (DL-070b).
+        var chose = instance.Escalations.SelectMany(e => new[] { (Person: e.Actor, e.StageId), (Person: e.SecondActor ?? e.Actor, e.StageId) })
+            .GroupBy(x => x.Person, x => x.StageId);
+        chose.Any(g => g.Distinct().Count() > 1 && g.Any(s => definitions[s].Independent)).ShouldBeFalse();
 
         // An ALL list never goes below its size at opening: what its resolution supplied, which has nobody excluded.
         instance.Escalations.Any(e => definitions[e.StageId].Quorum == QuorumMode.All

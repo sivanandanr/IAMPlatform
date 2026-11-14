@@ -122,7 +122,12 @@ Results (local, Windows, 2026-11-10; not yet run in CI):
 - A stage carries an approver source instead of a list. When its step opens it is `AwaitingApprovers`: its deadline runs and its timeout applies, but nobody can decide, return or escalate it until `SupplyApprovers` gives it a checked resolution. A resolution that found nobody, or a source with no data, holds it. Carrying the same approver happens when the people are supplied.
 - A stage whose people are all excluded now holds without opening for anyone (it used to open and hold at once); `StageView` shows the source and the resolution in place of the configured list.
 
+## Who may choose approvers (stage 4 slice 3, DL-070)
+- A held mandatory or independent level is escalated by two people: `ProposeEscalation` (the level stays held, nobody can decide) and `ApproveEscalation` by a different escalator naming the same list. Every check of an escalation is made at both steps. `Escalate` alone is refused there (`EscalationNeedsSecondPerson`); other levels keep one escalator. A waiting proposal can be replaced or withdrawn.
+- Whoever proposed or approved approvers for an independent level chooses for no other level on the request, and the other way round (`IndependentEscalatorConflict`).
+- `ApprovalEscalationService` (Workflow.Infrastructure) checks `workflow.approvals.escalate` for every person who acts, before the engine, with time from the server clock. Nothing calls it until workflow storage exists.
+
 ## Open questions and approvals
 - Module 7.3 timeout actions "Next level" and "Auto-approve (non-access only)" do not exist in the state machine (DL-013). The spec owner should align Module 7.3.
 - Escalation SLA numbers and reevaluation triggers (K.7, L.6 — DL-010 still open for these).
-- **Who chooses the approvers (DL-048): blocks any real use.** Should the requester on an ALL list reduce the people required (DL-044)? Behaviour during a hold (DL-045). Other review questions (DL-046).
+- **Who chooses the approvers (DL-048):** engine rules and permission gate built (DL-070); blocks real use until workflow storage wires them to an API and audit. The workflow-configuration rule (DL-057d) is deferred. Should the requester on an ALL list reduce the people required (DL-044)? Behaviour during a hold (DL-045). Other review questions (DL-046).

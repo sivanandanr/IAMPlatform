@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\..\..\BuildingBlocks\IAM.BuildingBlocks.Abstractions\IAM.BuildingBlocks.Abstractions.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\IAM.BuildingBlocks.Security\IAM.BuildingBlocks.Security.csproj" />
+    <ProjectReference Include="..\..\Administration\IAM.Modules.Administration.Contracts\IAM.Modules.Administration.Contracts.csproj" />
     <ProjectReference Include="..\IAM.Modules.Workflow.Application\IAM.Modules.Workflow.Application.csproj" />
     <ProjectReference Include="..\IAM.Modules.Workflow.Domain\IAM.Modules.Workflow.Domain.csproj" />
     <ProjectReference Include="..\IAM.Modules.Workflow.Contracts\IAM.Modules.Workflow.Contracts.csproj" />
