@@ -360,6 +360,39 @@
           "IAM.Modules.Audit.Domain": "[1.0.0, )"
         }
       },
+      "iam.modules.catalog.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Catalog.Contracts": "[1.0.0, )",
+          "IAM.Modules.Catalog.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.catalog.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.catalog.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.catalog.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
+          "IAM.Modules.Audit.Contracts": "[1.0.0, )",
+          "IAM.Modules.Catalog.Application": "[1.0.0, )",
+          "IAM.Modules.Catalog.Contracts": "[1.0.0, )",
+          "IAM.Modules.Catalog.Domain": "[1.0.0, )"
+        }
+      },
       "iam.modules.identity.application": {
         "type": "Project",
         "dependencies": {

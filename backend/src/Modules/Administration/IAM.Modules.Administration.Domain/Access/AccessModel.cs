@@ -41,6 +41,8 @@ public sealed class AccessModel
     public const string Auditor = "auditor";
     public const string PolicyAuthor = "policy-author";
     public const string PolicyChecker = "policy-checker";
+    public const string ApplicationAdministrator = "application-administrator";
+    public const string ApplicationChecker = "application-checker";
     public const string BreakGlassCustodian = "break-glass-custodian";
 
     private readonly Dictionary<string, Role> _roles;
@@ -67,7 +69,7 @@ public sealed class AccessModel
     /// <summary>
     /// The default roles and pairs, with nobody assigned. Defaults are data, changeable later through a change request:
     /// IAM Administrator proposes, IAM Manager approves (spec: "the second person on sensitive changes") and escalates,
-    /// Auditor only reads. Policy author manages attributes and Policy checker approves their publication (DL-064). The break-glass custodian is defined but can't be assigned
+    /// Auditor only reads. Policy author manages attributes and Policy checker approves their publication (DL-064); Application administrator manages the application catalog and Application checker approves its changes (DL-066d). The break-glass custodian is defined but can't be assigned
     /// until its own ADR exists (ADR-0008). Configuring and approving are separate (DL-057d), as are Administrator and
     /// Auditor (AR-1.9) and policy author and checker (ADR-0008).
     /// </summary>
@@ -77,9 +79,11 @@ public sealed class AccessModel
         [
             new(IamAdministrator, "IAM Administrator", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.ChangesPropose]),
             new(IamManager, "IAM Manager", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.ChangesApprove, ActionCatalog.ApprovalsEscalate]),
-            new(Auditor, "Auditor", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.AttributesRead]),
+            new(Auditor, "Auditor", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.AttributesRead, ActionCatalog.ApplicationsRead]),
             new(PolicyAuthor, "Policy author", [ActionCatalog.AttributesRead, ActionCatalog.AttributesManage]),
             new(PolicyChecker, "Policy checker", [ActionCatalog.AttributesRead, ActionCatalog.AttributesApprove]),
+            new(ApplicationAdministrator, "Application administrator", [ActionCatalog.ApplicationsRead, ActionCatalog.ApplicationsManage]),
+            new(ApplicationChecker, "Application checker", [ActionCatalog.ApplicationsRead, ActionCatalog.ApplicationsApprove]),
             new(BreakGlassCustodian, "Break-glass custodian", [], Assignable: false),
         ];
         IncompatiblePair[] pairs =
@@ -87,6 +91,7 @@ public sealed class AccessModel
             IncompatiblePair.Of(IamAdministrator, IamManager),
             IncompatiblePair.Of(IamAdministrator, Auditor),
             IncompatiblePair.Of(PolicyAuthor, PolicyChecker),
+            IncompatiblePair.Of(ApplicationAdministrator, ApplicationChecker),
         ];
         return new AccessModel(roles.ToDictionary(r => r.Code, Copy, StringComparer.Ordinal), [], [.. pairs], 0);
     }

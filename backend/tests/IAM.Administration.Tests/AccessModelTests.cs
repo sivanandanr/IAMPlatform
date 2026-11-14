@@ -39,9 +39,13 @@ public sealed class AccessModelTests
     public void DefaultsHaveTheAgreedRolesAndPairsAndNobodyAssigned()
     {
         var model = AccessModel.Defaults();
-        model.Roles.Select(r => r.Code).ShouldBe([AccessModel.Auditor, AccessModel.BreakGlassCustodian, AccessModel.IamAdministrator, AccessModel.IamManager, AccessModel.PolicyAuthor, AccessModel.PolicyChecker]);
+        model.Roles.Select(r => r.Code).ShouldBe([
+            AccessModel.ApplicationAdministrator, AccessModel.ApplicationChecker, AccessModel.Auditor, AccessModel.BreakGlassCustodian,
+            AccessModel.IamAdministrator, AccessModel.IamManager, AccessModel.PolicyAuthor, AccessModel.PolicyChecker,
+        ]);
         model.Assignments.ShouldBeEmpty();
         model.IncompatiblePairs.ShouldBe([
+            IncompatiblePair.Of(AccessModel.ApplicationAdministrator, AccessModel.ApplicationChecker),
             IncompatiblePair.Of(AccessModel.Auditor, AccessModel.IamAdministrator),
             IncompatiblePair.Of(AccessModel.IamAdministrator, AccessModel.IamManager),
             IncompatiblePair.Of(AccessModel.PolicyAuthor, AccessModel.PolicyChecker),

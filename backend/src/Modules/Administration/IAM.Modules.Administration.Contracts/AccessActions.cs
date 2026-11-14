@@ -17,4 +17,7 @@ public static class AccessActions
     public const string AttributesRead = "identity.attributes.read";
     public const string AttributesManage = "identity.attributes.manage";
     public const string AttributesApprove = "identity.attributes.approve";
+    public const string ApplicationsRead = "catalog.applications.read";
+    public const string ApplicationsManage = "catalog.applications.manage";
+    public const string ApplicationsApprove = "catalog.applications.approve";
 }

@@ -1,6 +1,7 @@
 using IAM.BuildingBlocks.Persistence;
 using IAM.Modules.Administration.Infrastructure.Persistence;
 using IAM.Modules.Audit.Infrastructure.Persistence;
+using IAM.Modules.Catalog.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
 using IAM.Persistence.PostgreSql;
 using IAM.Persistence.SqlServer;
@@ -75,6 +76,18 @@ internal static class TestSupport
         }
 
         return new AdministrationDbContext(options.Options);
+    }
+
+    public static CatalogDbContext CreateCatalog(DatabaseProvider provider, string connectionString, AuditingSaveChangesInterceptor? interceptor = null)
+    {
+        var options = new DbContextOptionsBuilder<CatalogDbContext>();
+        ProviderFor(provider).Configure(options, connectionString, CatalogDbContext.SchemaName);
+        if (interceptor is not null)
+        {
+            options.AddInterceptors(interceptor);
+        }
+
+        return new CatalogDbContext(options.Options);
     }
 
     public static IEnumerable<Exception> Flatten(Exception ex)
