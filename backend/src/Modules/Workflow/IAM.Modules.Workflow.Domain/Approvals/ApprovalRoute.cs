@@ -105,6 +105,9 @@ public enum ApprovalRefusal
 
     /// <summary>The person doesn't hold the escalate permission now (DL-057a, DL-070c). Checked by the calling layer, before the engine.</summary>
     EscalatePermissionMissing = 53,
+
+    /// <summary>The person doesn't hold <c>workflow.instances.cancel</c> (DL-072e). Checked by the calling layer, before the engine.</summary>
+    CancelPermissionMissing = 54,
 }
 
 /// <summary>An action was refused. The message gives the code only, never a person, reason text or other value.</summary>

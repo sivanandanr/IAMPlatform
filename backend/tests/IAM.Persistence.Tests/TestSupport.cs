@@ -4,6 +4,7 @@ using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
 using IAM.Modules.Organization.Infrastructure.Persistence;
+using IAM.Modules.Workflow.Infrastructure.Persistence;
 using IAM.Persistence.PostgreSql;
 using IAM.Persistence.SqlServer;
 using IAM.Persistence.Tests.Probe;
@@ -101,6 +102,18 @@ internal static class TestSupport
         }
 
         return new OrganizationDbContext(options.Options);
+    }
+
+    public static WorkflowDbContext CreateWorkflow(DatabaseProvider provider, string connectionString, AuditingSaveChangesInterceptor? interceptor = null)
+    {
+        var options = new DbContextOptionsBuilder<WorkflowDbContext>();
+        ProviderFor(provider).Configure(options, connectionString, WorkflowDbContext.SchemaName);
+        if (interceptor is not null)
+        {
+            options.AddInterceptors(interceptor);
+        }
+
+        return new WorkflowDbContext(options.Options);
     }
 
     public static IEnumerable<Exception> Flatten(Exception ex)

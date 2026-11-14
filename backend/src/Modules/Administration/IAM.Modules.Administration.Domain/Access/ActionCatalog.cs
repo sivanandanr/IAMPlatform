@@ -16,6 +16,7 @@ public static class ActionCatalog
     public const string ChangesPropose = "administration.changes.propose";
     public const string ChangesApprove = "administration.changes.approve";
     public const string ApprovalsEscalate = "workflow.approvals.escalate";
+    public const string InstancesCancel = "workflow.instances.cancel";
     public const string AttributesRead = "identity.attributes.read";
     public const string AttributesManage = "identity.attributes.manage";
     public const string AttributesApprove = "identity.attributes.approve";
@@ -34,7 +35,8 @@ public static class ActionCatalog
         new ActionDefinition(ChangesRead, "See proposed and decided access changes", Everyone: false),
         new ActionDefinition(ChangesPropose, "Propose an access change", Everyone: false),
         new ActionDefinition(ChangesApprove, "Approve or reject someone else's access change", Everyone: false),
-        new ActionDefinition(ApprovalsEscalate, "Choose new approvers for a held approval stage (DL-057a; not wired yet)", Everyone: false),
+        new ActionDefinition(ApprovalsEscalate, "Choose new approvers for a held approval stage (DL-057a, DL-070)", Everyone: false),
+        new ActionDefinition(InstancesCancel, "Cancel someone else's approval request (DL-072e)", Everyone: false),
         new ActionDefinition(AttributesRead, "See the attribute catalog, drafts and publish requests", Everyone: false),
         new ActionDefinition(AttributesManage, "Register attributes, edit drafts and propose publishing", Everyone: false),
         new ActionDefinition(AttributesApprove, "Approve or reject someone else's attribute publish request", Everyone: false),

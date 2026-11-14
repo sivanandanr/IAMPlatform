@@ -1,4 +1,5 @@
 using IAM.Modules.Workflow.Application.Approvers;
+using IAM.Modules.Workflow.Infrastructure;
 using IAM.Modules.Workflow.Infrastructure.Approvers;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
@@ -21,7 +22,7 @@ public static class WorkflowModule
 
     /// <summary>
     /// Registers approver resolution (DL-069) and the escalation permission gate (DL-070). It reads the Catalog and Organization contracts, so the host must also add
-    /// those modules. There are no endpoints yet: nothing calls resolution until workflow storage exists.
+    /// those modules, and <c>ConnectionStrings:workflow</c> for stored workflows (DL-072). Endpoints come in slice 2.
     /// </summary>
     public static IServiceCollection AddWorkflowModule(this IServiceCollection services)
     {
@@ -30,6 +31,7 @@ public static class WorkflowModule
         services.TryAddScoped<IApproverResolver, ApproverResolver>();
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddScoped<IApprovalEscalation, ApprovalEscalationService>();
+        services.AddWorkflowInfrastructure();
         return services;
     }
 

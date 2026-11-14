@@ -38,6 +38,7 @@ Template: [ADR_TEMPLATE.md](ADR_TEMPLATE.md). Open questions are tracked in [../
 | [0025](ADR-0025-application-catalog-ownership-and-roles.md) | Application catalog — owner, application roles and second-person activation | Proposed (DL-066 decided); sign-off pending | Stage 3 |
 | [0026](ADR-0026-iam-workgroups.md) | IAM workgroups — internal approval groups managed with a second person | Proposed (DL-068 decided); sign-off pending | Stage 4 |
 | [0027](ADR-0027-approver-resolution.md) | Approver resolution when a level opens | Proposed (DL-069 decided); sign-off pending | Stage 4 |
+| [0028](ADR-0028-workflow-storage.md) | Workflow storage as a replayed action log | Proposed (DL-072 decided); sign-off pending | Stage 5 |
 
 ## Approval record
 | ADR | Approver (name, role) | Date | Decision |
