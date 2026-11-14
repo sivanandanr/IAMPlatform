@@ -5,6 +5,8 @@ Status: **draft, not reviewed.** Needs Security Architect review before any shar
 ## What it does
 Names the first **IAM Administrator** (proposes access changes) and the first **IAM Manager** (approves them), and stores the default roles. After that, every change goes through the admin API with a second person approving. It runs once per deployment: it is refused as soon as anything is stored, and the refusal is audited.
 
+The default roles are the ones in the code at bootstrap time. Actions added later (for example `workflow.instances.cancel` and `workflow.instances.read` for IAM Manager and Auditor, DL-072, DL-073) reach a deployment bootstrapped earlier only through an access change approved by a second person. Everyone-actions (such as `workflow.instances.view` and `workflow.approvals.act`) need no role.
+
 It is a command-line tool with no HTTP surface (`backend/src/Tools/IAM.Tools.AccessBootstrap`). Nothing on the API can do this.
 
 ## Who is involved

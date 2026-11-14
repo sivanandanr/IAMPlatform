@@ -22,7 +22,7 @@ public static class WorkflowModule
 
     /// <summary>
     /// Registers approver resolution (DL-069) and the escalation permission gate (DL-070). It reads the Catalog and Organization contracts, so the host must also add
-    /// those modules, and <c>ConnectionStrings:workflow</c> for stored workflows (DL-072). Endpoints come in slice 2.
+    /// those modules, and <c>ConnectionStrings:workflow</c> for stored workflows (DL-072), with the approval API (DL-073).
     /// </summary>
     public static IServiceCollection AddWorkflowModule(this IServiceCollection services)
     {
@@ -32,12 +32,21 @@ public static class WorkflowModule
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddScoped<IApprovalEscalation, ApprovalEscalationService>();
         services.AddWorkflowInfrastructure();
+        services.AddExceptionHandler<WorkflowExceptionHandler>();
+        services.AddSingleton<FluentValidation.IValidator<DecisionBody>, DecisionBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<CompletionBody>, CompletionBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<ReturnBody>, ReturnBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<VersionedReasonBody>, VersionedReasonBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<ApproversBody>, ApproversBodyValidator>();
         return services;
     }
 
     public static IEndpointRouteBuilder MapWorkflowEndpoints(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
+
+        // DL-073: reading an instance, the inbox, and acting on approvals. Nothing here starts an instance (DL-072b).
+        ApprovalEndpoints.Map(endpoints);
         return endpoints;
     }
 }

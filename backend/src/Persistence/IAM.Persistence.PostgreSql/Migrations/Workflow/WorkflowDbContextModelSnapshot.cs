@@ -226,6 +226,85 @@ namespace IAM.Persistence.PostgreSql.Migrations.Workflow
                         });
                 });
 
+            modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalTaskRow", b =>
+                {
+                    b.Property<Guid>("InstanceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("instance_id");
+
+                    b.Property<Guid>("StageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("stage_id");
+
+                    b.Property<string>("Person")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("person")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("created_by");
+
+                    b.Property<DateTimeOffset?>("DeadlineUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("deadline_utc");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("kind")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("modified_at_utc");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("modified_by");
+
+                    b.Property<Guid>("RequestItemId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_item_id");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("integer")
+                        .HasColumnName("sequence");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("InstanceId", "StageId", "Person")
+                        .HasName("pk_approval_task");
+
+                    b.HasIndex("Person", "DeadlineUtc")
+                        .HasDatabaseName("ix_approval_task_person_deadline_utc");
+
+                    b.ToTable("approval_task", "workflow", t =>
+                        {
+                            t.HasCheckConstraint("ck_approval_task_kind_code", "\"kind\" <> '' AND \"kind\" = btrim(\"kind\")");
+
+                            t.HasCheckConstraint("ck_approval_task_person_code", "\"person\" <> '' AND \"person\" = btrim(\"person\")");
+                        });
+                });
+
             modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalActionRow", b =>
                 {
                     b.HasOne("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalInstanceRow", null)
@@ -244,6 +323,16 @@ namespace IAM.Persistence.PostgreSql.Migrations.Workflow
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_approval_history_approval_instance_instance_id");
+                });
+
+            modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalTaskRow", b =>
+                {
+                    b.HasOne("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalInstanceRow", null)
+                        .WithMany()
+                        .HasForeignKey("InstanceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_approval_task_approval_instance_instance_id");
                 });
 #pragma warning restore 612, 618
         }

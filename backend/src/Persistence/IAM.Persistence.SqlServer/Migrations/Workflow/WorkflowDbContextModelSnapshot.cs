@@ -200,6 +200,71 @@ namespace IAM.Persistence.SqlServer.Migrations.Workflow
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalTaskRow", b =>
+                {
+                    b.Property<Guid>("InstanceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("StageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Person")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTimeOffset?>("DeadlineUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<Guid>("RequestItemId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("int");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("InstanceId", "StageId", "Person");
+
+                    b.HasIndex("Person", "DeadlineUtc");
+
+                    b.ToTable("ApprovalTask", "workflow", t =>
+                        {
+                            t.HasCheckConstraint("CK_ApprovalTask_Kind_Code", "DATALENGTH([Kind]) > 0 AND DATALENGTH([Kind]) = DATALENGTH(LTRIM(RTRIM([Kind])))");
+
+                            t.HasCheckConstraint("CK_ApprovalTask_Person_Code", "DATALENGTH([Person]) > 0 AND DATALENGTH([Person]) = DATALENGTH(LTRIM(RTRIM([Person])))");
+                        });
+                });
+
             modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalActionRow", b =>
                 {
                     b.HasOne("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalInstanceRow", null)
@@ -210,6 +275,15 @@ namespace IAM.Persistence.SqlServer.Migrations.Workflow
                 });
 
             modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalHistoryRow", b =>
+                {
+                    b.HasOne("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalInstanceRow", null)
+                        .WithMany()
+                        .HasForeignKey("InstanceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalTaskRow", b =>
                 {
                     b.HasOne("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalInstanceRow", null)
                         .WithMany()

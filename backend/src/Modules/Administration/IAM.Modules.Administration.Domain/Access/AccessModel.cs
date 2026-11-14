@@ -78,8 +78,8 @@ public sealed class AccessModel
         Role[] roles =
         [
             new(IamAdministrator, "IAM Administrator", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.ChangesPropose]),
-            new(IamManager, "IAM Manager", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.ChangesApprove, ActionCatalog.ApprovalsEscalate, ActionCatalog.InstancesCancel]),
-            new(Auditor, "Auditor", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.AttributesRead, ActionCatalog.ApplicationsRead, ActionCatalog.WorkgroupsRead]),
+            new(IamManager, "IAM Manager", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.ChangesApprove, ActionCatalog.ApprovalsEscalate, ActionCatalog.InstancesCancel, ActionCatalog.InstancesRead]),
+            new(Auditor, "Auditor", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.AttributesRead, ActionCatalog.ApplicationsRead, ActionCatalog.WorkgroupsRead, ActionCatalog.InstancesRead]),
             new(PolicyAuthor, "Policy author", [ActionCatalog.AttributesRead, ActionCatalog.AttributesManage]),
             new(PolicyChecker, "Policy checker", [ActionCatalog.AttributesRead, ActionCatalog.AttributesApprove]),
             new(ApplicationAdministrator, "Application administrator", [ActionCatalog.ApplicationsRead, ActionCatalog.ApplicationsManage, ActionCatalog.WorkgroupsRead, ActionCatalog.WorkgroupsManage]),

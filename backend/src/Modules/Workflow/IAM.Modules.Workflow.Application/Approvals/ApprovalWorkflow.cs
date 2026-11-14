@@ -3,14 +3,19 @@ using IAM.Modules.Workflow.Domain.Approvals;
 
 namespace IAM.Modules.Workflow.Application.Approvals;
 
-/// <summary>A stored approval instance as callers see it. People are sign-in ids; reasons and evidence stay in the audit trail.</summary>
+/// <summary>
+/// A stored approval instance as a participant sees it (DL-073a): each level, who can act and who decided, with reasons
+/// only for rejections and returns. <see cref="Oversight"/> is set only for holders of <c>workflow.instances.read</c>.
+/// </summary>
 public sealed record ApprovalInstanceView(
     Guid Id,
     Guid RequestItemId,
     string State,
     long Version,
     bool ProvisioningAuthorized,
-    IReadOnlyList<ApprovalStageView> Stages);
+    IReadOnlyList<ApprovalStageView> Stages,
+    ApprovalClosureView? Closure,
+    ApprovalOversightView? Oversight = null);
 
 public sealed record ApprovalStageView(
     Guid StageId,
@@ -22,7 +27,46 @@ public sealed record ApprovalStageView(
     DateTimeOffset? DeadlineUtc,
     IReadOnlyList<string> Candidates,
     IReadOnlyList<string> Approvers,
-    bool EscalationPending);
+    bool EscalationPending,
+    IReadOnlyList<ApprovalDecisionView> Decisions);
+
+/// <summary>One recorded decision or task. <see cref="Reason"/> is shown to participants only for a rejection.</summary>
+public sealed record ApprovalDecisionView(string Person, string? Delegate, string Outcome, string? Reason, DateTimeOffset AtUtc);
+
+/// <summary>How the request closed, if a person closed it. The reason is shown to participants only for a return.</summary>
+public sealed record ApprovalClosureView(string Outcome, string Actor, string? Reason, DateTimeOffset AtUtc);
+
+/// <summary>What only <c>workflow.instances.read</c> holders see: the full history and evidence (DL-073a).</summary>
+public sealed record ApprovalOversightView(
+    IReadOnlyList<ApprovalHistoryEntryView> History,
+    IReadOnlyList<ApprovalEscalationView> Escalations,
+    IReadOnlyList<ApprovalEscalationWithdrawalView> EscalationWithdrawals,
+    IReadOnlyList<ApprovalResolutionView> Resolutions,
+    IReadOnlyList<ApprovalDecisionView> AllDecisions,
+    string? ClosureReason);
+
+public sealed record ApprovalHistoryEntryView(long Version, DateTimeOffset AtUtc, string Kind, Guid? StageId, string? Actor);
+
+public sealed record ApprovalEscalationView(
+    Guid StageId,
+    string Actor,
+    string Reason,
+    string? SecondActor,
+    string? SecondReason,
+    IReadOnlyList<string> PreviousCandidates,
+    IReadOnlyList<string> NewCandidates,
+    DateTimeOffset AtUtc);
+
+public sealed record ApprovalEscalationWithdrawalView(Guid StageId, string Actor, string Reason, DateTimeOffset AtUtc);
+
+public sealed record ApprovalResolutionView(Guid StageId, string Source, string Outcome, IReadOnlyList<string> People, IReadOnlyList<ApprovalResolutionStepView> Steps);
+
+public sealed record ApprovalResolutionStepView(string Source, string Result, string? Reference, int? Version, string? Hash, int Found, int Excluded);
+
+/// <summary>One open level the signed-in person can act on now (DL-073b).</summary>
+public sealed record ApprovalTaskView(Guid InstanceId, Guid RequestItemId, Guid StageId, int Sequence, string Kind, DateTimeOffset? DeadlineUtc, long Version);
+
+public sealed record ApprovalTaskPage(IReadOnlyList<ApprovalTaskView> Items, int Page, int PageSize, bool HasMore);
 
 /// <summary>No stored instance has this id.</summary>
 public sealed class ApprovalInstanceNotFoundException : Exception
@@ -88,7 +132,8 @@ public sealed class ApprovalInstanceDamagedException : Exception
 /// Durable approval workflows (ADR-0005, ADR-0028, DL-072). Every call loads the instance by replaying its stored actions,
 /// checks the replay against the stored history, acts, resolves the approvers of any level that opened, and saves the new
 /// actions, history and audit in one transaction. The acting person is the signed-in user, never a parameter. A refused
-/// action changes nothing and is audited. Instances are started only by other modules through <see cref="StartAsync"/>
+/// action changes nothing and is audited. Someone who neither takes part in an instance nor holds a permission that
+/// reaches it gets 'not found' (DL-073c). Instances are started only by other modules through <see cref="StartAsync"/>
 /// (DL-072b): there is no way for a person to start one with a route they chose.
 /// </summary>
 public interface IApprovalWorkflow
@@ -99,8 +144,18 @@ public interface IApprovalWorkflow
     /// </summary>
     Task<ApprovalInstanceView> StartAsync(ApprovalBinding binding, ApprovalRoute route, CancellationToken cancellationToken);
 
-    /// <summary>The instance, or null. No permission check: for internal callers; the API applies its own reading rule (slice 2).</summary>
+    /// <summary>The instance with its oversight, or null. No permission check: for internal callers only.</summary>
     Task<ApprovalInstanceView?> FindAsync(Guid instanceId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The instance as the signed-in person may see it, or null (DL-072d, DL-073a): participants (the requester, the person
+    /// getting access, anyone ever listed on a level or who acted) see the participant view; holders of
+    /// <c>workflow.instances.read</c> also see the oversight. Anyone else gets null, as for an id that doesn't exist.
+    /// </summary>
+    Task<ApprovalInstanceView?> ReadAsync(Guid instanceId, CancellationToken cancellationToken);
+
+    /// <summary>The open levels the signed-in person can act on now, earliest deadline first (DL-073b). Page is 1-based.</summary>
+    Task<ApprovalTaskPage> MyTasksAsync(int page, int pageSize, CancellationToken cancellationToken);
 
     Task<ApprovalInstanceView> DecideAsync(Guid instanceId, long expectedVersion, Guid decisionId, Guid stageId, PersonId? onBehalfOf, bool approve, string? reason, CancellationToken cancellationToken);
 

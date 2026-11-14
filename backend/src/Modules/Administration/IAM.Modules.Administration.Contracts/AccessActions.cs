@@ -15,6 +15,9 @@ public static class AccessActions
     public const string ChangesApprove = "administration.changes.approve";
     public const string ApprovalsEscalate = "workflow.approvals.escalate";
     public const string InstancesCancel = "workflow.instances.cancel";
+    public const string InstancesView = "workflow.instances.view";
+    public const string InstancesRead = "workflow.instances.read";
+    public const string ApprovalsAct = "workflow.approvals.act";
     public const string AttributesRead = "identity.attributes.read";
     public const string AttributesManage = "identity.attributes.manage";
     public const string AttributesApprove = "identity.attributes.approve";
