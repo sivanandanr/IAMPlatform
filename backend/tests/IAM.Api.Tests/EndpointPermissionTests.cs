@@ -98,6 +98,16 @@ public sealed class EndpointPermissionTests
             ["Catalog.ApproveRoleType"] = "catalog.applications.approve",
             ["Catalog.RejectRoleType"] = "catalog.applications.approve",
             ["Catalog.WithdrawRoleType"] = "catalog.applications.manage",
+            ["Organization.GetWorkgroup"] = "organization.workgroups.read",
+            ["Organization.RegisterWorkgroup"] = "organization.workgroups.manage",
+            ["Organization.RenameWorkgroup"] = "organization.workgroups.manage",
+            ["Organization.UpdateWorkgroupDraft"] = "organization.workgroups.manage",
+            ["Organization.StartWorkgroupDraft"] = "organization.workgroups.manage",
+            ["Organization.ProposeWorkgroupChange"] = "organization.workgroups.manage",
+            ["Organization.GetWorkgroupChange"] = "organization.workgroups.read",
+            ["Organization.ApproveWorkgroupChange"] = "organization.workgroups.approve",
+            ["Organization.RejectWorkgroupChange"] = "organization.workgroups.approve",
+            ["Organization.WithdrawWorkgroupChange"] = "organization.workgroups.manage",
         };
         using var host = new ApiTestHost();
         var routed = host.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>()

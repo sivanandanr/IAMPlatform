@@ -888,7 +888,8 @@
           "IAM.Modules.Audit.Contracts": "[1.0.0, )",
           "IAM.Modules.Catalog.Application": "[1.0.0, )",
           "IAM.Modules.Catalog.Contracts": "[1.0.0, )",
-          "IAM.Modules.Catalog.Domain": "[1.0.0, )"
+          "IAM.Modules.Catalog.Domain": "[1.0.0, )",
+          "IAM.Modules.Organization.Contracts": "[1.0.0, )"
         }
       },
       "iam.modules.governance.application": {
@@ -1111,7 +1112,10 @@
       "iam.modules.organization.endpoints": {
         "type": "Project",
         "dependencies": {
+          "FluentValidation": "[12.2.0, )",
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
           "IAM.Modules.Organization.Application": "[1.0.0, )",
           "IAM.Modules.Organization.Contracts": "[1.0.0, )",
           "IAM.Modules.Organization.Infrastructure": "[1.0.0, )"
@@ -1121,6 +1125,10 @@
         "type": "Project",
         "dependencies": {
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
+          "IAM.Modules.Audit.Contracts": "[1.0.0, )",
           "IAM.Modules.Organization.Application": "[1.0.0, )",
           "IAM.Modules.Organization.Contracts": "[1.0.0, )",
           "IAM.Modules.Organization.Domain": "[1.0.0, )"
@@ -1287,6 +1295,7 @@
           "IAM.Modules.Audit.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Catalog.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Identity.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Organization.Infrastructure": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
@@ -1298,6 +1307,7 @@
           "IAM.Modules.Audit.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Catalog.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Identity.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Organization.Infrastructure": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore.SqlServer": "[10.0.14, )"
         }
       },

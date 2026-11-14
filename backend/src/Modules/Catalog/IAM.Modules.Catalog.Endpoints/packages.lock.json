@@ -81,7 +81,14 @@
           "IAM.Modules.Audit.Contracts": "[1.0.0, )",
           "IAM.Modules.Catalog.Application": "[1.0.0, )",
           "IAM.Modules.Catalog.Contracts": "[1.0.0, )",
-          "IAM.Modules.Catalog.Domain": "[1.0.0, )"
+          "IAM.Modules.Catalog.Domain": "[1.0.0, )",
+          "IAM.Modules.Organization.Contracts": "[1.0.0, )"
+        }
+      },
+      "iam.modules.organization.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
         }
       },
       "Microsoft.EntityFrameworkCore.Relational": {

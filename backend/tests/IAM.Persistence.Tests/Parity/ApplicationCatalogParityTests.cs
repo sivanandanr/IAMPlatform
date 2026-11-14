@@ -45,9 +45,10 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
     [Fact]
     public async Task TheMigrationAppliesOnceAndSeedsTheBuiltInRoleTypes()
     {
-        db.CatalogFirstRunApplied.Count.ShouldBe(2);
+        db.CatalogFirstRunApplied.Count.ShouldBe(3);
         db.CatalogFirstRunApplied[0].ShouldEndWith("_ApplicationCatalog");
         db.CatalogFirstRunApplied[1].ShouldEndWith("_ApplicationCatalogHardening");
+        db.CatalogFirstRunApplied[2].ShouldEndWith("_GroupHoldersAreWorkgroups");
         db.CatalogSecondRunPending.ShouldBeEmpty();
 
         var tables = IsSqlServer
@@ -70,7 +71,7 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
     {
         var registered = await RegisterAsync(NewKey("erp"));
         registered.IsActive.ShouldBeFalse();
-        registered.Draft.ShouldNotBeNull().Roles.ShouldHaveSingleItem().ShouldBe(new ApplicationRoleView("it_admin", "Required", "Group", "grp-erp-it"));
+        registered.Draft.ShouldNotBeNull().Roles.ShouldHaveSingleItem().ShouldBe(new ApplicationRoleView("it_admin", "Required", "Group", "grp_erp_it"));
 
         var proposed = await ProposeAsync(registered.Id);
         proposed.ProposedOwner.ShouldBe("owner-1");
@@ -98,6 +99,28 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
         (await AuditCountAsync(registered.Id, CatalogAuditActions.Registered, "Succeeded")).ShouldBe(1);
         (await AuditCountAsync(registered.Id, CatalogAuditActions.ChangeProposed, "Succeeded")).ShouldBe(1);
         (await AuditCountAsync(registered.Id, CatalogAuditActions.ChangeApproved, "Succeeded")).ShouldBe(1);
+    }
+
+    /// <summary>DL-068b: a group holder must name a registered workgroup, by its key; the database also checks the key's shape.</summary>
+    [Fact]
+    public async Task AGroupHolderMustBeARegisteredWorkgroup()
+    {
+        await using (var scope = Service())
+        {
+            (await Should.ThrowAsync<ApplicationRejectedException>(() => scope.Service.RegisterAsync(
+                new RegisterApplicationRequest(NewKey("nogroup"), "X", Settings(holderId: "no_such_group")), Ct)))
+                .Field.ShouldBe("HolderId");
+            (await Should.ThrowAsync<ApplicationRejectedException>(() => scope.Service.RegisterAsync(
+                new RegisterApplicationRequest(NewKey("badgroup"), "X", Settings(holderId: "grp-erp-it")), Ct)))
+                .Field.ShouldBe("Holder");
+        }
+
+        var registered = await RegisterAsync(NewKey("goodgroup"));
+        (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(
+            db.CatalogAppConnectionString,
+            $"UPDATE {Table("ApplicationSettingsRole")} SET {Col("HolderId")} = 'Not A Key' WHERE {Col("SettingsVersionId")} = '{registered.Draft!.VersionId}'",
+            Ct)))
+            .Message.ShouldMatch("(?i)(check|constraint)");
     }
 
     [Fact]
@@ -182,7 +205,7 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
     {
         var settings = new ApplicationSettingsInput("owner-1",
         [
-            new ApplicationRoleInput("it_admin", RoleRequirement.Required, RoleHolderKind.Group, "grp-1"),
+            new ApplicationRoleInput("it_admin", RoleRequirement.Required, RoleHolderKind.Group, "grp_1"),
             new ApplicationRoleInput("user_admin", RoleRequirement.Optional, RoleHolderKind.Person, Checker),
         ]);
         var registered = await RegisterAsync(NewKey("holder"), settings);
@@ -568,7 +591,7 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
         }
 
         await using var scope = Service();
-        (await scope.Service.FindAsync(registered.Key, Ct)).ShouldNotBeNull().Active.ShouldNotBeNull().Roles.ShouldHaveSingleItem().HolderId.ShouldBe("grp-erp-it");
+        (await scope.Service.FindAsync(registered.Key, Ct)).ShouldNotBeNull().Active.ShouldNotBeNull().Roles.ShouldHaveSingleItem().HolderId.ShouldBe("grp_erp_it");
     }
 
     // ---- Helpers ------------------------------------------------------------------------------------------------
@@ -584,11 +607,11 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
 
     private string[] Logins => [db.CatalogAppConnectionString, db.MigratorConnectionString];
 
-    private static ApplicationSettingsInput Settings(string owner = "owner-1", RoleHolderKind? holderKind = RoleHolderKind.Group, string? holderId = "grp-erp-it") =>
+    private static ApplicationSettingsInput Settings(string owner = "owner-1", RoleHolderKind? holderKind = RoleHolderKind.Group, string? holderId = "grp_erp_it") =>
         new(owner, [new ApplicationRoleInput("it_admin", RoleRequirement.Required, holderKind, holderId)]);
 
     private static ApplicationSettingsInput WithRole(string code) =>
-        new("owner-1", [new ApplicationRoleInput("it_admin", RoleRequirement.Required, RoleHolderKind.Group, "grp-1"), new ApplicationRoleInput(code, RoleRequirement.Optional, null, null)]);
+        new("owner-1", [new ApplicationRoleInput("it_admin", RoleRequirement.Required, RoleHolderKind.Group, "grp_1"), new ApplicationRoleInput(code, RoleRequirement.Optional, null, null)]);
 
     private static string NewKey(string prefix) => $"{prefix}_{Guid.NewGuid().ToString("N")[..8]}";
 
@@ -650,7 +673,16 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
             new FixedActor(actor),
             new AuditActionCatalog(CatalogAuditActions.All.Select(a => new AuditActionRegistration(a))));
         return new ServiceScope(context, new ApplicationCatalogAdministrationService(
-            context, writer, TimeProvider.System, TestSupport.ProviderFor(db.Provider), new FixedActor(actor), permissions ?? DefaultPermissions));
+            context, writer, TimeProvider.System, TestSupport.ProviderFor(db.Provider), new FixedActor(actor), permissions ?? DefaultPermissions, new FakeWorkgroups()));
+    }
+
+    /// <summary>Workgroups as Organization would report them: every key exists except <c>no_such_group</c>.</summary>
+    private sealed class FakeWorkgroups : IAM.Modules.Organization.Contracts.IWorkgroupDirectory
+    {
+        public Task<bool> ExistsAsync(string key, CancellationToken cancellationToken) => Task.FromResult(key != "no_such_group");
+
+        public Task<IAM.Modules.Organization.Contracts.WorkgroupMembership?> FindActiveAsync(string key, CancellationToken cancellationToken) =>
+            Task.FromResult<IAM.Modules.Organization.Contracts.WorkgroupMembership?>(null);
     }
 
     private sealed class FakePermissions(params (string Person, string Action)[] grants) : IPermissionEvaluator

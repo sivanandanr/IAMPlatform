@@ -10,7 +10,7 @@ public sealed class ApplicationCatalogDomainTests
 {
     private static readonly DateTimeOffset Now = new(2026, 11, 14, 9, 0, 0, TimeSpan.Zero);
 
-    internal static ApplicationSettings Settings(string owner = "owner-1", RoleHolderKind? kind = RoleHolderKind.Group, string? holder = "grp-it-admins", RoleRequirement requirement = RoleRequirement.Required) =>
+    internal static ApplicationSettings Settings(string owner = "owner-1", RoleHolderKind? kind = RoleHolderKind.Group, string? holder = "grp_it_admins", RoleRequirement requirement = RoleRequirement.Required) =>
         new(owner, [new ApplicationRoleSetting(BuiltInRoleTypes.ItAdmin, requirement, kind, holder)]);
 
     [Theory]
@@ -54,6 +54,14 @@ public sealed class ApplicationCatalogDomainTests
         Should.Throw<ApplicationRejectedException>(() => CatalogRules.ValidateSettings(Settings(kind: RoleHolderKind.Person, holder: null))).Field.ShouldBe("Holder");
         Should.Throw<ApplicationRejectedException>(() => CatalogRules.ValidateSettings(Settings(kind: null, holder: "p-1"))).Field.ShouldBe("Holder");
         Should.Throw<ApplicationRejectedException>(() => CatalogRules.ValidateSettings(Settings(kind: (RoleHolderKind)9))).Field.ShouldBe("Holder");
+
+        // DL-068b: a group holder is a workgroup key; a person holder is a person's id.
+        foreach (var notAKey in new[] { "grp-it", "Grp", "g", "grp it", "grp_it\n" })
+        {
+            Should.Throw<ApplicationRejectedException>(() => CatalogRules.ValidateSettings(Settings(kind: RoleHolderKind.Group, holder: notAKey))).Field.ShouldBe("Holder", notAKey);
+        }
+
+        Should.NotThrow(() => CatalogRules.ValidateSettings(Settings(kind: RoleHolderKind.Person, holder: "Person-1@example")));
         Should.Throw<ApplicationRejectedException>(() => CatalogRules.ValidateSettings(Settings(requirement: (RoleRequirement)9))).Field.ShouldBe("Requirement");
         Should.Throw<ApplicationRejectedException>(() => CatalogRules.ValidateSettings(new ApplicationSettings("owner-1",
             [.. Enumerable.Range(0, CatalogRules.MaxRoles + 1).Select(_ => new ApplicationRoleSetting(Guid.NewGuid(), RoleRequirement.Optional, null, null))]))).Field.ShouldBe("Roles");

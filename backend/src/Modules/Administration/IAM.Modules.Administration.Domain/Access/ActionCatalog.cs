@@ -22,6 +22,9 @@ public static class ActionCatalog
     public const string ApplicationsRead = "catalog.applications.read";
     public const string ApplicationsManage = "catalog.applications.manage";
     public const string ApplicationsApprove = "catalog.applications.approve";
+    public const string WorkgroupsRead = "organization.workgroups.read";
+    public const string WorkgroupsManage = "organization.workgroups.manage";
+    public const string WorkgroupsApprove = "organization.workgroups.approve";
 
     public static IReadOnlyList<ActionDefinition> All { get; } = Array.AsReadOnly(
     [
@@ -38,6 +41,9 @@ public static class ActionCatalog
         new ActionDefinition(ApplicationsRead, "See applications, their owners and roles, change requests and role types", Everyone: false),
         new ActionDefinition(ApplicationsManage, "Register and rename applications, edit draft settings, propose activation and role types", Everyone: false),
         new ActionDefinition(ApplicationsApprove, "Approve or reject someone else's application change or role type", Everyone: false),
+        new ActionDefinition(WorkgroupsRead, "See workgroups, their members and change requests", Everyone: false),
+        new ActionDefinition(WorkgroupsManage, "Register and rename workgroups, edit draft member lists and propose them", Everyone: false),
+        new ActionDefinition(WorkgroupsApprove, "Approve or reject someone else's workgroup member change", Everyone: false),
     ]);
 
     private static readonly Dictionary<string, ActionDefinition> ById = All.ToDictionary(a => a.Id, StringComparer.Ordinal);
@@ -51,7 +57,8 @@ public static class ActionCatalog
     /// <summary>
     /// Duties one person must never hold together (DL-057d, DL-060a, DL-061b, DL-064): proposing a change and approving it,
     /// proposing a change and escalating its approval, managing attributes and approving their publication, and managing
-    /// applications and approving their changes (DL-066d). Code, not data, so no change request can relax it.
+    /// applications and approving their changes (DL-066d), and managing workgroups and approving their members (DL-068).
+    /// Code, not data, so no change request can relax it.
     /// </summary>
     public static IReadOnlyList<(string First, string Second)> ConflictingActions { get; } =
     [
@@ -59,6 +66,7 @@ public static class ActionCatalog
         (ChangesPropose, ApprovalsEscalate),
         (AttributesManage, AttributesApprove),
         (ApplicationsManage, ApplicationsApprove),
+        (WorkgroupsManage, WorkgroupsApprove),
     ];
 }
 
