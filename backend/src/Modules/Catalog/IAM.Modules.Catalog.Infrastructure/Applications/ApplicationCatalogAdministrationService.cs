@@ -8,6 +8,7 @@ using IAM.Modules.Audit.Contracts;
 using IAM.Modules.Catalog.Application.Applications;
 using IAM.Modules.Catalog.Domain.Applications;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
+using IAM.Modules.Organization.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using CatalogApplication = IAM.Modules.Catalog.Domain.Applications.Application;
@@ -57,7 +58,8 @@ public sealed class ApplicationCatalogAdministrationService(
     TimeProvider clock,
     IIamDatabaseProvider databaseProvider,
     IAuditActorAccessor actorAccessor,
-    IPermissionEvaluator permissions) : IApplicationCatalogAdministration
+    IPermissionEvaluator permissions,
+    IWorkgroupDirectory workgroups) : IApplicationCatalogAdministration
 {
     private const string ProposedState = nameof(SecondPersonState.Proposed);
 
@@ -524,6 +526,17 @@ public sealed class ApplicationCatalogAdministrationService(
 
         var settings = new ApplicationSettings(input.Owner, roles);
         CatalogRules.ValidateSettings(settings);
+
+        // A group holder names an IAM workgroup (DL-068b), read through Organization's contract. Workgroups are never
+        // deleted, so one that exists now still exists when the settings are approved and when levels resolve it.
+        foreach (var group in roles.Where(r => r.HolderKind == RoleHolderKind.Group).Select(r => r.HolderId!).Distinct(StringComparer.Ordinal))
+        {
+            if (!await workgroups.ExistsAsync(group, cancellationToken).ConfigureAwait(false))
+            {
+                throw new ApplicationRejectedException("HolderId", "must name a registered workgroup");
+            }
+        }
+
         return settings;
     }
 

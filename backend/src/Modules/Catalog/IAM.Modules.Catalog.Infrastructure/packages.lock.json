@@ -140,6 +140,12 @@
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
         }
       },
+      "iam.modules.organization.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
       "Microsoft.EntityFrameworkCore.Relational": {
         "type": "CentralTransitive",
         "requested": "[10.0.14, )",

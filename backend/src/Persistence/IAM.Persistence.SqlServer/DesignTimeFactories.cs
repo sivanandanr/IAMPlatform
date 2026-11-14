@@ -2,6 +2,7 @@ using IAM.Modules.Administration.Infrastructure.Persistence;
 using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
+using IAM.Modules.Organization.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 
@@ -50,5 +51,15 @@ internal sealed class CatalogDesignTimeFactory : IDesignTimeDbContextFactory<Cat
         var options = new DbContextOptionsBuilder<CatalogDbContext>();
         new SqlServerDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, CatalogDbContext.SchemaName);
         return new CatalogDbContext(options.Options);
+    }
+}
+
+internal sealed class OrganizationDesignTimeFactory : IDesignTimeDbContextFactory<OrganizationDbContext>
+{
+    public OrganizationDbContext CreateDbContext(string[] args)
+    {
+        var options = new DbContextOptionsBuilder<OrganizationDbContext>();
+        new SqlServerDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, OrganizationDbContext.SchemaName);
+        return new OrganizationDbContext(options.Options);
     }
 }

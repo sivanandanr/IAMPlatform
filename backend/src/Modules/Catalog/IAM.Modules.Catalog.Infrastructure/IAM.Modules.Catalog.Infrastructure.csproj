@@ -8,5 +8,6 @@
     <ProjectReference Include="..\IAM.Modules.Catalog.Contracts\IAM.Modules.Catalog.Contracts.csproj" />
     <ProjectReference Include="..\..\Administration\IAM.Modules.Administration.Contracts\IAM.Modules.Administration.Contracts.csproj" />
     <ProjectReference Include="..\..\Audit\IAM.Modules.Audit.Contracts\IAM.Modules.Audit.Contracts.csproj" />
+    <ProjectReference Include="..\..\Organization\IAM.Modules.Organization.Contracts\IAM.Modules.Organization.Contracts.csproj" />
   </ItemGroup>
 </Project>

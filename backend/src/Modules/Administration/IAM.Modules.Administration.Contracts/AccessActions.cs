@@ -20,4 +20,7 @@ public static class AccessActions
     public const string ApplicationsRead = "catalog.applications.read";
     public const string ApplicationsManage = "catalog.applications.manage";
     public const string ApplicationsApprove = "catalog.applications.approve";
+    public const string WorkgroupsRead = "organization.workgroups.read";
+    public const string WorkgroupsManage = "organization.workgroups.manage";
+    public const string WorkgroupsApprove = "organization.workgroups.approve";
 }

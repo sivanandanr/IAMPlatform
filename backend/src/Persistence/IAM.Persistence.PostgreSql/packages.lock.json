@@ -390,7 +390,8 @@
           "IAM.Modules.Audit.Contracts": "[1.0.0, )",
           "IAM.Modules.Catalog.Application": "[1.0.0, )",
           "IAM.Modules.Catalog.Contracts": "[1.0.0, )",
-          "IAM.Modules.Catalog.Domain": "[1.0.0, )"
+          "IAM.Modules.Catalog.Domain": "[1.0.0, )",
+          "IAM.Modules.Organization.Contracts": "[1.0.0, )"
         }
       },
       "iam.modules.identity.application": {
@@ -424,6 +425,39 @@
           "IAM.Modules.Identity.Application": "[1.0.0, )",
           "IAM.Modules.Identity.Contracts": "[1.0.0, )",
           "IAM.Modules.Identity.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.organization.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Organization.Contracts": "[1.0.0, )",
+          "IAM.Modules.Organization.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.organization.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.organization.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.organization.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
+          "IAM.Modules.Audit.Contracts": "[1.0.0, )",
+          "IAM.Modules.Organization.Application": "[1.0.0, )",
+          "IAM.Modules.Organization.Contracts": "[1.0.0, )",
+          "IAM.Modules.Organization.Domain": "[1.0.0, )"
         }
       },
       "Microsoft.EntityFrameworkCore.Relational": {

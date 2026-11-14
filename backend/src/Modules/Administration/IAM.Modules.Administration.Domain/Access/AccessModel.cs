@@ -69,7 +69,7 @@ public sealed class AccessModel
     /// <summary>
     /// The default roles and pairs, with nobody assigned. Defaults are data, changeable later through a change request:
     /// IAM Administrator proposes, IAM Manager approves (spec: "the second person on sensitive changes") and escalates,
-    /// Auditor only reads. Policy author manages attributes and Policy checker approves their publication (DL-064); Application administrator manages the application catalog and Application checker approves its changes (DL-066d). The break-glass custodian is defined but can't be assigned
+    /// Auditor only reads. Policy author manages attributes and Policy checker approves their publication (DL-064); Application administrator manages the application catalog and workgroups, and Application checker approves their changes (DL-066d, DL-068). The break-glass custodian is defined but can't be assigned
     /// until its own ADR exists (ADR-0008). Configuring and approving are separate (DL-057d), as are Administrator and
     /// Auditor (AR-1.9) and policy author and checker (ADR-0008).
     /// </summary>
@@ -79,11 +79,11 @@ public sealed class AccessModel
         [
             new(IamAdministrator, "IAM Administrator", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.ChangesPropose]),
             new(IamManager, "IAM Manager", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.ChangesApprove, ActionCatalog.ApprovalsEscalate]),
-            new(Auditor, "Auditor", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.AttributesRead, ActionCatalog.ApplicationsRead]),
+            new(Auditor, "Auditor", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.AttributesRead, ActionCatalog.ApplicationsRead, ActionCatalog.WorkgroupsRead]),
             new(PolicyAuthor, "Policy author", [ActionCatalog.AttributesRead, ActionCatalog.AttributesManage]),
             new(PolicyChecker, "Policy checker", [ActionCatalog.AttributesRead, ActionCatalog.AttributesApprove]),
-            new(ApplicationAdministrator, "Application administrator", [ActionCatalog.ApplicationsRead, ActionCatalog.ApplicationsManage]),
-            new(ApplicationChecker, "Application checker", [ActionCatalog.ApplicationsRead, ActionCatalog.ApplicationsApprove]),
+            new(ApplicationAdministrator, "Application administrator", [ActionCatalog.ApplicationsRead, ActionCatalog.ApplicationsManage, ActionCatalog.WorkgroupsRead, ActionCatalog.WorkgroupsManage]),
+            new(ApplicationChecker, "Application checker", [ActionCatalog.ApplicationsRead, ActionCatalog.ApplicationsApprove, ActionCatalog.WorkgroupsRead, ActionCatalog.WorkgroupsApprove]),
             new(BreakGlassCustodian, "Break-glass custodian", [], Assignable: false),
         ];
         IncompatiblePair[] pairs =

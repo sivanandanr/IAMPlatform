@@ -19,8 +19,8 @@ public enum RoleRequirement
 }
 
 /// <summary>
-/// Who holds an application role (AR-2.2, DL-066a): a person (their sign-in id) or a directory group (its opaque id). A group
-/// id is stored only; nothing resolves its members or trusts it until approver resolution (stage 4).
+/// Who holds an application role (AR-2.2): a person (their sign-in id) or an IAM workgroup (its key, DL-068b, which replaces
+/// DL-066a's directory group id). Workgroups are internal approval groups (spec 1.8); members are resolved in stage 4.
 /// </summary>
 public enum RoleHolderKind
 {
@@ -188,9 +188,10 @@ public static partial class CatalogRules
             var hasKind = role.HolderKind is not null;
             if (hasKind != (role.HolderId is not null)
                 || (role.HolderKind is { } kind && !Enum.IsDefined(kind))
-                || (role.HolderId is not null && !SecondPersonText.IsPerson(role.HolderId)))
+                || (role.HolderKind == RoleHolderKind.Person && !SecondPersonText.IsPerson(role.HolderId))
+                || (role.HolderKind == RoleHolderKind.Group && (role.HolderId is null || !KeyPattern().IsMatch(role.HolderId))))
             {
-                throw new ApplicationRejectedException("Holder", "must be a person or group with its id, or empty");
+                throw new ApplicationRejectedException("Holder", "must be a person's id or a workgroup's key, or empty");
             }
         }
     }

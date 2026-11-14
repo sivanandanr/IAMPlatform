@@ -47,6 +47,7 @@ public sealed class ApiTestHost : IDisposable
             builder.UseSetting("ConnectionStrings:identity", identityConnectionString);
             builder.UseSetting("ConnectionStrings:configuration", UnusedConnectionString);
             builder.UseSetting("ConnectionStrings:catalog", UnusedConnectionString);
+            builder.UseSetting("ConnectionStrings:organization", UnusedConnectionString);
             foreach (var (key, value) in settings ?? new Dictionary<string, string>())
             {
                 builder.UseSetting(key, value);

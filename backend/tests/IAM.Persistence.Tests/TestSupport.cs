@@ -3,6 +3,7 @@ using IAM.Modules.Administration.Infrastructure.Persistence;
 using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
+using IAM.Modules.Organization.Infrastructure.Persistence;
 using IAM.Persistence.PostgreSql;
 using IAM.Persistence.SqlServer;
 using IAM.Persistence.Tests.Probe;
@@ -88,6 +89,18 @@ internal static class TestSupport
         }
 
         return new CatalogDbContext(options.Options);
+    }
+
+    public static OrganizationDbContext CreateOrganization(DatabaseProvider provider, string connectionString, AuditingSaveChangesInterceptor? interceptor = null)
+    {
+        var options = new DbContextOptionsBuilder<OrganizationDbContext>();
+        ProviderFor(provider).Configure(options, connectionString, OrganizationDbContext.SchemaName);
+        if (interceptor is not null)
+        {
+            options.AddInterceptors(interceptor);
+        }
+
+        return new OrganizationDbContext(options.Options);
     }
 
     public static IEnumerable<Exception> Flatten(Exception ex)

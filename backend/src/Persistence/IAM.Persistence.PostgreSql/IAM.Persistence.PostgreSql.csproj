@@ -10,5 +10,6 @@
     <ProjectReference Include="..\..\Modules\Audit\IAM.Modules.Audit.Infrastructure\IAM.Modules.Audit.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Modules\Catalog\IAM.Modules.Catalog.Infrastructure\IAM.Modules.Catalog.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Modules\Identity\IAM.Modules.Identity.Infrastructure\IAM.Modules.Identity.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Organization\IAM.Modules.Organization.Infrastructure\IAM.Modules.Organization.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

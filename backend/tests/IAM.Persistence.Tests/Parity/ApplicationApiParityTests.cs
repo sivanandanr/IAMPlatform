@@ -142,18 +142,18 @@ public sealed class ApplicationApiParityTests(ParityDatabase db) : IDisposable
         noReason.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
     }
 
-    private const string CleanSettings = """{"owner":"owner-1","roles":[{"roleTypeCode":"it_admin","requirement":"Required","holderKind":"Group","holderId":"grp-1"}]}""";
+    private const string CleanSettings = """{"owner":"owner-1","roles":[{"roleTypeCode":"it_admin","requirement":"Required","holderKind":"Group","holderId":"grp_1"}]}""";
 
     [Theory]
     [InlineData("""{"key":"KEY","displayName":"X","settings":SETTINGS,"isActive":true}""")]
     [InlineData("""{"key":"KEY","displayName":"X","settings":{"owner":"owner-1","roles":[],"contentHash":"x"}}""")]
-    [InlineData("""{"key":"KEY","displayName":"X","settings":{"owner":"owner-1","roles":[{"roleTypeCode":"it_admin","requirement":"Required","holderKind":"Group","holderId":"g","roleTypeId":"x"}]}}""")]
-    [InlineData("""{"key":"KEY","displayName":"X","settings":{"owner":"owner-1","roles":[{"roleTypeCode":"it_admin","requirement":"required","holderKind":"Group","holderId":"g"}]}}""")]
-    [InlineData("""{"key":"KEY","displayName":"X","settings":{"owner":"owner-1","roles":[{"roleTypeCode":"it_admin","requirement":"2","holderKind":"Group","holderId":"g"}]}}""")]
+    [InlineData("""{"key":"KEY","displayName":"X","settings":{"owner":"owner-1","roles":[{"roleTypeCode":"it_admin","requirement":"Required","holderKind":"Group","holderId":"grp_1","roleTypeId":"x"}]}}""")]
+    [InlineData("""{"key":"KEY","displayName":"X","settings":{"owner":"owner-1","roles":[{"roleTypeCode":"it_admin","requirement":"required","holderKind":"Group","holderId":"grp_1"}]}}""")]
+    [InlineData("""{"key":"KEY","displayName":"X","settings":{"owner":"owner-1","roles":[{"roleTypeCode":"it_admin","requirement":"2","holderKind":"Group","holderId":"grp_1"}]}}""")]
     [InlineData("""{"key":"KEY","displayName":"X","settings":{"owner":"owner-1","roles":[{"roleTypeCode":"it_admin","requirement":"Required","holderKind":"Group"}]}}""")]
     [InlineData("""{"key":"KEY","displayName":"X","settings":{"owner":"owner-1"}}""")]
     [InlineData("""{"key":"KEY","displayName":"X","settings":SETTINGS,"key":"other"}""")]
-    [InlineData("""{"key":"KEY","displayName":"X","settings":{"owner":"owner-1","roles":[{"roleTypeCode":"it_admin","requirement":"Required","holderKind":"Group","holderId":"g"},{"roleTypeCode":"it_admin","requirement":"Optional"}]}}""")]
+    [InlineData("""{"key":"KEY","displayName":"X","settings":{"owner":"owner-1","roles":[{"roleTypeCode":"it_admin","requirement":"Required","holderKind":"Group","holderId":"grp_1"},{"roleTypeCode":"it_admin","requirement":"Optional"}]}}""")]
     [InlineData("""{"key":"Bad Key!","displayName":"X","settings":SETTINGS}""")]
     public async Task OverreachingOrInvalidBodiesAre400(string template)
     {
@@ -161,7 +161,7 @@ public sealed class ApplicationApiParityTests(ParityDatabase db) : IDisposable
         var json = template.Replace("KEY", NewKey("mass"), StringComparison.Ordinal).Replace("SETTINGS", CleanSettings, StringComparison.Ordinal);
         using var response = await _host.SendAsync(admin, HttpMethod.Post, Applications, new StringContent(json, Encoding.UTF8, "application/json"));
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest, json);
-        (await response.Content.ReadAsStringAsync(Ct)).ShouldNotContain("grp-1", Case.Sensitive, "errors never echo values");
+        (await response.Content.ReadAsStringAsync(Ct)).ShouldNotContain("grp_1", Case.Sensitive, "errors never echo values");
 
         // The same body without the overreach is accepted, so the 400 above is for the overreach itself.
         var clean = $$"""{"key":"{{NewKey("clean")}}","displayName":"X","settings":{{CleanSettings}}}""";
@@ -233,7 +233,7 @@ public sealed class ApplicationApiParityTests(ParityDatabase db) : IDisposable
 
     private static string NewKey(string prefix) => $"{prefix}_{Guid.NewGuid().ToString("N")[..8]}";
 
-    private static object Settings(string owner, string? holderKind = "Group", string? holderId = "grp-erp-it") => new
+    private static object Settings(string owner, string? holderKind = "Group", string? holderId = "grp_erp_it") => new
     {
         owner,
         roles = new[] { new { roleTypeCode = "it_admin", requirement = "Required", holderKind, holderId } },
@@ -256,6 +256,13 @@ public sealed class ApplicationApiParityTests(ParityDatabase db) : IDisposable
 
             using var approved = await PostAsync(Manager, $"/api/administration/changes/{id}/approve", new { reason = (string?)null });
             approved.StatusCode.ShouldBe(HttpStatusCode.OK);
+        }
+
+        // The workgroups these tests name as group holders (DL-068b); registering one twice is refused, which is fine.
+        foreach (var key in new[] { "grp_erp_it", "grp_1" })
+        {
+            using var workgroup = await PostAsync(admin, "/api/organization/workgroups", new { key, displayName = key, members = Array.Empty<string>() });
+            workgroup.StatusCode.ShouldBeOneOf(HttpStatusCode.Created, HttpStatusCode.BadRequest);
         }
 
         return (admin, checker);
