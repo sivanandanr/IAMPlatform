@@ -83,6 +83,21 @@ public sealed class EndpointPermissionTests
             ["Identity.ApproveAttributePublish"] = "identity.attributes.approve",
             ["Identity.RejectAttributePublish"] = "identity.attributes.approve",
             ["Identity.WithdrawAttributePublish"] = "identity.attributes.manage",
+            ["Catalog.GetApplication"] = "catalog.applications.read",
+            ["Catalog.RegisterApplication"] = "catalog.applications.manage",
+            ["Catalog.RenameApplication"] = "catalog.applications.manage",
+            ["Catalog.UpdateApplicationDraft"] = "catalog.applications.manage",
+            ["Catalog.StartApplicationDraft"] = "catalog.applications.manage",
+            ["Catalog.ProposeApplicationChange"] = "catalog.applications.manage",
+            ["Catalog.GetApplicationChange"] = "catalog.applications.read",
+            ["Catalog.ApproveApplicationChange"] = "catalog.applications.approve",
+            ["Catalog.RejectApplicationChange"] = "catalog.applications.approve",
+            ["Catalog.WithdrawApplicationChange"] = "catalog.applications.manage",
+            ["Catalog.ListRoleTypes"] = "catalog.applications.read",
+            ["Catalog.ProposeRoleType"] = "catalog.applications.manage",
+            ["Catalog.ApproveRoleType"] = "catalog.applications.approve",
+            ["Catalog.RejectRoleType"] = "catalog.applications.approve",
+            ["Catalog.WithdrawRoleType"] = "catalog.applications.manage",
         };
         using var host = new ApiTestHost();
         var routed = host.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>()
