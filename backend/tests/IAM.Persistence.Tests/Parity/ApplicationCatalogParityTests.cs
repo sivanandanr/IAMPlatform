@@ -1,4 +1,5 @@
 using System.Globalization;
+using IAM.BuildingBlocks.Abstractions.People;
 using IAM.BuildingBlocks.Persistence;
 using IAM.BuildingBlocks.Security;
 using IAM.Modules.Audit.Contracts;
@@ -7,6 +8,9 @@ using IAM.Modules.Catalog.Application.Applications;
 using IAM.Modules.Catalog.Domain.Applications;
 using IAM.Modules.Catalog.Infrastructure.Applications;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
+using IAM.Modules.Organization.Infrastructure.Workgroups;
+using IAM.Modules.Workflow.Application.Approvers;
+using IAM.Modules.Workflow.Domain.Approvals;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 
@@ -604,6 +608,58 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
         "Id", "ApplicationId", "SettingsVersionId", "VersionNumber", "ContentHash", "ProposedOwner", "Maker", "Reason", "ProposedAtUtc",
         "State", "Checker", "DecidedAtUtc", "CreatedAtUtc", "CreatedBy", "ModifiedAtUtc", "ModifiedBy", "Version",
     ];
+
+    [Fact]
+    public async Task TheApproverDirectoryReadsOnlyActiveSettingsAndFeedsResolution()
+    {
+        // DL-069: approvers come from active settings only; a draft never counts, and missing data never fails open.
+        var registered = await RegisterAsync(NewKey("dir"), Settings(owner: "dir-owner", holderId: "grp_dir_it"));
+        await using var catalog = TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString);
+        var directory = new ApplicationApproverDirectory(catalog);
+        (await directory.FindActiveAsync(registered.Id, Ct)).ShouldBeNull("nothing is active until approved");
+        (await directory.FindActiveAsync(Guid.Empty, Ct)).ShouldBeNull();
+        (await directory.FindActiveAsync(Guid.CreateVersion7(), Ct)).ShouldBeNull();
+
+        var proposed = await ProposeAsync(registered.Id);
+        await using (var scope = Service(Checker))
+        {
+            await scope.Service.ApproveAsync(proposed.Id, proposed.ContentHash, null, Ct);
+        }
+
+        var active = (await directory.FindActiveAsync(registered.Id, Ct)).ShouldNotBeNull();
+        active.Owner.ShouldBe("dir-owner");
+        active.VersionNumber.ShouldBe(1);
+        active.ContentHash.ShouldBe(proposed.ContentHash);
+        var role = active.Roles.ShouldHaveSingleItem();
+        role.Requirement.ShouldBe(IAM.Modules.Catalog.Contracts.ApplicationRoleRequirement.Required);
+        role.HolderKind.ShouldBe(IAM.Modules.Catalog.Contracts.ApplicationRoleHolderKind.Group);
+        role.HolderId.ShouldBe("grp_dir_it");
+
+        await using (var scope = Service())
+        {
+            await scope.Service.StartNewDraftAsync(registered.Id, Settings(owner: "next-owner"), Ct);
+        }
+
+        var stillActive = (await directory.FindActiveAsync(registered.Id, Ct)).ShouldNotBeNull();
+        stillActive.Owner.ShouldBe("dir-owner");
+        stillActive.VersionNumber.ShouldBe(1);
+
+        // Against both real databases: grp_dir_it isn't a workgroup in Organization, so the role goes to the owner.
+        await using var organization = TestSupport.CreateOrganization(db.Provider, db.OrganizationAppConnectionString);
+        var resolver = new ApproverResolver(directory, new WorkgroupDirectory(organization), new ApproverResolutionSettings());
+        var source = ApproverSource.ApplicationRole(registered.Id, role.RoleTypeId);
+        var resolution = await resolver.ResolveAsync(source, new HashSet<PersonId>(), Ct);
+        resolution.Outcome.ShouldBe(ResolutionOutcome.Resolved);
+        resolution.People.ShouldBe([PersonId.Create("dir-owner")]);
+        resolution.Steps.Select(s => (s.Source, s.Result)).ShouldBe(
+            [(ApproverSourceKind.ApplicationRole, ResolutionStepResult.NotFound), (ApproverSourceKind.Workgroup, ResolutionStepResult.NotFound), (ApproverSourceKind.ApplicationOwner, ResolutionStepResult.Found)]);
+        resolution.Steps[2].Hash.ShouldBe(proposed.ContentHash);
+
+        // The owner is the one getting access: the seeded fallback has no active members yet, so the level holds.
+        var held = await resolver.ResolveAsync(source, new HashSet<PersonId> { PersonId.Create("dir-owner") }, Ct);
+        held.Outcome.ShouldBe(ResolutionOutcome.NobodyAvailable);
+        held.Steps[^1].ShouldBe(new ResolutionStep(ApproverSourceKind.FallbackWorkgroup, ResolutionStepResult.NotFound, "iam_managers", null, null, 0, 0));
+    }
 
     private string[] Logins => [db.CatalogAppConnectionString, db.MigratorConnectionString];
 

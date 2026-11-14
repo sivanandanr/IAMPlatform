@@ -745,6 +745,8 @@
         "type": "Project",
         "dependencies": {
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Catalog.Contracts": "[1.0.0, )",
+          "IAM.Modules.Organization.Contracts": "[1.0.0, )",
           "IAM.Modules.Workflow.Contracts": "[1.0.0, )",
           "IAM.Modules.Workflow.Domain": "[1.0.0, )"
         }

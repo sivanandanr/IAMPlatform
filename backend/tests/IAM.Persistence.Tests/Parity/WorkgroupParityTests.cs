@@ -68,6 +68,7 @@ public sealed class WorkgroupParityTests(ParityDatabase db)
         var active = (await Directory().FindActiveAsync(registered.Key, Ct)).ShouldNotBeNull();
         active.Members.ShouldBe(["alice", "bob"]);
         active.VersionNumber.ShouldBe(1);
+        active.ContentHash.ShouldBe(proposed.ContentHash);
         (await AuditCountAsync(registered.Id, WorkgroupAuditActions.ChangeRefused, "Denied")).ShouldBe(2);
         (await AuditCountAsync(registered.Id, WorkgroupAuditActions.ChangeApproved, "Succeeded")).ShouldBe(1);
     }

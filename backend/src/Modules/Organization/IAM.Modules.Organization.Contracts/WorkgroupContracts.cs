@@ -1,7 +1,11 @@
 namespace IAM.Modules.Organization.Contracts;
 
-/// <summary>A workgroup's active members, as other modules see them (DL-068).</summary>
-public sealed record WorkgroupMembership(string Key, int VersionNumber, IReadOnlyList<string> Members);
+/// <summary>A workgroup's active members, as other modules see them (DL-068), with the version and content hash they came from (evidence, DL-069e).</summary>
+public sealed record WorkgroupMembership(string Key, int VersionNumber, string ContentHash, IReadOnlyList<string> Members)
+{
+    /// <summary>The key only: logging this object must not expose a person.</summary>
+    public override string ToString() => $"{nameof(WorkgroupMembership)} {Key}";
+}
 
 /// <summary>
 /// Read-only view of IAM workgroups for other modules (ADR-0001: no cross-module table access). Catalog checks that a

@@ -1,6 +1,7 @@
 using IAM.BuildingBlocks.Persistence;
 using IAM.Modules.Audit.Contracts;
 using IAM.Modules.Catalog.Application.Applications;
+using IAM.Modules.Catalog.Contracts;
 using IAM.Modules.Catalog.Infrastructure.Applications;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,6 +18,7 @@ public static class CatalogInfrastructure
         services.AddIamDbContext<CatalogDbContext>(CatalogDbContext.SchemaName);
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddScoped<IApplicationCatalogAdministration, ApplicationCatalogAdministrationService>();
+        services.TryAddScoped<IApplicationApproverDirectory, ApplicationApproverDirectory>();
         foreach (var action in CatalogAuditActions.All)
         {
             services.AddSingleton(new AuditActionRegistration(action));

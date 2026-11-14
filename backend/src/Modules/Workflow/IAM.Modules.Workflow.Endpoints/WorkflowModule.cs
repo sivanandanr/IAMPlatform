@@ -1,5 +1,8 @@
+using IAM.Modules.Workflow.Application.Approvers;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace IAM.Modules.Workflow.Endpoints;
 
@@ -12,9 +15,18 @@ public static class WorkflowModule
     /// <summary>Route prefix reserved for this module's endpoints.</summary>
     public const string RoutePrefix = "/api/workflow";
 
+    /// <summary>The configured fallback workgroup's key (DL-068c); <c>iam_managers</c> when not set.</summary>
+    public const string FallbackWorkgroupSetting = "Workflow:FallbackWorkgroup";
+
+    /// <summary>
+    /// Registers approver resolution (DL-069). It reads the Catalog and Organization contracts, so the host must also add
+    /// those modules. There are no endpoints yet: nothing calls resolution until workflow storage exists.
+    /// </summary>
     public static IServiceCollection AddWorkflowModule(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
+        services.TryAddSingleton(sp => new ApproverResolutionSettings(sp.GetRequiredService<IConfiguration>()[FallbackWorkgroupSetting]));
+        services.TryAddScoped<IApproverResolver, ApproverResolver>();
         return services;
     }
 

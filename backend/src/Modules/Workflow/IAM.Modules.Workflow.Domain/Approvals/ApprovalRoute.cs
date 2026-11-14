@@ -1,3 +1,5 @@
+using IAM.BuildingBlocks.Abstractions.People;
+
 namespace IAM.Modules.Workflow.Domain.Approvals;
 
 /// <summary>How many approvals close a stage (IAM-WF-004).</summary>
@@ -84,6 +86,8 @@ public enum ApprovalRefusal
     MandatoryStageCannotBeAction = 43,
 
     // 44 is reserved: it was IndependentStageCannotSkip, removed by DL-057.
+    StageNotAwaitingApprovers = 45,
+    InvalidResolution = 46,
 }
 
 /// <summary>An action was refused. The message gives the code only, never a person, reason text or other value.</summary>
@@ -137,7 +141,7 @@ public static class ApprovalLimits
 }
 
 /// <summary>
-/// One stage as configured, with its approvers already resolved (approver resolution is a later story). Stages with the
+/// One stage as configured, with where its approvers come from; they are found when it opens (DL-069b). Stages with the
 /// same <see cref="Sequence"/> run in parallel. <see cref="Applicable"/> is the stage condition's result when the route
 /// was built; a mandatory stage must be applicable. No level is ever skipped: one with nobody able to act holds (DL-057).
 /// </summary>
@@ -151,7 +155,7 @@ public sealed record StageDefinition(
     bool Applicable,
     TimeSpan Deadline,
     TimeoutAction OnTimeout,
-    IReadOnlyList<Guid> Candidates,
+    ApproverSource Approvers,
     StageKind Kind = StageKind.Decision);
 
 /// <summary>Changes an entitlement may make to a route (IAM-WF-010). Mandatory stages can be neither removed nor replaced.</summary>
@@ -200,7 +204,7 @@ public sealed class ApprovalRoute
             Validate(stage);
 
             // A private copy: a caller's list cannot change the route after this point.
-            copies.Add(stage with { Candidates = Array.AsReadOnly(stage.Candidates.ToArray()) });
+            copies.Add(stage with { Approvers = stage.Approvers with { People = Array.AsReadOnly(stage.Approvers.People.ToArray()) } });
         }
 
         // No applicable stage would mean a request with nothing to approve it. That must never read as approved.
@@ -302,15 +306,18 @@ public sealed class ApprovalRoute
             throw new ApprovalRefusedException(ApprovalRefusal.InvalidDeadline);
         }
 
-        if (!CandidatesAreValid(stage.Candidates))
+        if (stage.Approvers is null || !stage.Approvers.IsValid())
         {
             throw new ApprovalRefusedException(ApprovalRefusal.InvalidCandidates);
         }
 
+        // Named people are known now; any other source's count is known only when the level opens, and holds then if too few.
+        var most = stage.Approvers.Kind == ApproverSourceKind.NamedUsers ? stage.Approvers.People.Count : ApprovalLimits.MaxCandidatesPerStage;
+
         var quorumValid = stage.Quorum switch
         {
             QuorumMode.All or QuorumMode.AnyOne => stage.MinimumApprovals is null,
-            QuorumMode.MinimumN => stage.MinimumApprovals >= 1 && stage.MinimumApprovals <= stage.Candidates.Count,
+            QuorumMode.MinimumN => stage.MinimumApprovals >= 1 && stage.MinimumApprovals <= most,
             _ => false,
         };
 
@@ -323,8 +330,8 @@ public sealed class ApprovalRoute
     }
 
     /// <summary>At least one, within the limit, no empty id, nobody listed twice (one person must not count as two).</summary>
-    internal static bool CandidatesAreValid(IReadOnlyList<Guid>? candidates) =>
+    internal static bool CandidatesAreValid(IReadOnlyList<PersonId>? candidates) =>
         candidates is { Count: > 0 and <= ApprovalLimits.MaxCandidatesPerStage }
-        && !candidates.Contains(Guid.Empty)
+        && candidates.All(c => c.IsValid)
         && candidates.Distinct().Count() == candidates.Count;
 }

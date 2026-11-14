@@ -507,6 +507,6 @@ public sealed class WorkgroupDirectory(OrganizationDbContext db) : IWorkgroupDir
             .Include(w => w.Versions.Where(v => v.State == MemberVersionState.Active)).ThenInclude(v => v.Members)
             .SingleOrDefaultAsync(w => w.Key == key, cancellationToken)
             .ConfigureAwait(false);
-        return workgroup?.CurrentActive is { } active ? new WorkgroupMembership(workgroup.Key, active.VersionNumber, active.People) : null;
+        return workgroup?.CurrentActive is { } active ? new WorkgroupMembership(workgroup.Key, active.VersionNumber, active.ContentHash, active.People) : null;
     }
 }
