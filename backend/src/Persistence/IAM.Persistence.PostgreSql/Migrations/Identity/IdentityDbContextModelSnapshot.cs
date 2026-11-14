@@ -150,6 +150,10 @@ namespace IAM.Persistence.PostgreSql.Migrations.Identity
                         .UseCollation("C")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<Guid?>("PublishedByRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("published_by_request_id");
+
                     b.Property<string>("Sensitivity")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -193,6 +197,9 @@ namespace IAM.Persistence.PostgreSql.Migrations.Identity
 
                     b.HasKey("Id")
                         .HasName("pk_attribute_definition_version");
+
+                    b.HasIndex("PublishedByRequestId")
+                        .HasDatabaseName("ix_attribute_definition_version_published_by_request_id");
 
                     b.HasIndex("AttributeDefinitionId", "VersionNumber")
                         .IsUnique()
@@ -269,6 +276,130 @@ namespace IAM.Persistence.PostgreSql.Migrations.Identity
                         });
                 });
 
+            modelBuilder.Entity("IAM.Modules.Identity.Infrastructure.Persistence.AttributePublishRequestRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AttributeDefinitionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("attribute_definition_id");
+
+                    b.Property<Guid>("AttributeDefinitionVersionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("attribute_definition_version_id");
+
+                    b.Property<string>("Checker")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("checker")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .HasColumnName("content_hash")
+                        .IsFixedLength()
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("created_by");
+
+                    b.Property<DateTimeOffset?>("DecidedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("decided_at_utc");
+
+                    b.Property<string>("DecisionReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("decision_reason");
+
+                    b.Property<string>("Maker")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("maker")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("modified_at_utc");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("modified_by");
+
+                    b.Property<DateTimeOffset>("ProposedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("proposed_at_utc");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("reason");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("state")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("version_number");
+
+                    b.HasKey("Id")
+                        .HasName("pk_attribute_publish_request");
+
+                    b.HasIndex("AttributeDefinitionId")
+                        .HasDatabaseName("ix_attribute_publish_request_attribute_definition_id");
+
+                    b.HasIndex("AttributeDefinitionVersionId")
+                        .HasDatabaseName("ix_attribute_publish_request_attribute_definition_version_id");
+
+                    b.HasIndex("State", "ProposedAtUtc")
+                        .HasDatabaseName("ix_attribute_publish_request_state_proposed_at_utc");
+
+                    b.ToTable("attribute_publish_request", "identity", t =>
+                        {
+                            t.HasTrigger("tr_attribute_publish_request_decided_immutable");
+
+                            t.HasCheckConstraint("ck_attribute_publish_request_checker_code", "\"checker\" <> '' AND \"checker\" = btrim(\"checker\")");
+
+                            t.HasCheckConstraint("ck_attribute_publish_request_content_hash_code", "\"content_hash\" <> '' AND \"content_hash\" = btrim(\"content_hash\")");
+
+                            t.HasCheckConstraint("ck_attribute_publish_request_maker_code", "\"maker\" <> '' AND \"maker\" = btrim(\"maker\")");
+
+                            t.HasCheckConstraint("ck_attribute_publish_request_state_code", "\"state\" <> '' AND \"state\" = btrim(\"state\")");
+                        });
+                });
+
             modelBuilder.Entity("IAM.Modules.Identity.Domain.Attributes.AttributeDefinitionVersion", b =>
                 {
                     b.HasOne("IAM.Modules.Identity.Domain.Attributes.AttributeDefinition", null)
@@ -277,6 +408,12 @@ namespace IAM.Persistence.PostgreSql.Migrations.Identity
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_attribute_definition_version_attribute_definition_attribute~");
+
+                    b.HasOne("IAM.Modules.Identity.Infrastructure.Persistence.AttributePublishRequestRow", null)
+                        .WithMany()
+                        .HasForeignKey("PublishedByRequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_attribute_definition_version_attribute_publish_request_publis~");
                 });
 
             modelBuilder.Entity("IAM.Modules.Identity.Domain.Attributes.AttributeDefinitionVersionOperator", b =>
@@ -287,6 +424,23 @@ namespace IAM.Persistence.PostgreSql.Migrations.Identity
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_attribute_definition_version_operator_attribute_definition_~");
+                });
+
+            modelBuilder.Entity("IAM.Modules.Identity.Infrastructure.Persistence.AttributePublishRequestRow", b =>
+                {
+                    b.HasOne("IAM.Modules.Identity.Domain.Attributes.AttributeDefinition", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_attribute_publish_request_attribute_definition_attribute_de~");
+
+                    b.HasOne("IAM.Modules.Identity.Domain.Attributes.AttributeDefinitionVersion", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeDefinitionVersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_attribute_publish_request_attribute_definition_version_attr~");
                 });
 
             modelBuilder.Entity("IAM.Modules.Identity.Domain.Attributes.AttributeDefinition", b =>

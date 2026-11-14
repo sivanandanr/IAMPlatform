@@ -1,4 +1,5 @@
 using System.Globalization;
+using IAM.BuildingBlocks.Abstractions.SecondPerson;
 
 namespace IAM.Modules.Administration.Domain.Access;
 
@@ -66,7 +67,7 @@ public sealed class AccessModel
     /// <summary>
     /// The default roles and pairs, with nobody assigned. Defaults are data, changeable later through a change request:
     /// IAM Administrator proposes, IAM Manager approves (spec: "the second person on sensitive changes") and escalates,
-    /// Auditor only reads. Policy roles hold no actions yet. The break-glass custodian is defined but can't be assigned
+    /// Auditor only reads. Policy author manages attributes and Policy checker approves their publication (DL-064). The break-glass custodian is defined but can't be assigned
     /// until its own ADR exists (ADR-0008). Configuring and approving are separate (DL-057d), as are Administrator and
     /// Auditor (AR-1.9) and policy author and checker (ADR-0008).
     /// </summary>
@@ -76,9 +77,9 @@ public sealed class AccessModel
         [
             new(IamAdministrator, "IAM Administrator", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.ChangesPropose]),
             new(IamManager, "IAM Manager", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.ChangesApprove, ActionCatalog.ApprovalsEscalate]),
-            new(Auditor, "Auditor", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead]),
-            new(PolicyAuthor, "Policy author", []),
-            new(PolicyChecker, "Policy checker", []),
+            new(Auditor, "Auditor", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.AttributesRead]),
+            new(PolicyAuthor, "Policy author", [ActionCatalog.AttributesRead, ActionCatalog.AttributesManage]),
+            new(PolicyChecker, "Policy checker", [ActionCatalog.AttributesRead, ActionCatalog.AttributesApprove]),
             new(BreakGlassCustodian, "Break-glass custodian", [], Assignable: false),
         ];
         IncompatiblePair[] pairs =
@@ -437,44 +438,13 @@ public sealed class AccessModel
     }
 }
 
-/// <summary>Checks on free text in access changes. Codes are checked separately and never treated as text.</summary>
+/// <summary>Text rules: the shared second-person rules (one definition everywhere), bounded by access-control limits.</summary>
 internal static class AccessText
 {
     /// <summary>A subject is an opaque id from the identity provider: printable, no surrounding spaces, bounded.</summary>
-    public static bool IsSubject(string? subject) =>
-        subject is { Length: > 0 and <= AccessLimits.MaxSubjectLength }
-        && !char.IsWhiteSpace(subject[0]) && !char.IsWhiteSpace(subject[^1])
-        && subject.All(c => !char.IsControl(c) && !IsFormatOrSeparator(c) && !char.IsSurrogate(c));
+    public static bool IsSubject(string? subject) => subject is { Length: <= AccessLimits.MaxSubjectLength } && SecondPersonText.IsPerson(subject);
 
-    public static bool IsName(string? name, int maxLength) =>
-        name is not null && name.Length <= maxLength && IsAcceptableText(name);
+    public static bool IsName(string? name, int maxLength) => SecondPersonText.IsText(name, maxLength);
 
-    public static bool IsReason(string? reason) =>
-        reason is not null && reason.Length <= AccessLimits.MaxReasonLength && IsAcceptableText(reason);
-
-    private static bool IsAcceptableText(string text) =>
-        text.Any(c => !char.IsWhiteSpace(c) && !IsFormatOrSeparator(c))
-        && text.All(c => !char.IsControl(c) && !IsFormatOrSeparator(c) || c == (char)0x200C)
-        && HasNoLoneSurrogate(text);
-
-    /// <summary>Format characters (such as bidirectional controls) and line or paragraph separators.</summary>
-    private static bool IsFormatOrSeparator(char c) =>
-        char.GetUnicodeCategory(c) is UnicodeCategory.Format or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator;
-
-    private static bool HasNoLoneSurrogate(string text)
-    {
-        for (var i = 0; i < text.Length; i++)
-        {
-            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
-            {
-                i++;
-            }
-            else if (char.IsSurrogate(text[i]))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    public static bool IsReason(string? reason) => SecondPersonText.IsText(reason, AccessLimits.MaxReasonLength);
 }

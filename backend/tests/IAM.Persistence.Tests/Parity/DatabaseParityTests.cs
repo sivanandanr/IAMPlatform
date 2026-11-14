@@ -39,8 +39,8 @@ public sealed class DatabaseParityTests(ParityDatabase db)
             .Order(StringComparer.Ordinal)
             .ToList();
         string[] expected = db.Provider == DatabaseProvider.SqlServer
-            ? ["AttributeDefinition", "AttributeDefinitionVersion", "AttributeDefinitionVersionOperator", "__EFMigrationsHistory"]
-            : ["__ef_migrations_history", "attribute_definition", "attribute_definition_version", "attribute_definition_version_operator"];
+            ? ["AttributeDefinition", "AttributeDefinitionVersion", "AttributeDefinitionVersionOperator", "AttributePublishRequest", "__EFMigrationsHistory"]
+            : ["__ef_migrations_history", "attribute_definition", "attribute_definition_version", "attribute_definition_version_operator", "attribute_publish_request"];
         tables.ShouldBe(expected.Order(StringComparer.Ordinal).ToList());
     }
 

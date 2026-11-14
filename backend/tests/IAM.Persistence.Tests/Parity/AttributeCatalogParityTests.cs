@@ -1,5 +1,6 @@
 using System.Globalization;
 using IAM.BuildingBlocks.Persistence;
+using IAM.BuildingBlocks.Security;
 using IAM.Modules.Audit.Contracts;
 using IAM.Modules.Audit.Infrastructure;
 using IAM.Modules.Identity.Application.Attributes;
@@ -133,27 +134,267 @@ public sealed class AttributeCatalogParityTests(ParityDatabase db)
         (await AuditCountAsync(registered.DefinitionId, AttributeAuditActions.DraftUpdated, "Succeeded")).ShouldBe(1);
     }
 
-    // ---- Activation locked (DL-007) -----------------------------------------------------------------------------
+    // ---- Publishing with a second person (DL-007, DL-064) ------------------------------------------------------------
 
     [Fact]
-    public async Task PublishingIsRefusedAndTheRefusalIsAudited()
+    public async Task PublishingNeedsASecondPersonAndIsAudited()
     {
         var registered = await RegisterAsync(NewKey("division"));
+        AttributePublishRequestView proposed;
         await using (var scope = Service())
         {
-            await Should.ThrowAsync<AttributeActivationLockedException>(() => scope.Service.RequestPublishAsync(registered.DefinitionId, Ct));
+            proposed = await scope.Service.ProposePublishAsync(registered.DefinitionId, "Needed for the approval matrix", Ct);
+        }
+
+        proposed.State.ShouldBe("Proposed");
+        proposed.Maker.ShouldBe(Author);
+        proposed.ContentHash.ShouldBe(registered.ContentHash);
+
+        // Not visible to rules yet, and the maker can't decide it.
+        await using (var reader = Identity())
+        {
+            (await new AttributeCatalogReader(reader).FindPublishedByKeyAsync(registered.Key, Ct)).ShouldBeNull("drafts are never visible to rules");
+        }
+
+        await using (var scope = Service())
+        {
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.ApprovePublishAsync(proposed.Id, proposed.ContentHash, null, Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.MakerCannotDecide);
+        }
+
+        await using (var scope = Service(Checker))
+        {
+            var approved = await scope.Service.ApprovePublishAsync(proposed.Id, proposed.ContentHash, "Checked with the business owner", Ct);
+            approved.State.ShouldBe("Approved");
+            approved.Checker.ShouldBe(Checker);
+        }
+
+        await using (var reader = Identity())
+        {
+            var published = (await new AttributeCatalogReader(reader).FindPublishedByKeyAsync(registered.Key, Ct)).ShouldNotBeNull();
+            published.VersionId.ShouldBe(registered.VersionId);
+            published.ContentHash.ShouldBe(registered.ContentHash);
+            (await new AttributeCatalogReader(reader).FindPublishedByKeyAsync("Not A Key", Ct)).ShouldBeNull();
+        }
+
+        (await AuditCountAsync(registered.DefinitionId, AttributeAuditActions.PublishProposed, "Succeeded")).ShouldBe(1);
+        (await AuditCountAsync(registered.DefinitionId, AttributeAuditActions.PublishRefused, "Denied")).ShouldBe(1);
+        (await AuditCountAsync(registered.DefinitionId, AttributeAuditActions.PublishApproved, "Succeeded")).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ANewVersionReplacesThePublishedOneAndRetiresIt()
+    {
+        var registered = await RegisterAsync(NewKey("cost_center"));
+        await PublishAsync(registered.DefinitionId);
+        AttributeDraftView second;
+        await using (var scope = Service())
+        {
+            second = await scope.Service.StartNewDraftAsync(registered.DefinitionId, AttributeCatalogDomainTests.EeSubgroupCodeRequest() with { DisplayName = "Cost centre (v2)" }, Ct);
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() =>
+                scope.Service.StartNewDraftAsync(registered.DefinitionId, AttributeCatalogDomainTests.EeSubgroupCodeRequest(), Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.DraftExists);
+        }
+
+        (await AuditCountAsync(registered.DefinitionId, AttributeAuditActions.PublishRefused, "Denied")).ShouldBe(1, "a refused new draft is audited");
+        second.VersionNumber.ShouldBe(2);
+        await PublishAsync(registered.DefinitionId);
+
+        await using var reader = Identity();
+        var published = (await new AttributeCatalogReader(reader).FindPublishedByKeyAsync(registered.Key, Ct)).ShouldNotBeNull();
+        published.VersionId.ShouldBe(second.VersionId);
+        var states = await reader.AttributeDefinitionVersions.Where(v => v.AttributeDefinitionId == registered.DefinitionId)
+            .OrderBy(v => v.VersionNumber).Select(v => v.State).ToListAsync(Ct);
+        states.ShouldBe([AttributeVersionState.Retired, AttributeVersionState.Published]);
+    }
+
+    /// <summary>DL-065: while a publish request is pending, the draft can't change, so what is approved is what was proposed.</summary>
+    [Fact]
+    public async Task ADraftIsFrozenWhileAPublishIsPending()
+    {
+        var registered = await RegisterAsync(NewKey("grade_band"));
+        await using (var scope = Service())
+        {
+            await scope.Service.ProposePublishAsync(registered.DefinitionId, "Ready", Ct);
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.UpdateDraftAsync(
+                registered.DefinitionId, registered.ConcurrencyVersion, AttributeCatalogDomainTests.EeSubgroupCodeRequest() with { DisplayName = "Edited later" }, Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.AlreadyPending);
         }
 
         (await AuditCountAsync(registered.DefinitionId, AttributeAuditActions.PublishRefused, "Denied")).ShouldBe(1);
+        await using var check = Service();
+        (await check.Service.FindDraftAsync(registered.Key, Ct)).ShouldNotBeNull().Content.DisplayName.ShouldBe("Employee subgroup code");
+    }
+
+    /// <summary>DL-065: the approver names the content they reviewed; anything but the proposed content is refused.</summary>
+    [Fact]
+    public async Task AnApproverMustNameTheContentTheyReviewed()
+    {
+        var registered = await RegisterAsync(NewKey("pay_band"));
+        AttributePublishRequestView proposed;
         await using (var scope = Service())
         {
-            (await scope.Service.FindDraftAsync(registered.Key, Ct)).ShouldNotBeNull().State.ShouldBe("Draft");
+            proposed = await scope.Service.ProposePublishAsync(registered.DefinitionId, "Ready", Ct);
         }
 
-        await using var reader = Identity();
-        (await new AttributeCatalogReader(reader).FindPublishedByKeyAsync(registered.Key, Ct)).ShouldBeNull("drafts are never visible to rules");
-        (await new AttributeCatalogReader(reader).FindPublishedByIdAsync(registered.DefinitionId, Ct)).ShouldBeNull();
-        (await new AttributeCatalogReader(reader).FindPublishedByKeyAsync("Not A Key", Ct)).ShouldBeNull();
+        await using (var scope = Service(Checker))
+        {
+            var review = (await scope.Service.ReviewPublishRequestAsync(proposed.Id, Ct)).ShouldNotBeNull();
+            review.Draft.ShouldNotBeNull().ContentHash.ShouldBe(proposed.ContentHash);
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.ApprovePublishAsync(proposed.Id, new string('0', 64), null, Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.DraftChanged);
+            (await scope.Service.FindPublishRequestAsync(proposed.Id, Ct)).ShouldNotBeNull().State.ShouldBe("Proposed");
+            (await scope.Service.ApprovePublishAsync(proposed.Id, review.Draft.ContentHash, null, Ct)).State.ShouldBe("Approved");
+            (await scope.Service.ReviewPublishRequestAsync(proposed.Id, Ct)).ShouldNotBeNull().Draft.ShouldBeNull("nothing is a draft any more");
+        }
+    }
+
+    /// <summary>DL-065: whoever created or last edited the draft can't approve it, even holding the approve permission.</summary>
+    [Fact]
+    public async Task TheDraftsAuthorCannotApproveItEvenAfterARoleChange()
+    {
+        var both = new FakePermissions(("role-swapper", AttributeAuditActions.ManageAction), ("role-swapper", AttributeAuditActions.ApproveAction), (Author, AttributeAuditActions.ManageAction));
+        AttributeDraftView registered;
+        await using (var scope = Service("role-swapper", permissions: both))
+        {
+            registered = await scope.Service.RegisterAsync(new RegisterAttributeRequest(NewKey("swap_code"), AttributeCatalogDomainTests.EeSubgroupCodeRequest()), Ct);
+        }
+
+        AttributePublishRequestView proposed;
+        await using (var scope = Service(Author, permissions: both))
+        {
+            proposed = await scope.Service.ProposePublishAsync(registered.DefinitionId, "Proposed by someone else", Ct);
+        }
+
+        await using (var scope = Service("role-swapper", permissions: both))
+        {
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.ApprovePublishAsync(proposed.Id, proposed.ContentHash, null, Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.MakerCannotDecide);
+        }
+    }
+
+    [Fact]
+    public async Task OnlyAllowedPeopleDecideAndOnlyOnce()
+    {
+        var registered = await RegisterAsync(NewKey("band_code"));
+        AttributePublishRequestView proposed;
+        await using (var scope = Service())
+        {
+            proposed = await scope.Service.ProposePublishAsync(registered.DefinitionId, "Ready", Ct);
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.ProposePublishAsync(registered.DefinitionId, "Again", Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.AlreadyPending);
+        }
+
+        await using (var scope = Service("outsider"))
+        {
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.ApprovePublishAsync(proposed.Id, proposed.ContentHash, null, Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.NotAllowed);
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.ProposePublishAsync(registered.DefinitionId, "Me too", Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.NotAllowed);
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.WithdrawPublishAsync(proposed.Id, null, Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.NotAllowed);
+
+            // The service checks the manage permission on every catalog write, not only at the endpoint.
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.RegisterAsync(
+                new RegisterAttributeRequest(NewKey("outsider_code"), AttributeCatalogDomainTests.EeSubgroupCodeRequest()), Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.NotAllowed);
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.UpdateDraftAsync(
+                registered.DefinitionId, registered.ConcurrencyVersion, AttributeCatalogDomainTests.EeSubgroupCodeRequest(), Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.NotAllowed);
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.StartNewDraftAsync(
+                registered.DefinitionId, AttributeCatalogDomainTests.EeSubgroupCodeRequest(), Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.NotAllowed);
+        }
+
+        // Someone who may manage the catalog, but didn't propose it, can't withdraw it either.
+        await using (var scope = Service("temporary-author"))
+        {
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.WithdrawPublishAsync(proposed.Id, null, Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.NotMaker);
+        }
+
+        await using (var scope = Service(Checker))
+        {
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.RejectPublishAsync(proposed.Id, " ", Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.InvalidReason);
+            await scope.Service.ApprovePublishAsync(proposed.Id, proposed.ContentHash, null, Ct);
+        }
+
+        await using (var scope = Service(SecondChecker))
+        {
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.ApprovePublishAsync(proposed.Id, proposed.ContentHash, null, Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.NotProposed);
+        }
+
+        (await AuditCountAsync(registered.DefinitionId, AttributeAuditActions.PublishApproved, "Succeeded")).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AMakerWhoLostThePermissionCannotHaveTheRequestApproved()
+    {
+        var registered = await RegisterAsync(NewKey("site_code"));
+        AttributePublishRequestView proposed;
+        await using (var scope = Service("temporary-author"))
+        {
+            proposed = await scope.Service.ProposePublishAsync(registered.DefinitionId, "Ready", Ct);
+        }
+
+        await using (var scope = Service(Checker, permissions: new FakePermissions((Checker, AttributeAuditActions.ApproveAction))))
+        {
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.ApprovePublishAsync(proposed.Id, proposed.ContentHash, null, Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.MakerNoLongerAllowed);
+            (await scope.Service.RejectPublishAsync(proposed.Id, "Maker left", Ct)).State.ShouldBe("Rejected");
+        }
+    }
+
+    [Fact]
+    public async Task DecidedRequestsAreImmutableInTheDatabase()
+    {
+        var registered = await RegisterAsync(NewKey("unit_code"));
+        var request = await PublishAsync(registered.DefinitionId);
+        var requests = IsSqlServer ? "[identity].[AttributePublishRequest]" : "identity.attribute_publish_request";
+        foreach (var login in new[] { db.IdentityAppConnectionString, db.MigratorConnectionString })
+        {
+            foreach (var sql in new[]
+            {
+                $"UPDATE {requests} SET {Col("DecisionReason")} = 'edited' WHERE {Col("Id")} = '{request}'",
+                $"UPDATE {requests} SET {Col("Maker")} = 'someone' WHERE {Col("Id")} = '{request}'",
+                $"DELETE FROM {requests} WHERE {Col("Id")} = '{request}'",
+            })
+            {
+                (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(login, sql, Ct))).Message.ShouldMatch("(?i)(immutable|reference|foreign key)", sql);
+            }
+        }
+
+        // A request nothing references (rejected) can't be changed or deleted either: here the trigger itself refuses.
+        var rejected = await RegisterAsync(NewKey("rejected_code"));
+        Guid rejectedId;
+        await using (var scope = Service())
+        {
+            rejectedId = (await scope.Service.ProposePublishAsync(rejected.DefinitionId, "Ready", Ct)).Id;
+        }
+
+        await using (var scope = Service(Checker))
+        {
+            await scope.Service.RejectPublishAsync(rejectedId, "Not needed", Ct);
+        }
+
+        foreach (var login in new[] { db.IdentityAppConnectionString, db.MigratorConnectionString })
+        {
+            foreach (var sql in new[]
+            {
+                $"DELETE FROM {requests} WHERE {Col("Id")} = '{rejectedId}'",
+                $"UPDATE {requests} SET {Col("State")} = 'Proposed', {Col("Checker")} = NULL, {Col("DecisionReason")} = NULL, {Col("DecidedAtUtc")} = NULL WHERE {Col("Id")} = '{rejectedId}'",
+            })
+            {
+                (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(login, sql, Ct))).Message.ShouldContain("immutable", Case.Insensitive, sql);
+            }
+        }
+
+        // A self-approved request can't even be written.
+        var insert = $"INSERT INTO {requests} ({string.Join(", ", RequestColumns.Select(Col))}) "
+            + $"VALUES ('{Guid.CreateVersion7()}', '{registered.DefinitionId}', '{registered.VersionId}', 1, '{new string('a', 64)}', 'self', 'r', '2026-11-13T00:00:00+00:00', 'Approved', 'self', '2026-11-13T00:00:00+00:00', '2026-11-13T00:00:00+00:00', 't', '2026-11-13T00:00:00+00:00', 't', 1)";
+        (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(db.IdentityAppConnectionString, insert, Ct))).Message.ShouldMatch("(?i)(check|constraint)");
     }
 
     // ---- Immutability (database triggers) -----------------------------------------------------------------------
@@ -187,22 +428,49 @@ public sealed class AttributeCatalogParityTests(ParityDatabase db)
     }
 
     /// <summary>
-    /// DL-007 in the database: until maker-checker exists only Draft versions may exist, so neither the Identity app
-    /// login nor the schema owner can publish with SQL, by update or by inserting an already-published row.
+    /// DL-007 / DL-064 in the database: a version becomes published only by an approved publish request that names it, so
+    /// neither the Identity app login nor the schema owner can publish with SQL, by update, with a pending request, or by
+    /// inserting an already-published row; and unknown states are refused.
     /// </summary>
     [Fact]
     public async Task PublishingBySqlIsRefusedByTheDatabase()
     {
         var registered = await RegisterAsync(NewKey("location_code"));
+        AttributePublishRequestView pending;
+        await using (var scope = Service())
+        {
+            pending = await scope.Service.ProposePublishAsync(registered.DefinitionId, "Pending", Ct);
+        }
+
         var publish = $"UPDATE {Versions} SET {Col("State")} = 'Published' WHERE {Col("Id")} = '{registered.VersionId}'";
+        var publishWithPending = $"UPDATE {Versions} SET {Col("State")} = 'Published', {Col("PublishedByRequestId")} = '{pending.Id}' WHERE {Col("Id")} = '{registered.VersionId}'";
         foreach (var login in new[] { db.IdentityAppConnectionString, db.MigratorConnectionString })
         {
-            (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(login, publish, Ct))).Message.ShouldMatch("(?i)(check|constraint)");
+            (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(login, publish, Ct))).Message.ShouldMatch("(?i)(check|constraint|approved publish request)");
+            (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(login, publishWithPending, Ct))).Message.ShouldContain("approved publish request", Case.Insensitive);
             (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(login, CopyVersionSql(registered.VersionId, "Published", 2), Ct)))
-                .Message.ShouldMatch("(?i)(check|constraint)");
+                .Message.ShouldMatch("(?i)(check|constraint|approved publish request)");
             (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(
                 login, $"UPDATE {Versions} SET {Col("State")} = 'Active' WHERE {Col("Id")} = '{registered.VersionId}'", Ct)))
-                .Message.ShouldMatch("(?i)(check|constraint)");
+                .Message.ShouldMatch("(?i)(check|constraint|approved publish request)");
+        }
+
+        // DL-065c: an approved request publishes only the attribute, version number and content it names. Forged approved
+        // requests (the app login can write them, R-033) that differ in content hash or version number can't publish the draft.
+        var requests = IsSqlServer ? "[identity].[AttributePublishRequest]" : "identity.attribute_publish_request";
+        foreach (var (hash, number) in new[] { (new string('a', 64), 1), (registered.ContentHash, 2) })
+        {
+            var forged = Guid.CreateVersion7();
+            await db.ExecuteAsync(
+                db.IdentityAppConnectionString,
+                $"INSERT INTO {requests} ({string.Join(", ", RequestColumns.Select(Col))}) "
+                + $"VALUES ('{forged}', '{registered.DefinitionId}', '{registered.VersionId}', {number}, '{hash}', 'maker', 'r', '2026-11-13T00:00:00+00:00', 'Approved', 'checker', '2026-11-13T00:00:00+00:00', '2026-11-13T00:00:00+00:00', 't', '2026-11-13T00:00:00+00:00', 't', 1)",
+                Ct);
+            (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(
+                db.IdentityAppConnectionString,
+                $"UPDATE {Versions} SET {Col("State")} = 'Published', {Col("PublishedByRequestId")} = '{forged}' WHERE {Col("Id")} = '{registered.VersionId}'",
+                Ct)))
+                .Message.ShouldContain("approved publish request", Case.Insensitive, $"hash {hash[..8]}, version {number}");
         }
 
         // A second draft of the same attribute is refused too (at most one draft).
@@ -213,47 +481,41 @@ public sealed class AttributeCatalogParityTests(ParityDatabase db)
         (await new AttributeCatalogReader(reader).FindPublishedByKeyAsync(registered.Key, Ct)).ShouldBeNull();
     }
 
-    /// <summary>
-    /// The immutability triggers for published versions are the layer that will matter once maker-checker lifts the
-    /// Draft-only constraint. To prove them now, the schema owner lifts the constraint briefly, publishes one version,
-    /// runs the trigger assertions, then restores the constraint (NOT VALID / WITH NOCHECK, so it is enforced again for
-    /// every later change).
-    /// </summary>
+    /// <summary>Once published (through an approved request), a version and its operators never change, except retirement.</summary>
     [Fact]
     public async Task PublishedVersionsAndTheirOperatorsAreImmutable()
     {
         var registered = await RegisterAsync(NewKey("employee_group"));
+        await PublishAsync(registered.DefinitionId);
         var id = $"'{registered.VersionId}'";
-        await WithConstraintLiftedAsync(registered.VersionId, async () =>
+        foreach (var sql in new[]
         {
-            foreach (var sql in new[]
-            {
             $"UPDATE {Versions} SET {Col("DisplayName")} = 'changed' WHERE {Col("Id")} = {id}",
-            $"UPDATE {Versions} SET {Col("State")} = 'Draft' WHERE {Col("Id")} = {id}",
+            $"UPDATE {Versions} SET {Col("DisplayName")} = UPPER({Col("DisplayName")}) WHERE {Col("Id")} = {id}",
+            $"UPDATE {Versions} SET {Col("State")} = 'Draft', {Col("PublishedByRequestId")} = NULL WHERE {Col("Id")} = {id}",
             $"DELETE FROM {Operators} WHERE {Col("AttributeDefinitionVersionId")} = {id}",
             $"UPDATE {Operators} SET {Col("Operator")} = 'NotEquals' WHERE {Col("AttributeDefinitionVersionId")} = {id} AND {Col("Operator")} = 'Equals'",
             CopyOperatorSql(registered.VersionId, "NotEquals"),
             $"DELETE FROM {Versions} WHERE {Col("Id")} = {id}",
         })
-            {
-                (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(db.IdentityAppConnectionString, sql, Ct)))
-                    .Message.ShouldContain("immutable", Case.Insensitive, sql);
-                (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(db.MigratorConnectionString, sql, Ct)))
-                    .Message.ShouldContain("immutable", Case.Insensitive, $"the schema owner too: {sql}");
-            }
-        });
+        {
+            (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(db.IdentityAppConnectionString, sql, Ct)))
+                .Message.ShouldMatch("(?i)(immutable|check|constraint)", sql);
+            (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(db.MigratorConnectionString, sql, Ct)))
+                .Message.ShouldMatch("(?i)(immutable|check|constraint)", $"the schema owner too: {sql}");
+        }
 
-        // The domain refuses too: there is no draft left to edit or publish.
+        // The domain refuses too: there is no draft left to edit or publish, and that refusal is audited.
         await using (var scope = Service())
         {
             await Should.ThrowAsync<AttributeDefinitionRejectedException>(() =>
                 scope.Service.UpdateDraftAsync(registered.DefinitionId, 1, AttributeCatalogDomainTests.EeSubgroupCodeRequest(), Ct));
-            await Should.ThrowAsync<AttributeDefinitionRejectedException>(() => scope.Service.RequestPublishAsync(registered.DefinitionId, Ct));
+            (await Should.ThrowAsync<AttributePublishRefusedException>(() => scope.Service.ProposePublishAsync(registered.DefinitionId, "Again", Ct)))
+                .Refusal.ShouldBe(AttributePublishRefusal.NoDraft);
         }
 
-        (await AuditCountAsync(registered.DefinitionId, AttributeAuditActions.PublishRefused, "Denied")).ShouldBe(0, "no draft means no publish attempt to record");
+        (await AuditCountAsync(registered.DefinitionId, AttributeAuditActions.PublishRefused, "Denied")).ShouldBe(1);
 
-        // Once published, the reader exposes it to other modules, with its operators and hash.
         await using var reader = Identity();
         var published = (await new AttributeCatalogReader(reader).FindPublishedByKeyAsync(registered.Key, Ct)).ShouldNotBeNull();
         published.VersionId.ShouldBe(registered.VersionId);
@@ -335,29 +597,6 @@ public sealed class AttributeCatalogParityTests(ParityDatabase db)
         return $"INSERT INTO {Operators} ({columns}) SELECT {values} FROM {Operators} WHERE {Col("AttributeDefinitionVersionId")} = '{versionId}' AND {Col("Operator")} = 'Equals'";
     }
 
-    /// <summary>
-    /// Test-only: as the schema owner, lift the Draft-only constraint, publish one version, run the assertions, and restore the constraint
-    /// without re-validating existing rows, so it is enforced again for every later insert and update.
-    /// </summary>
-    private async Task WithConstraintLiftedAsync(Guid versionId, Func<Task> assertions)
-    {
-        var (drop, restore) = IsSqlServer
-            ? ("ALTER TABLE [identity].[AttributeDefinitionVersion] DROP CONSTRAINT [CK_AttributeDefinitionVersion_State_DraftOnly]",
-               "ALTER TABLE [identity].[AttributeDefinitionVersion] WITH NOCHECK ADD CONSTRAINT [CK_AttributeDefinitionVersion_State_DraftOnly] CHECK ([State] = N'Draft')")
-            : ("ALTER TABLE identity.attribute_definition_version DROP CONSTRAINT ck_attribute_definition_version_state_draft_only",
-               "ALTER TABLE identity.attribute_definition_version ADD CONSTRAINT ck_attribute_definition_version_state_draft_only CHECK (state = 'Draft') NOT VALID");
-        await db.ExecuteAsync(db.MigratorConnectionString, drop, Ct);
-        try
-        {
-            await db.ExecuteAsync(db.MigratorConnectionString, $"UPDATE {Versions} SET {Col("State")} = 'Published' WHERE {Col("Id")} = '{versionId}'", Ct);
-            await assertions();
-        }
-        finally
-        {
-            await db.ExecuteAsync(db.MigratorConnectionString, restore, Ct);
-        }
-    }
-
     private static string NewKey(string prefix) => $"{prefix}_{Guid.NewGuid().ToString("N")[..8]}";
 
     private IdentityDbContext Identity(string? actor = "catalog-admin") => TestSupport.CreateIdentity(
@@ -365,7 +604,24 @@ public sealed class AttributeCatalogParityTests(ParityDatabase db)
         db.IdentityAppConnectionString,
         new AuditingSaveChangesInterceptor(TimeProvider.System, new FixedActor(actor)));
 
-    private ServiceScope Service(string? actor = "catalog-admin", bool registerAuditActions = true)
+    private static readonly string[] RequestColumns =
+    [
+        "Id", "AttributeDefinitionId", "AttributeDefinitionVersionId", "VersionNumber", "ContentHash", "Maker", "Reason", "ProposedAtUtc",
+        "State", "Checker", "DecidedAtUtc", "CreatedAtUtc", "CreatedBy", "ModifiedAtUtc", "ModifiedBy", "Version",
+    ];
+
+    private const string Author = "catalog-admin";
+    private const string Checker = "catalog-checker";
+    private const string SecondChecker = "catalog-checker-2";
+
+    /// <summary>Who may manage and approve in these tests (the real answer comes from the access model, DL-064).</summary>
+    private static readonly FakePermissions DefaultPermissions = new(
+        (Author, AttributeAuditActions.ManageAction),
+        ("temporary-author", AttributeAuditActions.ManageAction),
+        (Checker, AttributeAuditActions.ApproveAction),
+        (SecondChecker, AttributeAuditActions.ApproveAction));
+
+    private ServiceScope Service(string? actor = Author, bool registerAuditActions = true, FakePermissions? permissions = null)
     {
         var context = Identity(actor);
         var writer = new AuditWriter(
@@ -373,7 +629,31 @@ public sealed class AttributeCatalogParityTests(ParityDatabase db)
             TimeProvider.System,
             new FixedActor(actor),
             new AuditActionCatalog(registerAuditActions ? AttributeAuditActions.All.Select(a => new AuditActionRegistration(a)) : []));
-        return new ServiceScope(context, new AttributeCatalogAdministrationService(context, writer, TimeProvider.System, TestSupport.ProviderFor(db.Provider)));
+        return new ServiceScope(context, new AttributeCatalogAdministrationService(
+            context, writer, TimeProvider.System, TestSupport.ProviderFor(db.Provider), new FixedActor(actor), permissions ?? DefaultPermissions));
+    }
+
+    /// <summary>Proposes publishing the current draft as the author and approves it as the checker; returns the request id.</summary>
+    private async Task<Guid> PublishAsync(Guid definitionId)
+    {
+        AttributePublishRequestView proposed;
+        await using (var scope = Service())
+        {
+            proposed = await scope.Service.ProposePublishAsync(definitionId, "Publish", Ct);
+        }
+
+        await using (var scope = Service(Checker))
+        {
+            await scope.Service.ApprovePublishAsync(proposed.Id, proposed.ContentHash, null, Ct);
+        }
+
+        return proposed.Id;
+    }
+
+    private sealed class FakePermissions(params (string Person, string Action)[] grants) : IPermissionEvaluator
+    {
+        public Task<bool> CanAsync(string subject, string action, CancellationToken cancellationToken) =>
+            Task.FromResult(grants.Contains((subject, action)));
     }
 
     private async Task<AttributeDraftView> RegisterAsync(string key)

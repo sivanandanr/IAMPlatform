@@ -1,3 +1,5 @@
+using IAM.BuildingBlocks.Abstractions.SecondPerson;
+
 namespace IAM.Modules.Administration.Domain.Access;
 
 public enum ChangeState
@@ -16,37 +18,36 @@ public enum ChangeState
 /// </summary>
 public sealed class ChangeRequest
 {
-    private ChangeRequest(Guid id, AccessChange change, string maker, string reason, DateTimeOffset proposedAtUtc, long proposedAgainstVersion)
+    private readonly SecondPersonDecision _decision;
+
+    private ChangeRequest(Guid id, AccessChange change, SecondPersonDecision decision, long proposedAgainstVersion)
     {
         Id = id;
         Change = change;
-        Maker = maker;
-        Reason = reason;
-        ProposedAtUtc = proposedAtUtc;
+        _decision = decision;
         ProposedAgainstVersion = proposedAgainstVersion;
-        State = ChangeState.Proposed;
     }
 
     public Guid Id { get; }
 
     public AccessChange Change { get; }
 
-    public string Maker { get; }
+    public string Maker => _decision.Maker;
 
-    public string Reason { get; }
+    public string Reason => _decision.Reason;
 
-    public DateTimeOffset ProposedAtUtc { get; }
+    public DateTimeOffset ProposedAtUtc => _decision.ProposedAtUtc;
 
     /// <summary>The model version the maker saw. Approval checks again against the current one; this is evidence, not a lock.</summary>
     public long ProposedAgainstVersion { get; }
 
-    public ChangeState State { get; private set; }
+    public ChangeState State => (ChangeState)_decision.State;
 
-    public string? Checker { get; private set; }
+    public string? Checker => _decision.Checker;
 
-    public string? DecisionReason { get; private set; }
+    public string? DecisionReason => _decision.DecisionReason;
 
-    public DateTimeOffset? DecidedAtUtc { get; private set; }
+    public DateTimeOffset? DecidedAtUtc => _decision.DecidedAtUtc;
 
     /// <summary>The model version this change produced, once approved.</summary>
     public long? AppliedAsVersion { get; private set; }
@@ -72,13 +73,13 @@ public sealed class ChangeRequest
         }
 
         model.Check(change);
-        return new ChangeRequest(id, change, maker, reason!, now.ToUniversalTime(), model.Version);
+        return new ChangeRequest(id, change, Shared(() => SecondPersonDecision.Propose(maker, reason, now)), model.Version);
     }
 
     /// <summary>
     /// Rebuilds a stored change request. Its fields are checked again, so a damaged store can't produce one the rules
-    /// forbid: a decided change needs a decider other than the maker (or the maker, for a withdrawal) and a time, and only
-    /// an approved change has an applied version.
+    /// forbid: the shared second-person shape (a decided change needs a decider other than the maker, or the maker for a
+    /// withdrawal, and a time), and only an approved change has an applied version, newer than the one it was proposed on.
     /// </summary>
     public static ChangeRequest Restore(
         Guid id,
@@ -94,33 +95,26 @@ public sealed class ChangeRequest
         long? appliedAsVersion)
     {
         ArgumentNullException.ThrowIfNull(change);
-        var valid = id != Guid.Empty
-            && AccessText.IsSubject(maker)
-            && AccessText.IsReason(reason)
-            && proposedAgainstVersion >= 0
-            && Enum.IsDefined(state)
-            && (decisionReason is null || AccessText.IsReason(decisionReason))
-            && state switch
-            {
-                ChangeState.Proposed => checker is null && decisionReason is null && decidedAtUtc is null && appliedAsVersion is null,
-                ChangeState.Withdrawn => string.Equals(checker, maker, StringComparison.Ordinal) && decidedAtUtc is not null && appliedAsVersion is null,
-                ChangeState.Rejected => AccessText.IsSubject(checker) && !string.Equals(checker, maker, StringComparison.Ordinal) && decisionReason is not null && decidedAtUtc is not null && appliedAsVersion is null,
-                ChangeState.Approved => AccessText.IsSubject(checker) && !string.Equals(checker, maker, StringComparison.Ordinal) && decidedAtUtc is not null && appliedAsVersion > proposedAgainstVersion,
-                _ => false,
-            };
-        if (!valid)
+        SecondPersonDecision decision;
+        try
         {
-            throw new AccessRefusedException(AccessRefusal.InvalidChange);
+            decision = SecondPersonDecision.Restore(maker, reason, proposedAtUtc, (SecondPersonState)state, checker, decisionReason, decidedAtUtc);
+        }
+        catch (SecondPersonRefusedException ex)
+        {
+            throw new AccessRefusedException(AccessRefusal.InvalidChange, ex);
         }
 
-        return new ChangeRequest(id, change, maker, reason, proposedAtUtc, proposedAgainstVersion)
-        {
-            State = state,
-            Checker = checker,
-            DecisionReason = decisionReason,
-            DecidedAtUtc = decidedAtUtc,
-            AppliedAsVersion = appliedAsVersion,
-        };
+        var valid = id != Guid.Empty
+            && proposedAgainstVersion >= 0
+            && AccessText.IsSubject(maker)
+            && (checker is null || AccessText.IsSubject(checker))
+            && AccessText.IsReason(reason)
+            && (decisionReason is null || AccessText.IsReason(decisionReason))
+            && (state == ChangeState.Approved ? appliedAsVersion > proposedAgainstVersion : appliedAsVersion is null);
+        return !valid
+            ? throw new AccessRefusedException(AccessRefusal.InvalidChange)
+            : new ChangeRequest(id, change, decision, proposedAgainstVersion) { AppliedAsVersion = appliedAsVersion };
     }
 
     /// <summary>Approves the change and returns the model it produces. The caller stores both together, or neither.</summary>
@@ -143,7 +137,7 @@ public sealed class ChangeRequest
         RequireNotSelfGrant(Change, Maker, current);
         RequireNotSelfGrant(Change, checker, current);
         var next = current.Apply(Change);
-        Decide(ChangeState.Approved, checker, reason, now);
+        Shared(() => _decision.Approve(checker, reason, now));
         AppliedAsVersion = next.Version;
         return next;
     }
@@ -157,25 +151,11 @@ public sealed class ChangeRequest
             throw new AccessRefusedException(AccessRefusal.InvalidReason);
         }
 
-        Decide(ChangeState.Rejected, checker, reason, now);
+        Shared(() => _decision.Reject(checker, reason, now));
     }
 
     /// <summary>Only the maker can withdraw their own proposal.</summary>
-    public void Withdraw(string actor, string? reason, DateTimeOffset now)
-    {
-        RequireProposed();
-        if (!string.Equals(actor, Maker, StringComparison.Ordinal))
-        {
-            throw new AccessRefusedException(AccessRefusal.NotMaker);
-        }
-
-        if (reason is not null && !AccessText.IsReason(reason))
-        {
-            throw new AccessRefusedException(AccessRefusal.InvalidReason);
-        }
-
-        Decide(ChangeState.Withdrawn, actor, reason, now);
-    }
+    public void Withdraw(string actor, string? reason, DateTimeOffset now) => Shared(() => _decision.Withdraw(actor, reason, now));
 
     /// <summary>
     /// Nobody may give themselves a role, or change the actions of a role they hold: that would widen their own access
@@ -195,33 +175,41 @@ public sealed class ChangeRequest
         }
     }
 
+    /// <summary>Runs a shared rule and reports its refusal in access-control terms.</summary>
+    private static T Shared<T>(Func<T> rule)
+    {
+        try
+        {
+            return rule();
+        }
+        catch (SecondPersonRefusedException ex)
+        {
+            throw new AccessRefusedException(Map(ex.Refusal), ex);
+        }
+    }
+
+    private static void Shared(Action rule) => Shared(() =>
+    {
+        rule();
+        return true;
+    });
+
+    private static AccessRefusal Map(SecondPersonRefusal? refusal) => refusal switch
+    {
+        SecondPersonRefusal.NotProposed => AccessRefusal.NotProposed,
+        SecondPersonRefusal.MakerCannotDecide => AccessRefusal.MakerCannotDecide,
+        SecondPersonRefusal.NotMaker => AccessRefusal.NotMaker,
+        SecondPersonRefusal.InvalidReason => AccessRefusal.InvalidReason,
+        SecondPersonRefusal.InvalidPerson => AccessRefusal.NotAllowed,
+        _ => AccessRefusal.InvalidChange,
+    };
+
     private void RequireDecider(string checker, AccessModel current)
     {
-        RequireProposed();
-        if (string.Equals(checker, Maker, StringComparison.Ordinal))
-        {
-            throw new AccessRefusedException(AccessRefusal.MakerCannotDecide);
-        }
-
+        Shared(() => _decision.RequireDecider(checker));
         if (!AccessText.IsSubject(checker) || !current.Can(checker, ActionCatalog.ChangesApprove))
         {
             throw new AccessRefusedException(AccessRefusal.NotAllowed);
         }
-    }
-
-    private void RequireProposed()
-    {
-        if (State != ChangeState.Proposed)
-        {
-            throw new AccessRefusedException(AccessRefusal.NotProposed);
-        }
-    }
-
-    private void Decide(ChangeState state, string by, string? reason, DateTimeOffset now)
-    {
-        State = state;
-        Checker = by;
-        DecisionReason = reason;
-        DecidedAtUtc = now.ToUniversalTime();
     }
 }

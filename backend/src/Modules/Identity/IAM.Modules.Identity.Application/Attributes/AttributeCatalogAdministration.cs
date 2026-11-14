@@ -68,9 +68,9 @@ public sealed class AttributeDefinitionNotFoundException : Exception
 }
 
 /// <summary>
-/// Administration of the attribute catalog (S1-08). Every change is written together with its audit event in one
-/// transaction (ADR-0018). There is no HTTP endpoint yet: catalog administration waits for the permission model
-/// (R-023, ADR-0008, P0-013).
+/// Administration of the attribute catalog (S1-08, DL-007, DL-064). Every change is written together with its audit
+/// event in one transaction (ADR-0018). Publishing needs two people: one proposes publishing an exact draft, a different
+/// person with the approve permission decides; refusals are audited. Who acts always comes from the server-side actor.
 /// </summary>
 public interface IAttributeCatalogAdministration
 {
@@ -79,10 +79,84 @@ public interface IAttributeCatalogAdministration
     /// <summary>Replaces the current draft. <paramref name="expectedConcurrencyVersion"/> must match the draft's current version.</summary>
     Task<AttributeDraftView> UpdateDraftAsync(Guid definitionId, long expectedConcurrencyVersion, AttributeDraftRequest request, CancellationToken cancellationToken);
 
-    /// <summary>Always refused in S1-08 (DL-007); the refusal itself is audited. Throws <see cref="AttributeActivationLockedException"/>.</summary>
-    Task RequestPublishAsync(Guid definitionId, CancellationToken cancellationToken);
+    /// <summary>Starts the next version as a draft, once a version is published and no draft exists.</summary>
+    Task<AttributeDraftView> StartNewDraftAsync(Guid definitionId, AttributeDraftRequest request, CancellationToken cancellationToken);
 
     Task<AttributeDraftView?> FindDraftAsync(string key, CancellationToken cancellationToken);
+
+    /// <summary>Proposes publishing the current draft exactly as it is. Needs <c>identity.attributes.manage</c>.</summary>
+    Task<AttributePublishRequestView> ProposePublishAsync(Guid definitionId, string reason, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Publishes the named draft and retires the previous version. Needs <c>identity.attributes.approve</c>; never the maker,
+    /// nor the draft's creator or last editor. <paramref name="reviewedContentHash"/> is the hash of the content the approver
+    /// reviewed: it must be the request's and the current draft's (DL-065).
+    /// </summary>
+    Task<AttributePublishRequestView> ApprovePublishAsync(Guid requestId, string reviewedContentHash, string? reason, CancellationToken cancellationToken);
+
+    Task<AttributePublishRequestView> RejectPublishAsync(Guid requestId, string reason, CancellationToken cancellationToken);
+
+    /// <summary>Only the maker can withdraw their own request.</summary>
+    Task<AttributePublishRequestView> WithdrawPublishAsync(Guid requestId, string? reason, CancellationToken cancellationToken);
+
+    Task<AttributePublishRequestView?> FindPublishRequestAsync(Guid requestId, CancellationToken cancellationToken);
+
+    /// <summary>A request with the draft it would publish, for an approver to review; the draft is absent once it is no longer a draft.</summary>
+    Task<AttributePublishReview?> ReviewPublishRequestAsync(Guid requestId, CancellationToken cancellationToken);
+}
+
+/// <summary>A publish request as callers see it: plain values only.</summary>
+public sealed record AttributePublishRequestView(
+    Guid Id,
+    Guid DefinitionId,
+    int VersionNumber,
+    string ContentHash,
+    string Maker,
+    string Reason,
+    DateTimeOffset ProposedAtUtc,
+    string State,
+    string? Checker,
+    string? DecisionReason,
+    DateTimeOffset? DecidedAtUtc);
+
+/// <summary>A publish request and the current draft it names. The approver checks the content and sends its hash back.</summary>
+public sealed record AttributePublishReview(AttributePublishRequestView Request, AttributeDraftView? Draft);
+
+/// <summary>Someone else decided or changed the same request or draft first. Nothing was saved.</summary>
+public sealed class AttributePublishConflictException : Exception
+{
+    public AttributePublishConflictException()
+        : base("The attribute or its publish request was changed by someone else; reload it and try again.")
+    {
+    }
+
+    public AttributePublishConflictException(string message)
+        : base(message)
+    {
+    }
+
+    public AttributePublishConflictException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
+}
+
+public sealed class AttributePublishRequestNotFoundException : Exception
+{
+    public AttributePublishRequestNotFoundException()
+        : base("No such attribute publish request.")
+    {
+    }
+
+    public AttributePublishRequestNotFoundException(string message)
+        : base(message)
+    {
+    }
+
+    public AttributePublishRequestNotFoundException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
 }
 
 /// <summary>Maps requests to domain drafts. Enum values must be exact defined names; numbers and other spellings are refused.</summary>

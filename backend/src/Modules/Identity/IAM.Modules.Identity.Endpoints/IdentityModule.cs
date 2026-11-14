@@ -21,7 +21,14 @@ public static class IdentityModule
     public static IServiceCollection AddIdentityModule(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
-        return services.AddIdentityInfrastructure();
+        services.AddIdentityInfrastructure();
+        services.AddExceptionHandler<AttributeExceptionHandler>();
+        services.AddSingleton<FluentValidation.IValidator<RegisterAttributeBody>, RegisterAttributeBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<UpdateDraftBody>, UpdateDraftBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<NewDraftBody>, NewDraftBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<PublishReasonBody>, PublishReasonBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<ApprovePublishBody>, ApprovePublishBodyValidator>();
+        return services;
     }
 
     public static IEndpointRouteBuilder MapIdentityEndpoints(this IEndpointRouteBuilder endpoints)
@@ -34,6 +41,9 @@ public static class IdentityModule
         group.MapGet("/me", GetCurrentSubject)
             .RequirePermission(AccessActions.SelfRead)
             .WithName("Identity.GetCurrentSubject");
+
+        // DL-064: the attribute catalog, with publishing decided by a second person.
+        AttributeCatalogApi.Map(endpoints, group.MapGroup("/attributes"));
 
         return endpoints;
     }

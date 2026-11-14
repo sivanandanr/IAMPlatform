@@ -28,28 +28,46 @@ public sealed class AttributeDefinitionRejectedException : Exception
     public string? Field { get; }
 }
 
-/// <summary>
-/// Publishing or activating an attribute is refused until the shared maker-checker workflow exists (DL-007,
-/// IAM-WF-019): no definition can become visible to rules on one person's say-so.
-/// </summary>
-public sealed class AttributeActivationLockedException : Exception
+/// <summary>Why publishing an attribute version was refused (DL-007, DL-064). Codes only, never people or content.</summary>
+public enum AttributePublishRefusal
 {
-    public const string Reason = "Attribute activation is locked until maker-checker approval is built (DL-007).";
+    NoDraft = 1,
+    DraftChanged = 2,
+    NotAllowed = 3,
+    MakerCannotDecide = 4,
+    NotProposed = 5,
+    NotMaker = 6,
+    InvalidReason = 7,
+    InvalidRecord = 8,
+    AlreadyPending = 9,
+    DraftExists = 10,
+    NothingPublished = 11,
+    MakerNoLongerAllowed = 12,
+}
 
-    public AttributeActivationLockedException()
-        : base(Reason)
+public sealed class AttributePublishRefusedException : Exception
+{
+    public AttributePublishRefusedException()
     {
     }
 
-    public AttributeActivationLockedException(string message)
+    public AttributePublishRefusedException(string message)
         : base(message)
     {
     }
 
-    public AttributeActivationLockedException(string message, Exception innerException)
+    public AttributePublishRefusedException(string message, Exception innerException)
         : base(message, innerException)
     {
     }
+
+    public AttributePublishRefusedException(AttributePublishRefusal refusal, Exception? innerException = null)
+        : base($"Attribute publishing refused: {refusal}.", innerException)
+    {
+        Refusal = refusal;
+    }
+
+    public AttributePublishRefusal? Refusal { get; }
 }
 
 /// <summary>Static rules of the attribute catalog: key format, field bounds and the operators each type allows.</summary>
