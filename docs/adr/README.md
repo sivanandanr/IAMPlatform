@@ -35,6 +35,7 @@ Template: [ADR_TEMPLATE.md](ADR_TEMPLATE.md). Open questions are tracked in [../
 | [0022](ADR-0022-test-and-architecture-test-tooling.md) | Test and architecture-test tooling | Partly accepted (backend) | S1-02, S1-09 |
 | [0023](ADR-0023-local-oidc-provider-and-cache.md) | Local OIDC provider, cache and local stack | Accepted (owner) | S1-03, S1-05 |
 | [0024](ADR-0024-ci-platform-github-actions.md) | CI platform — GitHub Actions for PR checks | Accepted (owner) | S1-04 |
+| [0025](ADR-0025-application-catalog-ownership-and-roles.md) | Application catalog — owner, application roles and second-person activation | Proposed (DL-066 decided); sign-off pending | Stage 3 |
 
 ## Approval record
 | ADR | Approver (name, role) | Date | Decision |

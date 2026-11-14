@@ -1,5 +1,6 @@
 using IAM.Modules.Administration.Infrastructure.Persistence;
 using IAM.Modules.Audit.Infrastructure.Persistence;
+using IAM.Modules.Catalog.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
@@ -39,5 +40,15 @@ internal sealed class AdministrationDesignTimeFactory : IDesignTimeDbContextFact
         var options = new DbContextOptionsBuilder<AdministrationDbContext>();
         new PostgreSqlDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, AdministrationDbContext.SchemaName);
         return new AdministrationDbContext(options.Options);
+    }
+}
+
+internal sealed class CatalogDesignTimeFactory : IDesignTimeDbContextFactory<CatalogDbContext>
+{
+    public CatalogDbContext CreateDbContext(string[] args)
+    {
+        var options = new DbContextOptionsBuilder<CatalogDbContext>();
+        new PostgreSqlDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, CatalogDbContext.SchemaName);
+        return new CatalogDbContext(options.Options);
     }
 }

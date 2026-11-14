@@ -19,6 +19,9 @@ public static class ActionCatalog
     public const string AttributesRead = "identity.attributes.read";
     public const string AttributesManage = "identity.attributes.manage";
     public const string AttributesApprove = "identity.attributes.approve";
+    public const string ApplicationsRead = "catalog.applications.read";
+    public const string ApplicationsManage = "catalog.applications.manage";
+    public const string ApplicationsApprove = "catalog.applications.approve";
 
     public static IReadOnlyList<ActionDefinition> All { get; } = Array.AsReadOnly(
     [
@@ -32,6 +35,9 @@ public static class ActionCatalog
         new ActionDefinition(AttributesRead, "See the attribute catalog, drafts and publish requests", Everyone: false),
         new ActionDefinition(AttributesManage, "Register attributes, edit drafts and propose publishing", Everyone: false),
         new ActionDefinition(AttributesApprove, "Approve or reject someone else's attribute publish request", Everyone: false),
+        new ActionDefinition(ApplicationsRead, "See applications, their owners and roles, change requests and role types", Everyone: false),
+        new ActionDefinition(ApplicationsManage, "Register and rename applications, edit draft settings, propose activation and role types", Everyone: false),
+        new ActionDefinition(ApplicationsApprove, "Approve or reject someone else's application change or role type", Everyone: false),
     ]);
 
     private static readonly Dictionary<string, ActionDefinition> ById = All.ToDictionary(a => a.Id, StringComparer.Ordinal);
@@ -44,13 +50,15 @@ public static class ActionCatalog
 
     /// <summary>
     /// Duties one person must never hold together (DL-057d, DL-060a, DL-061b, DL-064): proposing a change and approving it,
-    /// proposing a change and escalating its approval, and managing attributes and approving their publication. Code, not data, so no change request can relax it.
+    /// proposing a change and escalating its approval, managing attributes and approving their publication, and managing
+    /// applications and approving their changes (DL-066d). Code, not data, so no change request can relax it.
     /// </summary>
     public static IReadOnlyList<(string First, string Second)> ConflictingActions { get; } =
     [
         (ChangesPropose, ChangesApprove),
         (ChangesPropose, ApprovalsEscalate),
         (AttributesManage, AttributesApprove),
+        (ApplicationsManage, ApplicationsApprove),
     ];
 }
 
