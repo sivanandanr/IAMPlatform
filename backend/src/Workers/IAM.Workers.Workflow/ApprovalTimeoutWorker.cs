@@ -38,15 +38,20 @@ public sealed record ApprovalTimeoutPass(int Due, int Applied, int Skipped, int 
 /// <summary>
 /// One pass of the timeout worker (DL-074): finds instances whose deadlines have passed and applies their timeouts through
 /// <see cref="IApprovalWorkflow.ApplyTimeoutsAsync"/>, each in its own scope and transaction, at the server's time. A
-/// conflict with another writer is left for the next pass. A damaged instance is audited by the service once and then
-/// set aside until restart, so it isn't audited again every pass. Nothing here can approve: timeouts only hold, reject or
-/// cancel (ADR-0005).
+/// conflict with another writer is left for the next pass. A damaged instance is set aside at once, and any other instance
+/// after <see cref="MaxFailures"/> failed passes in a row (DL-075g), until restart: otherwise instances that always fail
+/// would come first every pass and keep every other timeout waiting. Nothing here can approve: timeouts only hold, reject
+/// or cancel (ADR-0005).
 /// </summary>
 public sealed partial class ApprovalTimeoutSweeper(IServiceScopeFactory scopes, ApprovalTimeoutSettings settings, TimeProvider clock, ILogger<ApprovalTimeoutSweeper> logger)
 {
-    private readonly HashSet<Guid> _setAside = [];
+    /// <summary>Failed passes in a row after which an instance is set aside until restart.</summary>
+    public const int MaxFailures = 3;
 
-    /// <summary>Instances set aside as damaged since the worker started.</summary>
+    private readonly HashSet<Guid> _setAside = [];
+    private readonly Dictionary<Guid, int> _failures = [];
+
+    /// <summary>Instances set aside since the worker started: damaged, or failing <see cref="MaxFailures"/> times in a row.</summary>
     public IReadOnlySet<Guid> SetAside => _setAside;
 
     public async Task<ApprovalTimeoutPass> RunOnceAsync(CancellationToken cancellationToken)
@@ -68,23 +73,33 @@ public sealed partial class ApprovalTimeoutSweeper(IServiceScopeFactory scopes, 
                 await scope.ServiceProvider.GetRequiredService<IApprovalWorkflow>()
                     .ApplyTimeoutsAsync(item.InstanceId, item.Version, cancellationToken).ConfigureAwait(false);
                 applied++;
+                _failures.Remove(item.InstanceId);
             }
             catch (ApprovalInstanceDamagedException)
             {
                 _setAside.Add(item.InstanceId);
+                _failures.Remove(item.InstanceId);
                 skipped++;
                 LogDamaged(logger, item.InstanceId);
             }
-            catch (Exception ex) when (ex is ApprovalConflictException || WorkflowApi.Classify(ex, out _) is WorkflowFailureKind.Conflict or WorkflowFailureKind.WrongState)
+            catch (Exception ex) when (ex is ApprovalConflictException || WorkflowApi.Classify(ex, out _) is WorkflowFailureKind.Conflict)
             {
-                // Someone else changed it first; it is due again on the next pass if it still is.
+                // Someone else changed it first; it is due again on the next pass if it still is. Not a failure.
                 skipped++;
                 LogConflict(logger, item.InstanceId);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
+                // A refusal (a clock behind the last action, say) or an error: counted, and set aside if it keeps happening.
                 failed++;
                 LogFailed(logger, item.InstanceId, ex.GetType().Name);
+                var count = _failures[item.InstanceId] = _failures.GetValueOrDefault(item.InstanceId) + 1;
+                if (count >= MaxFailures)
+                {
+                    _setAside.Add(item.InstanceId);
+                    _failures.Remove(item.InstanceId);
+                    LogGivenUp(logger, item.InstanceId, count);
+                }
             }
         }
 
@@ -97,8 +112,11 @@ public sealed partial class ApprovalTimeoutSweeper(IServiceScopeFactory scopes, 
     [LoggerMessage(Level = LogLevel.Information, Message = "Approval instance {InstanceId} changed while applying timeouts; retried next pass.")]
     private static partial void LogConflict(ILogger logger, Guid instanceId);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Applying timeouts to approval instance {InstanceId} failed with {ErrorType}.")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Applying timeouts to approval instance {InstanceId} failed with {ErrorType}.")]
     private static partial void LogFailed(ILogger logger, Guid instanceId, string errorType);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Approval instance {InstanceId} failed {Count} passes in a row; set aside until restart. Its timeouts are not applied: investigate it.")]
+    private static partial void LogGivenUp(ILogger logger, Guid instanceId, int count);
 }
 
 /// <summary>Runs <see cref="ApprovalTimeoutSweeper"/> every interval until the host stops (DL-074).</summary>
@@ -117,9 +135,9 @@ public sealed partial class ApprovalTimeoutWorker(ApprovalTimeoutSweeper sweeper
                     LogPass(logger, pass.Due, pass.Applied, pass.Skipped, pass.Failed);
                 }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
             {
-                // A pass that fails as a whole (the database is down, say) waits for the next tick.
+                // A pass that fails as a whole (a provider timeout surfaced as a cancellation included) (the database is down, say) waits for the next tick.
                 LogPassFailed(logger, ex.GetType().Name);
             }
         }

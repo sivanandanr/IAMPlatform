@@ -17,15 +17,15 @@ public sealed class DueApprovals(WorkflowDbContext db) : IDueApprovals
         ArgumentOutOfRangeException.ThrowIfLessThan(take, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(take, MaxTake);
 
-        // Skipped ids are few (damaged instances, until restart), so they are left out here rather than in SQL.
-        var rows = await db.Instances.AsNoTracking()
-            .Where(i => OpenStates.Contains(i.State) && i.NextDeadlineUtc != null && i.NextDeadlineUtc <= now)
+        // Skipped ids are left out in SQL, so however many are set aside a pass still gets a full batch (DL-075g).
+        var skipped = skip.ToArray();
+        return await db.Instances.AsNoTracking()
+            .Where(i => OpenStates.Contains(i.State) && i.NextDeadlineUtc != null && i.NextDeadlineUtc <= now && !skipped.Contains(i.Id))
             .OrderBy(i => i.NextDeadlineUtc)
             .ThenBy(i => i.Id)
-            .Take(take + Math.Min(skip.Count, MaxTake))
+            .Take(take)
             .Select(i => new DueApproval(i.Id, i.EngineVersion))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        return [.. rows.Where(r => !skip.Contains(r.InstanceId)).Take(take)];
     }
 }

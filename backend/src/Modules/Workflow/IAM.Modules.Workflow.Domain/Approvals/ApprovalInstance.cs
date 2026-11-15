@@ -209,7 +209,7 @@ public sealed record ApprovalEvent(long Version, DateTimeOffset AtUtc, ApprovalE
     public override string ToString() => $"{nameof(ApprovalEvent)} {Version} {Kind} {StageId}";
 }
 
-/// <summary>A read-only view of a stage. <see cref="Source"/> is where its approvers come from; <see cref="Resolution"/> is what was found when it opened; <see cref="Candidates"/> is the current list.</summary>
+/// <summary>A read-only view of a stage. <see cref="Source"/> is where its approvers come from; <see cref="Resolution"/> is what was found when it opened; <see cref="Candidates"/> is the current list; <see cref="TimeoutRecorded"/> says its timeout since it last opened is in the history (DL-071d).</summary>
 public sealed record StageView(
     Guid StageId,
     int Sequence,
@@ -227,7 +227,8 @@ public sealed record StageView(
     IReadOnlyList<PersonId> Eligible,
     IReadOnlyList<PersonId> Approvers,
     int Escalations,
-    EscalationProposal? PendingEscalation);
+    EscalationProposal? PendingEscalation,
+    bool TimeoutRecorded);
 
 /// <summary>
 /// Approval state machine (ADR-0005, IAM-WF-004, K.1), proof of concept (P0-009): in-memory, no storage, and it emits
@@ -1327,7 +1328,8 @@ public sealed class ApprovalInstance
         [.. stage.ActiveCandidates.Where(c => IsEligible(stage, c))],
         ValidApprovers(stage),
         stage.Escalations,
-        stage.Proposal);
+        stage.Proposal,
+        stage.TimeoutRecorded);
 
     private sealed class StageRun(StageDefinition definition)
     {

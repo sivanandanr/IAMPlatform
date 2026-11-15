@@ -78,6 +78,28 @@ namespace IAM.Persistence.PostgreSql.Migrations.Workflow
                     b.HasAnnotation("Iam:AppendOnly", true);
                 });
 
+            modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalDamageRow", b =>
+                {
+                    b.Property<Guid>("InstanceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("instance_id");
+
+                    b.Property<DateTimeOffset>("DetectedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("detected_at_utc");
+
+                    b.HasKey("InstanceId")
+                        .HasName("pk_approval_damage");
+
+                    b.ToTable("approval_damage", "workflow", t =>
+                        {
+                            t.HasTrigger("tr_approval_damage_append_only");
+                        });
+
+                    b.HasAnnotation("Iam:AppendOnly", true);
+                });
+
             modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalHistoryRow", b =>
                 {
                     b.Property<Guid>("InstanceId")
@@ -313,6 +335,16 @@ namespace IAM.Persistence.PostgreSql.Migrations.Workflow
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_approval_action_approval_instance_instance_id");
+                });
+
+            modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalDamageRow", b =>
+                {
+                    b.HasOne("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalInstanceRow", null)
+                        .WithMany()
+                        .HasForeignKey("InstanceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_approval_damage_approval_instance_instance_id");
                 });
 
             modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalHistoryRow", b =>

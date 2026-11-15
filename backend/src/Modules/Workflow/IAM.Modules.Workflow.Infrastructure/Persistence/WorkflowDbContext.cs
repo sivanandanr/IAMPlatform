@@ -26,6 +26,8 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
 
     public DbSet<ApprovalTaskRow> Tasks => Set<ApprovalTaskRow>();
 
+    public DbSet<ApprovalDamageRow> Damage => Set<ApprovalDamageRow>();
+
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         var instance = modelBuilder.Entity<ApprovalInstanceRow>();
@@ -61,7 +63,24 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
         task.Property(x => x.Kind).IsRequired().IsCode(16);
         task.HasIndex(x => new { x.Person, x.DeadlineUtc });
         task.HasOne<ApprovalInstanceRow>().WithMany().HasForeignKey(x => x.InstanceId).OnDelete(DeleteBehavior.Restrict);
+
+        var damage = modelBuilder.Entity<ApprovalDamageRow>();
+        damage.ToTable("ApprovalDamage", t => t.HasTrigger("TR_ApprovalDamage_AppendOnly"));
+        damage.IsAppendOnly();
+        damage.HasKey(x => x.InstanceId);
+        damage.HasOne<ApprovalInstanceRow>().WithMany().HasForeignKey(x => x.InstanceId).OnDelete(DeleteBehavior.Restrict);
     }
+}
+
+/// <summary>
+/// An instance found damaged on load, recorded once so the damage is audited once however often it is read (DL-075b).
+/// Never changed or deleted: repairing an instance is a reviewed operation of its own, not this table's business.
+/// </summary>
+public sealed class ApprovalDamageRow
+{
+    public required Guid InstanceId { get; init; }
+
+    public required DateTimeOffset DetectedAtUtc { get; init; }
 }
 
 /// <summary>

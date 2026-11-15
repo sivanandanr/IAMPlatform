@@ -245,13 +245,13 @@ internal static class ApprovalEndpoints
         await workflow.ReadAsync(id, cancellationToken).ConfigureAwait(false) is { } view ? TypedResults.Ok(view) : TypedResults.NotFound();
 
     private static async Task<Ok<ApprovalInstanceView>> DecideAsync(Guid id, DecisionBody body, IApprovalWorkflow workflow, CancellationToken cancellationToken) =>
-        TypedResults.Ok(await workflow.DecideAsync(id, body.ExpectedVersion!.Value, body.DecisionId!.Value, body.StageId!.Value, null, body.Approve!.Value, body.Reason, cancellationToken).ConfigureAwait(false));
+        TypedResults.Ok(await workflow.DecideAsync(id, body.ExpectedVersion!.Value, body.DecisionId!.Value, body.StageId!.Value, body.Approve!.Value, body.Reason, cancellationToken).ConfigureAwait(false));
 
     private static async Task<Ok<ApprovalInstanceView>> CompleteAsync(Guid id, CompletionBody body, IApprovalWorkflow workflow, CancellationToken cancellationToken) =>
-        TypedResults.Ok(await workflow.CompleteAsync(id, body.ExpectedVersion!.Value, body.CompletionId!.Value, body.StageId!.Value, null, body.Note, cancellationToken).ConfigureAwait(false));
+        TypedResults.Ok(await workflow.CompleteAsync(id, body.ExpectedVersion!.Value, body.CompletionId!.Value, body.StageId!.Value, body.Note, cancellationToken).ConfigureAwait(false));
 
     private static async Task<Ok<ApprovalInstanceView>> ReturnAsync(Guid id, ReturnBody body, IApprovalWorkflow workflow, CancellationToken cancellationToken) =>
-        TypedResults.Ok(await workflow.ReturnForChangesAsync(id, body.ExpectedVersion!.Value, body.StageId!.Value, null, body.Reason, cancellationToken).ConfigureAwait(false));
+        TypedResults.Ok(await workflow.ReturnForChangesAsync(id, body.ExpectedVersion!.Value, body.StageId!.Value, body.Reason, cancellationToken).ConfigureAwait(false));
 
     private static async Task<Ok<ApprovalInstanceView>> WithdrawAsync(Guid id, VersionedReasonBody body, IApprovalWorkflow workflow, CancellationToken cancellationToken) =>
         TypedResults.Ok(await workflow.WithdrawAsync(id, body.ExpectedVersion!.Value, body.Reason, cancellationToken).ConfigureAwait(false));

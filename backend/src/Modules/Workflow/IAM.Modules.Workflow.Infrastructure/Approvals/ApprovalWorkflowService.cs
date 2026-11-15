@@ -109,11 +109,15 @@ public sealed class ApprovalWorkflowService(
             StoredHistory: 0);
         db.Instances.Add(loaded.Row);
         List<(LoggedAction Action, long VersionAfter)> actions = [(bound, instance.Version)];
-        await SupplyOpenedLevelsAsync(loaded, actions, now, cancellationToken).ConfigureAwait(false);
+        await SupplyOpenedLevelsAsync(tx, loaded, actions, now, "start", cancellationToken).ConfigureAwait(false);
         await SaveAsync(tx, loaded, actions, cancellationToken).ConfigureAwait(false);
         return View(loaded, oversight: false);
     }
 
+    /// <summary>
+    /// The instance with its oversight, or null, with no permission check. Not on <see cref="IApprovalWorkflow"/>, so no
+    /// other module or endpoint can reach it (DL-075d): this module's own code and tests only.
+    /// </summary>
     public async Task<ApprovalInstanceView?> FindAsync(Guid instanceId, CancellationToken cancellationToken)
     {
         var row = await db.Instances.AsNoTracking().SingleOrDefaultAsync(i => i.Id == instanceId, cancellationToken).ConfigureAwait(false);
@@ -127,14 +131,31 @@ public sealed class ApprovalWorkflowService(
             return null;
         }
 
-        var row = await db.Instances.AsNoTracking().SingleOrDefaultAsync(i => i.Id == instanceId, cancellationToken).ConfigureAwait(false);
-        if (row is null)
+        var canRead = await CanAsync(actor, WorkflowAuditActions.ReadAction, cancellationToken).ConfigureAwait(false);
+        Loaded? loaded = null;
+        for (var attempt = 1; loaded is null; attempt++)
         {
-            return null;
+            var row = await db.Instances.AsNoTracking().SingleOrDefaultAsync(i => i.Id == instanceId, cancellationToken).ConfigureAwait(false);
+            if (row is null)
+            {
+                return null;
+            }
+
+            try
+            {
+                loaded = await ReplayAsync(row, null, cancellationToken).ConfigureAwait(false);
+            }
+            catch (ApprovalConflictException) when (attempt < 3)
+            {
+                // Someone saved while it was being read (DL-075i): read it again.
+            }
+            catch (ApprovalInstanceDamagedException) when (!canRead)
+            {
+                // Its stored people can't be trusted to say who participates, so only oversight learns it exists (DL-075b).
+                return null;
+            }
         }
 
-        var loaded = await ReplayAsync(row, null, cancellationToken).ConfigureAwait(false);
-        var canRead = await CanAsync(actor, WorkflowAuditActions.ReadAction, cancellationToken).ConfigureAwait(false);
         return canRead || IsParticipant(loaded.Instance, actor) ? View(loaded, oversight: canRead) : null;
     }
 
@@ -163,16 +184,16 @@ public sealed class ApprovalWorkflowService(
         return new ApprovalTaskPage([.. rows.Take(pageSize)], page, pageSize, rows.Count > pageSize);
     }
 
-    public Task<ApprovalInstanceView> DecideAsync(Guid instanceId, long expectedVersion, Guid decisionId, Guid stageId, PersonId? onBehalfOf, bool approve, string? reason, CancellationToken cancellationToken) =>
+    public Task<ApprovalInstanceView> DecideAsync(Guid instanceId, long expectedVersion, Guid decisionId, Guid stageId, bool approve, string? reason, CancellationToken cancellationToken) =>
         ActAsync(instanceId, "decide", null, (actor, now) =>
-            ApprovalActionLog.Decided(new ApprovalDecision(decisionId, stageId, actor, onBehalfOf, approve, reason, expectedVersion), now), cancellationToken);
+            ApprovalActionLog.Decided(new ApprovalDecision(decisionId, stageId, actor, null, approve, reason, expectedVersion), now), cancellationToken);
 
-    public Task<ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, PersonId? onBehalfOf, string? note, CancellationToken cancellationToken) =>
+    public Task<ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, string? note, CancellationToken cancellationToken) =>
         ActAsync(instanceId, "complete", null, (actor, now) =>
-            ApprovalActionLog.Completed(new ActionCompletion(completionId, stageId, actor, onBehalfOf, note, expectedVersion), now), cancellationToken);
+            ApprovalActionLog.Completed(new ActionCompletion(completionId, stageId, actor, null, note, expectedVersion), now), cancellationToken);
 
-    public Task<ApprovalInstanceView> ReturnForChangesAsync(Guid instanceId, long expectedVersion, Guid stageId, PersonId? onBehalfOf, string? reason, CancellationToken cancellationToken) =>
-        ActAsync(instanceId, "return", null, (actor, now) => ApprovalActionLog.Returned(stageId, actor, onBehalfOf, reason, expectedVersion, now), cancellationToken);
+    public Task<ApprovalInstanceView> ReturnForChangesAsync(Guid instanceId, long expectedVersion, Guid stageId, string? reason, CancellationToken cancellationToken) =>
+        ActAsync(instanceId, "return", null, (actor, now) => ApprovalActionLog.Returned(stageId, actor, null, reason, expectedVersion, now), cancellationToken);
 
     public Task<ApprovalInstanceView> WithdrawAsync(Guid instanceId, long expectedVersion, string? reason, CancellationToken cancellationToken) =>
         ActAsync(instanceId, "withdraw", null, (actor, now) => ApprovalActionLog.Withdrawn(actor, reason, expectedVersion, now), cancellationToken);
@@ -206,13 +227,29 @@ public sealed class ApprovalWorkflowService(
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var row = await db.Instances.SingleOrDefaultAsync(i => i.Id == instanceId, cancellationToken).ConfigureAwait(false)
             ?? throw new ApprovalInstanceNotFoundException();
-        var loaded = await ReplayAsync(row, tx, cancellationToken).ConfigureAwait(false);
-        var now = Now();
-        LoggedAction action;
         var actor = default(PersonId);
+        var validActor = needsPerson && PersonId.TryCreate(actorAccessor.CurrentActor, out actor);
+        Loaded loaded;
         try
         {
-            if (needsPerson && !PersonId.TryCreate(actorAccessor.CurrentActor, out actor))
+            loaded = await ReplayAsync(row, tx, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ApprovalInstanceDamagedException) when (needsPerson)
+        {
+            // Only oversight learns that a damaged instance exists (DL-075b); the damage itself is audited once.
+            if (validActor && await CanAsync(actor, WorkflowAuditActions.ReadAction, cancellationToken).ConfigureAwait(false))
+            {
+                throw;
+            }
+
+            throw new ApprovalInstanceNotFoundException();
+        }
+
+        var now = Now();
+        LoggedAction action;
+        try
+        {
+            if (needsPerson && !validActor)
             {
                 throw new ApprovalRefusedException(ApprovalRefusal.InvalidActor);
             }
@@ -248,7 +285,7 @@ public sealed class ApprovalWorkflowService(
         }
 
         List<(LoggedAction Action, long VersionAfter)> actions = [(action, loaded.Instance.Version)];
-        await SupplyOpenedLevelsAsync(loaded, actions, now, cancellationToken).ConfigureAwait(false);
+        await SupplyOpenedLevelsAsync(tx, loaded, actions, now, step, cancellationToken).ConfigureAwait(false);
         await SaveAsync(tx, loaded, actions, cancellationToken).ConfigureAwait(false);
         return View(loaded, oversight: needsPerson && await CanAsync(actor, WorkflowAuditActions.ReadAction, cancellationToken).ConfigureAwait(false));
     }
@@ -271,19 +308,28 @@ public sealed class ApprovalWorkflowService(
     /// <summary>
     /// Gives every level that opened its approvers, resolved now from its source (DL-069), each as a logged action so a
     /// replay needs no resolver. A supplied level can complete at once (a carried approval) and open the next step, so
-    /// this repeats; each level is supplied once, so it ends.
+    /// this repeats; each level is supplied once, so it ends. A refusal here is audited like any other and nothing is saved
+    /// (DL-075e).
     /// </summary>
-    private async Task SupplyOpenedLevelsAsync(Loaded loaded, List<(LoggedAction Action, long VersionAfter)> actions, DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task SupplyOpenedLevelsAsync(IDbContextTransaction tx, Loaded loaded, List<(LoggedAction Action, long VersionAfter)> actions, DateTimeOffset now, string step, CancellationToken cancellationToken)
     {
         var instance = loaded.Instance;
         HashSet<PersonId> excluded = [instance.Binding.Requester, instance.Binding.Beneficiary, instance.Binding.PolicyMaker];
-        while (instance.State is ApprovalState.InProgress or ApprovalState.Held
-            && instance.Stages.FirstOrDefault(s => s.State == StageState.AwaitingApprovers && now < s.DeadlineUtc) is { } waiting)
+        try
         {
-            var resolution = await resolver.ResolveAsync(waiting.Source, excluded, cancellationToken).ConfigureAwait(false);
-            var supplied = ApprovalActionLog.Supplied(waiting.StageId, resolution, now);
-            ApprovalActionLog.Apply(instance, supplied);
-            actions.Add((supplied, instance.Version));
+            while (instance.State is ApprovalState.InProgress or ApprovalState.Held
+                && instance.Stages.FirstOrDefault(s => s.State == StageState.AwaitingApprovers && now < s.DeadlineUtc) is { } waiting)
+            {
+                var resolution = await resolver.ResolveAsync(waiting.Source, excluded, cancellationToken).ConfigureAwait(false);
+                var supplied = ApprovalActionLog.Supplied(waiting.StageId, resolution, now);
+                ApprovalActionLog.Apply(instance, supplied);
+                actions.Add((supplied, instance.Version));
+            }
+        }
+        catch (ApprovalRefusedException refusal)
+        {
+            await RefuseAsync(tx, instance.Binding.InstanceId, step, refusal, cancellationToken).ConfigureAwait(false);
+            throw;
         }
     }
 
@@ -330,27 +376,70 @@ public sealed class ApprovalWorkflowService(
                 throw new InvalidDataException("The stored history or summary does not match the replay.");
             }
 
-            return new Loaded(row, instance, ApprovalActionLog.StagesOf(logged[0]), history.Count);
-        }
-        catch (Exception ex) when (ex is InvalidDataException or JsonException or ApprovalRefusedException or ArgumentException or FormatException)
-        {
-            // Audited in the caller's transaction when there is one, else in its own; either way nothing else is saved.
-            db.ChangeTracker.Clear();
-            var tx = open ?? await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-            try
+            var loaded = new Loaded(row, instance, ApprovalActionLog.StagesOf(logged[0]), history.Count);
+            if (row.NextDeadlineUtc != NextDeadline(loaded))
             {
-                await audit.AppendAsync(tx.GetDbTransaction(), Event(WorkflowAuditActions.Damaged, row.Id, AuditOutcome.Denied, null, Field("step", "load")), cancellationToken).ConfigureAwait(false);
-                await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-            }
-            finally
-            {
-                if (open is null)
-                {
-                    await tx.DisposeAsync().ConfigureAwait(false);
-                }
+                throw new InvalidDataException("The stored next deadline does not match the replay.");
             }
 
+            return loaded;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The summary, log and history are read by separate statements, so a writer committing in between makes them
+            // disagree. If the summary has moved since it was read, that is what happened: a conflict, not damage (DL-075i).
+            var now = await db.Instances.AsNoTracking()
+                .Where(i => i.Id == row.Id)
+                .Select(i => new { i.ActionCount, i.EngineVersion })
+                .SingleOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (now is not null && (now.ActionCount != row.ActionCount || now.EngineVersion != row.EngineVersion))
+            {
+                throw new ApprovalConflictException("The approval instance changed while it was loaded; reload it.", ex);
+            }
+
+            // Anything else that stops the replay is damage (DL-075c), audited once per instance (DL-075b).
+            db.ChangeTracker.Clear();
+            await RecordDamageAsync(row.Id, open, cancellationToken).ConfigureAwait(false);
             throw new ApprovalInstanceDamagedException("The approval instance's stored record does not replay; it is refused.", ex);
+        }
+    }
+
+    /// <summary>
+    /// Records damage the first time it is found: a row in <c>ApprovalDamage</c> and one audit event, in the caller's
+    /// transaction when there is one, else in its own. Later loads find the row and write nothing.
+    /// </summary>
+    private async Task RecordDamageAsync(Guid instanceId, IDbContextTransaction? open, CancellationToken cancellationToken)
+    {
+        var tx = open ?? await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (await db.Damage.AnyAsync(d => d.InstanceId == instanceId, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            db.Damage.Add(new ApprovalDamageRow { InstanceId = instanceId, DetectedAtUtc = Now() });
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (DbUpdateException ex) when (databaseProvider.IsUniqueViolation(ex))
+            {
+                // Someone else recorded it first, and audited it there.
+                return;
+            }
+
+            await audit.AppendAsync(tx.GetDbTransaction(), Event(WorkflowAuditActions.Damaged, instanceId, AuditOutcome.Denied, null, Field("step", "load")), cancellationToken).ConfigureAwait(false);
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            db.ChangeTracker.Clear();
+            if (open is null)
+            {
+                await tx.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 
@@ -417,21 +506,26 @@ public sealed class ApprovalWorkflowService(
             throw new ApprovalConflictException("The approval instance changed; reload it.", ex);
         }
 
-        foreach (var (action, versionAfter) in actions)
+        var first = row.ActionCount - actions.Count;
+        for (var i = 0; i < actions.Count; i++)
         {
-            await audit.AppendAsync(tx.GetDbTransaction(), ActionRecord(row, action, versionAfter), cancellationToken).ConfigureAwait(false);
+            var (action, versionAfter) = actions[i];
+            await audit.AppendAsync(tx.GetDbTransaction(), ActionRecord(row, first + i + 1, action, versionAfter), cancellationToken).ConfigureAwait(false);
         }
 
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>The earliest deadline that a timeout could still act on: an open level's, or a held level that will reject or cancel.</summary>
+    /// <summary>
+    /// The earliest deadline for which applying timeouts would still change something, by the engine's own rule (DL-075f):
+    /// an open level's, a held level that will reject or cancel, or a held level whose timeout isn't recorded yet.
+    /// </summary>
     private static DateTimeOffset? NextDeadline(Loaded loaded)
     {
         var onTimeout = loaded.Stages.ToDictionary(s => s.StageId, s => s.OnTimeout);
         return loaded.Instance.Stages
             .Where(s => s.State is StageState.Active or StageState.AwaitingApprovers
-                || (s.State == StageState.Held && onTimeout[s.StageId] != TimeoutAction.Escalate))
+                || (s.State == StageState.Held && (onTimeout[s.StageId] != TimeoutAction.Escalate || !s.TimeoutRecorded)))
             .Select(s => s.DeadlineUtc)
             .Min();
     }
@@ -482,20 +576,22 @@ public sealed class ApprovalWorkflowService(
         }
     }
 
-    private AuditEventRecord ActionRecord(ApprovalInstanceRow row, LoggedAction action, long versionAfter)
-    {
-        List<AuditPayloadField> payload =
-        [
+    /// <summary>
+    /// The audit record of one stored action: what it was and a hash of its row, keyed by sequence (DL-075a). The inputs stay
+    /// in the append-only log, so no route, reason or list of people has to fit the audit's size or content rules.
+    /// </summary>
+    private AuditEventRecord ActionRecord(ApprovalInstanceRow row, int sequence, LoggedAction action, long versionAfter) =>
+        Event(
+            WorkflowAuditActions.For(action.Kind),
+            row.Id,
+            AuditOutcome.Succeeded,
+            null,
             Field("kind", action.Kind.ToString()),
+            Field("sequence", sequence.ToString(CultureInfo.InvariantCulture)),
             Field("versionAfter", versionAfter.ToString(CultureInfo.InvariantCulture)),
             Field("state", row.State),
             Field("provisioningAuthorized", row.ProvisioningAuthorized ? "true" : "false"),
-        ];
-
-        // The action's inputs are the evidence: the binding and route, a decision, a resolution with its steps.
-        payload.Add(Field("inputs", action.Payload));
-        return Event(WorkflowAuditActions.For(action.Kind), row.Id, AuditOutcome.Succeeded, null, [.. payload]);
-    }
+            Field("actionHash", ApprovalActionLog.RowHash(row.Id, sequence, action, versionAfter)));
 
     /// <summary>
     /// The participant view, and with <paramref name="oversight"/> the full history and evidence (DL-073a). Participants
