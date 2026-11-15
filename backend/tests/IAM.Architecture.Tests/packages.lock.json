@@ -844,9 +844,12 @@
         "type": "Project",
         "dependencies": {
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Messaging": "[1.0.0, )",
+          "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
           "IAM.Modules.Notification.Application": "[1.0.0, )",
           "IAM.Modules.Notification.Contracts": "[1.0.0, )",
-          "IAM.Modules.Notification.Domain": "[1.0.0, )"
+          "IAM.Modules.Notification.Domain": "[1.0.0, )",
+          "IAM.Modules.Workflow.Contracts": "[1.0.0, )"
         }
       },
       "iam.modules.organization.application": {
@@ -1065,6 +1068,7 @@
           "IAM.Modules.Audit.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Catalog.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Identity.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Notification.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Organization.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Workflow.Infrastructure": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
@@ -1078,6 +1082,7 @@
           "IAM.Modules.Audit.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Catalog.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Identity.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Notification.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Organization.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Workflow.Infrastructure": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore.SqlServer": "[10.0.14, )"
