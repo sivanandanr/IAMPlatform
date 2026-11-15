@@ -22,6 +22,7 @@
     <Project Path="src/Host/IAM.Bff/IAM.Bff.csproj" />
   </Folder>
   <Folder Name="/src/Workers/">
+    <Project Path="src/Workers/IAM.Workers.Notification/IAM.Workers.Notification.csproj" />
     <Project Path="src/Workers/IAM.Workers.Workflow/IAM.Workers.Workflow.csproj" />
   </Folder>
   <Folder Name="/src/Tools/">

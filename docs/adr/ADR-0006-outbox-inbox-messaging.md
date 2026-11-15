@@ -1,5 +1,5 @@
 # ADR-0006: Transactional outbox / inbox messaging
-Status: Accepted in part (outbox and relay, stage 6 slices 1–2, DL-076, DL-077; inbox to follow) | Date: 2026-11-07 | Decision owners: Lead Solution Architect, Database Architect (named approvers TBD)
+Status: Accepted and built (outbox, relay and inbox, stage 6, DL-076 to DL-078); pending independent review | Date: 2026-11-07 | Decision owners: Lead Solution Architect, Database Architect (named approvers TBD)
 
 Source: Blueprint v1.0 §1 (ADR 006), §6 (`integration` schema), §10; Spec v3.2 IAM-FR-012, FR-OPS-101. Drafted by Claude Code (S1-01); not approved.
 
@@ -18,6 +18,8 @@ Option 1. Messages carry correlation ID, causation ID, idempotency key, schema v
 
 **Relay — built (stage 6 slice 2, DL-077).** Each module's worker sends that module's outbox with its own login: claim (attempt counted, lease, saved under the row version), publish to `iam.{module}` with publisher confirms, mark dispatched. Failures back off 2, 4, 8 … seconds up to 15 minutes and park after `MaxAttempts`; unrouted messages are kept by the `iam.unrouted` alternate exchange. Delivery is at least once.
 
+**Inbox and consumers — built (stage 6 slice 3, DL-078).** Each consumer records a processed message in its module's append-only `InboxMessage` (consumer, message id) in the same transaction as its effects, so a duplicate delivery changes nothing (P0-010). Deliveries are read back into envelopes and refused unless they come from the source module's exchange and name that source; unprocessable messages go to the consumer's dead-letter queue; other failures retry after a delay through the consumer's own retry queue, counted by the consumer (RabbitMQ 4 doesn't count requeues), and dead-letter at the limit. Each module has its own broker user, limited by name patterns to its own exchanges and queues.
+
 **Location of outbox/inbox tables — decided (owner, 2026-11-08, DL-021): per-module.** Each module owns its outbox and inbox tables in its own schema, written in the same transaction as its data by its own login. This keeps "no cross-module writes" enforceable in the database (S1-06 per-module logins). Blueprint §6's shared `integration` schema is not used for them. Built in P0-010.
 
 ## Security and privacy impact
@@ -33,7 +35,7 @@ Broker on private network only; never internet-exposed.
 DLQ needs monitoring and a repair runbook.
 
 ## Tests / evidence
-Rollback leaves no outbox row; duplicate relay → single effect; poison message → DLQ; forged producer rejected. Planned P0-010 (Sprint 2). Evidence: none yet.
+Rollback leaves no outbox row; duplicate relay → single effect; poison message → DLQ; forged producer rejected. Evidence (stage 6): `WorkflowOutboxParityTests`, `WorkflowOutboxRelayParityTests`, `NotificationInboxParityTests` (duplicates, dead letters, retries, broker permissions, end to end) on both engines, `MessageEnvelopeTests`, `RabbitMqDeliveryTests`.
 
 ## Open questions and approvals
 - Table location (DL-021); messaging library and licence (ADR-0021).

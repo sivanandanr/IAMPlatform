@@ -7,6 +7,7 @@ using IAM.Modules.Administration.Infrastructure.Persistence;
 using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
+using IAM.Modules.Notification.Infrastructure.Persistence;
 using IAM.Modules.Organization.Infrastructure.Persistence;
 using IAM.Modules.Workflow.Infrastructure.Persistence;
 using IAM.Persistence.Tests.Probe;
@@ -42,6 +43,7 @@ public sealed class ParityDatabase : IAsyncLifetime
     public const string CatalogAppLogin = "iam_app_catalog";
     public const string OrganizationAppLogin = "iam_app_organization";
     public const string WorkflowAppLogin = "iam_app_workflow";
+    public const string NotificationAppLogin = "iam_app_notification";
 
     private const string SqlServerImage = "mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718";
     private const string PostgreSqlImage = "postgres:17.11-alpine3.24@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac";
@@ -55,6 +57,7 @@ public sealed class ParityDatabase : IAsyncLifetime
     private readonly string _catalogAppPassword = NewPassword();
     private readonly string _organizationAppPassword = NewPassword();
     private readonly string _workflowAppPassword = NewPassword();
+    private readonly string _notificationAppPassword = NewPassword();
     private IDatabaseContainer? _container;
     private string _adminConnectionString = string.Empty;
 
@@ -89,6 +92,12 @@ public sealed class ParityDatabase : IAsyncLifetime
     public IReadOnlyList<string> WorkflowFirstRunApplied { get; private set; } = [];
 
     public IReadOnlyList<string> WorkflowSecondRunPending { get; private set; } = [];
+
+    public string NotificationAppConnectionString => WithLogin(NotificationAppLogin, _notificationAppPassword);
+
+    public IReadOnlyList<string> NotificationFirstRunApplied { get; private set; } = [];
+
+    public IReadOnlyList<string> NotificationSecondRunPending { get; private set; } = [];
 
     public IReadOnlyList<string> CatalogSecondRunPending { get; private set; } = [];
 
@@ -144,6 +153,7 @@ public sealed class ParityDatabase : IAsyncLifetime
         await BootstrapAsync(CatalogDbContext.SchemaName, CatalogAppLogin, _catalogAppPassword, ct);
         await BootstrapAsync(OrganizationDbContext.SchemaName, OrganizationAppLogin, _organizationAppPassword, ct);
         await BootstrapAsync(WorkflowDbContext.SchemaName, WorkflowAppLogin, _workflowAppPassword, ct);
+        await BootstrapAsync(NotificationDbContext.SchemaName, NotificationAppLogin, _notificationAppPassword, ct);
 
         // Every module runtime login may append audit events in its own transaction; only the audit login may read
         // them (ADR-0018). Roles must exist before the audit migration grants to them.
@@ -231,6 +241,19 @@ public sealed class ParityDatabase : IAsyncLifetime
         {
             WorkflowSecondRunPending = (await workflow.Database.GetPendingMigrationsAsync(ct)).ToList();
             await workflow.Database.MigrateAsync(ct);
+        }
+
+        await using (var notification = TestSupport.CreateNotification(Provider, MigratorConnectionString))
+        {
+            var pending = (await notification.Database.GetPendingMigrationsAsync(ct)).ToList();
+            await notification.Database.MigrateAsync(ct);
+            NotificationFirstRunApplied = pending;
+        }
+
+        await using (var notification = TestSupport.CreateNotification(Provider, MigratorConnectionString))
+        {
+            NotificationSecondRunPending = (await notification.Database.GetPendingMigrationsAsync(ct)).ToList();
+            await notification.Database.MigrateAsync(ct);
         }
 
         // Probe tables, created by the migrator from the model with the provider's own DDL generator.

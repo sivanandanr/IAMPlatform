@@ -2,6 +2,7 @@ using IAM.Modules.Administration.Infrastructure.Persistence;
 using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
+using IAM.Modules.Notification.Infrastructure.Persistence;
 using IAM.Modules.Organization.Infrastructure.Persistence;
 using IAM.Modules.Workflow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -72,5 +73,15 @@ internal sealed class WorkflowDesignTimeFactory : IDesignTimeDbContextFactory<Wo
         var options = new DbContextOptionsBuilder<WorkflowDbContext>();
         new PostgreSqlDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, WorkflowDbContext.SchemaName);
         return new WorkflowDbContext(options.Options);
+    }
+}
+
+internal sealed class NotificationDesignTimeFactory : IDesignTimeDbContextFactory<NotificationDbContext>
+{
+    public NotificationDbContext CreateDbContext(string[] args)
+    {
+        var options = new DbContextOptionsBuilder<NotificationDbContext>();
+        new PostgreSqlDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, NotificationDbContext.SchemaName);
+        return new NotificationDbContext(options.Options);
     }
 }

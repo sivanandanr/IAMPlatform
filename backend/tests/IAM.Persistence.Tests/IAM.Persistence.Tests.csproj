@@ -25,6 +25,7 @@
     <ProjectReference Include="..\..\src\Persistence\IAM.Persistence.SqlServer\IAM.Persistence.SqlServer.csproj" />
     <ProjectReference Include="..\..\src\Host\IAM.Api\IAM.Api.csproj" />
     <ProjectReference Include="..\..\src\Workers\IAM.Workers.Workflow\IAM.Workers.Workflow.csproj" />
+    <ProjectReference Include="..\..\src\Workers\IAM.Workers.Notification\IAM.Workers.Notification.csproj" />
     <ProjectReference Include="..\..\src\Tools\IAM.Tools.AccessBootstrap\IAM.Tools.AccessBootstrap.csproj" />
   </ItemGroup>
   <ItemGroup>

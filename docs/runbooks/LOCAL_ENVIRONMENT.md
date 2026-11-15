@@ -92,9 +92,27 @@ dotnet user-secrets set "ConnectionStrings:workflow" "<connection string for the
 ```bash
 IAM_DB_PROVIDER=PostgreSql dotnet run --project backend/src/Workers/IAM.Workers.Workflow
 ```
-Since DL-077 it also sends the workflow outbox to RabbitMQ, so it needs the broker too: `Messaging:RabbitMq:Host`, `VirtualHost`, `UserName` and `Password` (user secrets; locally the compose broker's `RABBITMQ_USER`, vhost `iam`, never `guest`), and `Messaging:RabbitMq:UseTls=false` only because the broker is on this machine. `Workflow:Outbox:*` tunes the relay (interval, batch, attempts, publish timeout, lease). Messages nobody consumes yet wait in the `iam.unrouted` queue; a message that failed `MaxAttempts` times is parked (logged at Error with its id and type) until the setting is raised.
+Since DL-077 it also sends the workflow outbox to RabbitMQ, so it needs the broker too: `Messaging:RabbitMq:Host`, `VirtualHost`, `UserName` and `Password` (user secrets; locally the workflow module's own broker user from §3d, vhost `iam`, never `guest`), and `Messaging:RabbitMq:UseTls=false` only because the broker is on this machine. `Workflow:Outbox:*` tunes the relay (interval, batch, attempts, publish timeout, lease). Messages nobody consumes yet wait in the `iam.unrouted` queue; a message that failed `MaxAttempts` times is parked (logged at Error with its id and type) until the setting is raised.
 
 It writes as `system:workflow-timeouts`. A damaged instance is skipped until restart, and so is any instance that fails 3 passes in a row (logged at Error with the instance id only); look damaged ones up in the audit trail (`workflow.approval.damaged`, written once per instance) or `workflow.ApprovalDamage`. It is not in compose yet.
+
+## 3d. Notification worker and broker users (DL-078)
+`IAM.Workers.Notification` turns workflow `task_opened` events into pending notifications (nothing is sent yet). It needs `IAM_DB_PROVIDER`, `ConnectionStrings:notification` (the `iam_app_notification` login, bootstrapped like the other modules), the broker settings as for the workflow worker but with the notification module's own broker user, and optionally `Notification:Consumer:Prefetch` (1 to 100, default 10), `DeliveryLimit` (1 to 20, default 5) and `RetryDelaySeconds` (1 to 300, default 5). Delivery limit and retry delay are fixed in the queues when they are first declared.
+
+Each module has its own broker user, never `guest`. Compose doesn't create them yet; on the local broker, as its administrator:
+```bash
+docker compose exec rabbitmq rabbitmqctl add_user iam-workflow '<password>'
+```
+```bash
+docker compose exec rabbitmq rabbitmqctl set_permissions -p iam iam-workflow '^iam\.(workflow|unrouted)$' '^iam\.(workflow|unrouted)$' '^iam\.(workflow|unrouted)$'
+```
+```bash
+docker compose exec rabbitmq rabbitmqctl add_user iam-notification '<password>'
+```
+```bash
+docker compose exec rabbitmq rabbitmqctl set_permissions -p iam iam-notification '^iam\.(notification\..*|dlx)$' '^iam\.(notification\..*|dlx)$' '^iam\.(workflow|notification\..*|dlx)$'
+```
+Start the workflow worker first: only it may create the `iam.workflow` exchange the notification queue binds to; the notification worker retries until it exists. Unprocessable messages are in `iam.notification.approval_tasks.dlq` (logged at Warning or Error with id and type only); there is no replay tool yet.
 
 ## 4. Stop / reset
 - Stop, keep data: `docker compose --profile postgres --profile sqlserver stop`
