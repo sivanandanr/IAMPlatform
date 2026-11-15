@@ -18,7 +18,7 @@ public sealed class RabbitMqDeliveryTests
 
         public string Source => "workflow";
 
-        public IReadOnlyList<string> MessageTypes { get; } = [ApprovalTaskOpened.MessageType];
+        public IReadOnlyList<string> MessageTypes => [ApprovalTaskOpened.MessageType];
 
         public Task<MessageOutcome> HandleAsync(MessageEnvelope envelope, CancellationToken cancellationToken) => Task.FromResult(MessageOutcome.Processed);
     }
@@ -92,7 +92,9 @@ public sealed class RabbitMqDeliveryTests
         Should.Throw<ArgumentOutOfRangeException>(() => new ConsumerSettings(prefetch: 0));
         Should.Throw<ArgumentOutOfRangeException>(() => new ConsumerSettings(prefetch: 101));
         Should.Throw<ArgumentOutOfRangeException>(() => new ConsumerSettings(deliveryLimit: 0));
-        Should.Throw<ArgumentOutOfRangeException>(() => new ConsumerSettings(deliveryLimit: 21));
-        Should.Throw<ArgumentOutOfRangeException>(() => new ConsumerSettings(retryDelaySeconds: 0));
+        Should.Throw<ArgumentOutOfRangeException>(() => new ConsumerSettings(deliveryLimit: ConsumerSettings.BrokerDeliveryLimit - 4));
+        new ConsumerSettings(deliveryLimit: ConsumerSettings.BrokerDeliveryLimit - 5).DeliveryLimit.ShouldBe(15);
+        Should.Throw<ArgumentOutOfRangeException>(() => new ConsumerSettings(reconnectDelaySeconds: 0));
+        Should.Throw<ArgumentOutOfRangeException>(() => new ConsumerSettings(reconnectDelaySeconds: 61));
     }
 }

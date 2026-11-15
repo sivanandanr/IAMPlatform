@@ -24,8 +24,9 @@ public sealed record ApprovalStarted(Guid InstanceId, Guid RequestItemId, string
 
 /// <summary>
 /// People can now act on a level: it opened, or new approvers were added to it. <see cref="People"/> are only the people
-/// who weren't able to act on it before this action. A notification, never a permission: acting still goes through the
-/// workflow, which checks everything again.
+/// who weren't able to act on it before this action, at most <see cref="MaxPeople"/> per event: a level with more is
+/// announced in several events (DL-079), so no event can outgrow the payload limit. A notification, never a permission:
+/// acting still goes through the workflow, which checks everything again.
 /// </summary>
 public sealed record ApprovalTaskOpened(
     Guid InstanceId,
@@ -37,6 +38,9 @@ public sealed record ApprovalTaskOpened(
     DateTimeOffset? DeadlineUtc,
     long EngineVersion) : IIntegrationEvent
 {
+    /// <summary>People per event: even ids of 200 characters that JSON escapes six-fold stay well inside 64 KB.</summary>
+    public const int MaxPeople = 32;
+
     public static string MessageType => "workflow.approval.task_opened";
 
     public static int SchemaVersion => 1;
@@ -57,7 +61,13 @@ public sealed record ApprovalAuthorized(Guid InstanceId, Guid RequestItemId, int
     public static int SchemaVersion => 1;
 }
 
-/// <summary>The instance closed: Approved, Rejected, Cancelled, Withdrawn or Returned. Nothing changes after this.</summary>
+/// <summary>
+/// The instance closed: Approved, Rejected, Cancelled, Withdrawn or Returned. Nothing changes after this.
+/// <para>
+/// <b>Like <see cref="ApprovalAuthorized"/>, a consumer that acts on <see cref="ProvisioningAuthorized"/> must first verify
+/// the instance against the audit chain</b> (R-037 release gate, DL-079); a test fails while any consumer takes this event.
+/// </para>
+/// </summary>
 public sealed record ApprovalClosed(Guid InstanceId, Guid RequestItemId, string Outcome, bool ProvisioningAuthorized, long EngineVersion) : IIntegrationEvent
 {
     public static string MessageType => "workflow.approval.closed";

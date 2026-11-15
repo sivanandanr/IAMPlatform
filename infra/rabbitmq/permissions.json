@@ -1,0 +1,24 @@
+{
+  "_comment": "Each module's broker user and what it may do (DL-079). No module may configure (create, change or delete) anything: topology comes from definitions.json. Patterns are RabbitMQ regular expressions over exchange and queue names; topic patterns limit routing keys. Passwords are set by the operator, never stored here.",
+  "vhost": "iam",
+  "users": [
+    {
+      "user": "iam-workflow",
+      "configure": "^$",
+      "write": "^iam\\.(workflow|unrouted)$",
+      "read": "^$",
+      "topics": [
+        { "exchange": "iam.workflow", "write": "^workflow\\.approval\\.[a-z_]+$", "read": "^$" }
+      ]
+    },
+    {
+      "user": "iam-notification",
+      "configure": "^$",
+      "write": "^iam\\.notification\\.approval_tasks\\.retry$",
+      "read": "^iam\\.notification\\.approval_tasks$",
+      "topics": [
+        { "exchange": "iam.workflow", "write": "^$", "read": "^$" }
+      ]
+    }
+  ]
+}

@@ -31,13 +31,13 @@ public sealed class WorkflowOutboxRelayParityTests(ParityDatabase db, RabbitMqBr
         var queue = await BoundQueueAsync(channel);
         var ids = await WriteAsync(3);
 
-        await using var publisher = Publisher(broker.Settings);
+        await using var publisher = Publisher(broker.Workflow);
         await Relay(publisher).RunOnceAsync(Ct);
 
         foreach (var row in await RowsAsync(ids))
         {
             row.DispatchedAtUtc.ShouldNotBeNull();
-            row.Attempts.ShouldBe(1);
+            row.Attempts.ShouldBe(0, "only a failed send counts as an attempt");
             row.LastError.ShouldBeNull();
         }
 
@@ -62,7 +62,7 @@ public sealed class WorkflowOutboxRelayParityTests(ParityDatabase db, RabbitMqBr
     public async Task AMessageNoQueueWantsIsKeptNotDropped()
     {
         var ids = await WriteAsync(1);
-        await using var publisher = Publisher(broker.Settings);
+        await using var publisher = Publisher(broker.Workflow);
         await Relay(publisher).RunOnceAsync(Ct);
         (await RowsAsync(ids)).Single().DispatchedAtUtc.ShouldNotBeNull();
 
@@ -98,7 +98,7 @@ public sealed class WorkflowOutboxRelayParityTests(ParityDatabase db, RabbitMqBr
 
         // Parked after the last attempt: even a working broker doesn't get it under these settings.
         clock.Advance(TimeSpan.FromHours(1));
-        await using var up = Publisher(broker.Settings);
+        await using var up = Publisher(broker.Workflow);
         await Relay(up, settings, clock).RunOnceAsync(Ct);
         (await RowsAsync(ids)).Single().DispatchedAtUtc.ShouldBeNull();
 
@@ -117,11 +117,11 @@ public sealed class WorkflowOutboxRelayParityTests(ParityDatabase db, RabbitMqBr
         var queue = await BoundQueueAsync(channel);
         var ids = await WriteAsync(20);
 
-        await using var first = Publisher(broker.Settings);
-        await using var second = Publisher(broker.Settings);
+        await using var first = Publisher(broker.Workflow);
+        await using var second = Publisher(broker.Workflow);
         await Task.WhenAll(Relay(first).RunOnceAsync(Ct), Relay(second).RunOnceAsync(Ct));
 
-        (await RowsAsync(ids)).ShouldAllBe(r => r.DispatchedAtUtc != null && r.Attempts == 1);
+        (await RowsAsync(ids)).ShouldAllBe(r => r.DispatchedAtUtc != null && r.Attempts == 0);
         var received = await ReceiveAsync(channel, queue, ids, expected: 20);
         received.Count.ShouldBe(20);
         received.Select(r => r.Id).Distinct().Count().ShouldBe(20, "no message was sent twice");
@@ -130,9 +130,32 @@ public sealed class WorkflowOutboxRelayParityTests(ParityDatabase db, RabbitMqBr
     [Fact]
     public async Task ARelaySendsOnlyItsOwnModulesMessages()
     {
-        await using var publisher = Publisher(broker.Settings);
+        await using var publisher = Publisher(broker.Workflow);
         var foreign = MessageEnvelopes.Create(new ApprovalClosed(Guid.CreateVersion7(), Guid.CreateVersion7(), "Approved", true, 3), "notification", "c1", null, "k1", DateTimeOffset.UtcNow);
         await Should.ThrowAsync<InvalidMessageException>(() => publisher.PublishAsync(foreign, Ct));
+    }
+
+    [Fact]
+    public async Task ARowThatBreaksTheRulesIsParkedAtOnce()
+    {
+        // DL-079: a row the relay can never send (here another module's message in the workflow outbox) isn't retried.
+        await using var context = Context();
+        var foreign = OutboxMessageRow.From(MessageEnvelopes.Create(
+            new ApprovalClosed(Guid.CreateVersion7(), Guid.CreateVersion7(), "Approved", true, 5),
+            "notification",
+            "relay-test",
+            null,
+            $"relay-test:{Guid.CreateVersion7():N}",
+            new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero)));
+        context.Outbox.Add(foreign);
+        await context.SaveChangesAsync(Ct);
+
+        await using var publisher = Publisher(broker.Workflow);
+        await Relay(publisher).RunOnceAsync(Ct);
+        var row = (await RowsAsync([foreign.MessageId])).Single();
+        row.Attempts.ShouldBe(new OutboxRelaySettings().MaxAttempts);
+        row.LastError.ShouldBe("InvalidMessage");
+        row.DispatchedAtUtc.ShouldBeNull();
     }
 
     /// <summary>Writes closed events dated years ago, so they come first in the relay's earliest-first batch.</summary>
@@ -180,7 +203,6 @@ public sealed class WorkflowOutboxRelayParityTests(ParityDatabase db, RabbitMqBr
     /// <summary>A queue that receives everything the workflow exchange routes, deleted with its connection.</summary>
     private static async Task<string> BoundQueueAsync(IChannel channel)
     {
-        await RabbitMqTopology.DeclareAsync(channel, WorkflowEvents.Source, Ct);
         var queue = await channel.QueueDeclareAsync(string.Empty, durable: false, exclusive: true, autoDelete: true, cancellationToken: Ct);
         await channel.QueueBindAsync(queue.QueueName, "iam.workflow", "#", cancellationToken: Ct);
         return queue.QueueName;

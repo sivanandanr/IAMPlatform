@@ -36,10 +36,26 @@ namespace IAM.Persistence.PostgreSql.Migrations.Notification
                         .HasColumnType("uuid")
                         .HasColumnName("message_id");
 
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("idempotency_key")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
                     b.Property<DateTimeOffset>("ReceivedAtUtc")
                         .HasPrecision(6)
                         .HasColumnType("timestamp(6) with time zone")
                         .HasColumnName("received_at_utc");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("source")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
 
                     b.Property<string>("Type")
                         .IsRequired()
@@ -52,11 +68,19 @@ namespace IAM.Persistence.PostgreSql.Migrations.Notification
                     b.HasKey("ConsumerName", "MessageId")
                         .HasName("pk_inbox_message");
 
+                    b.HasIndex("ConsumerName", "Source", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_inbox_message_consumer_name_source_idempotency_key");
+
                     b.ToTable("inbox_message", "notification", t =>
                         {
                             t.HasTrigger("tr_inbox_message_append_only");
 
                             t.HasCheckConstraint("ck_inbox_message_consumer_name_code", "\"consumer_name\" <> '' AND \"consumer_name\" = btrim(\"consumer_name\")");
+
+                            t.HasCheckConstraint("ck_inbox_message_idempotency_key_code", "\"idempotency_key\" <> '' AND \"idempotency_key\" = btrim(\"idempotency_key\")");
+
+                            t.HasCheckConstraint("ck_inbox_message_source_code", "\"source\" <> '' AND \"source\" = btrim(\"source\")");
 
                             t.HasCheckConstraint("ck_inbox_message_type_code", "\"type\" <> '' AND \"type\" = btrim(\"type\")");
                         });

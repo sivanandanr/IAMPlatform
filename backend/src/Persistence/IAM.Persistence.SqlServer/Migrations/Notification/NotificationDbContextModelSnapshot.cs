@@ -34,9 +34,23 @@ namespace IAM.Persistence.SqlServer.Migrations.Notification
                     b.Property<Guid>("MessageId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
                     b.Property<DateTimeOffset>("ReceivedAtUtc")
                         .HasPrecision(6)
                         .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
 
                     b.Property<string>("Type")
                         .IsRequired()
@@ -47,11 +61,18 @@ namespace IAM.Persistence.SqlServer.Migrations.Notification
 
                     b.HasKey("ConsumerName", "MessageId");
 
+                    b.HasIndex("ConsumerName", "Source", "IdempotencyKey")
+                        .IsUnique();
+
                     b.ToTable("InboxMessage", "notification", t =>
                         {
                             t.HasTrigger("TR_InboxMessage_AppendOnly");
 
                             t.HasCheckConstraint("CK_InboxMessage_ConsumerName_Code", "DATALENGTH([ConsumerName]) > 0 AND DATALENGTH([ConsumerName]) = DATALENGTH(LTRIM(RTRIM([ConsumerName])))");
+
+                            t.HasCheckConstraint("CK_InboxMessage_IdempotencyKey_Code", "DATALENGTH([IdempotencyKey]) > 0 AND DATALENGTH([IdempotencyKey]) = DATALENGTH(LTRIM(RTRIM([IdempotencyKey])))");
+
+                            t.HasCheckConstraint("CK_InboxMessage_Source_Code", "DATALENGTH([Source]) > 0 AND DATALENGTH([Source]) = DATALENGTH(LTRIM(RTRIM([Source])))");
 
                             t.HasCheckConstraint("CK_InboxMessage_Type_Code", "DATALENGTH([Type]) > 0 AND DATALENGTH([Type]) = DATALENGTH(LTRIM(RTRIM([Type])))");
                         });

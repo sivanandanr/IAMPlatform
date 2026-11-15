@@ -4,19 +4,21 @@ using RabbitMQ.Client;
 namespace IAM.BuildingBlocks.Messaging.RabbitMq;
 
 /// <summary>
-/// Broker names (DL-077). Each module publishes to its own durable topic exchange <c>iam.{source}</c>, routed by message
-/// type. A message no queue is bound for goes to the alternate exchange <c>iam.unrouted</c> and its quorum queue, so
-/// nothing is dropped before its consumers exist.
+/// Broker names (DL-077, DL-079). The topology itself comes from the reviewed <c>infra/rabbitmq/definitions.json</c>,
+/// applied by an operator: no module may create, change or delete an exchange or queue, so the code only names them. Each
+/// module publishes to its own topic exchange <c>iam.{source}</c>, routed by message type. A message no queue is bound for
+/// goes to <c>iam.unrouted</c>, a short, capped safety net (at most 7 days, oldest dropped first): it is never delivered
+/// to a consumer created later.
 /// </summary>
 public static class RabbitMqTopology
 {
     public const string UnroutedExchange = "iam.unrouted";
     public const string UnroutedQueue = "iam.unrouted";
 
-    public static string ExchangeFor(string source) => "iam." + source;
+    /// <summary>How many times a consumer has tried a message: 1 for the first delivery (DL-078).</summary>
+    public const string AttemptHeader = "iam-attempt";
 
-    /// <summary>The exchange every consumer's dead letters go to, routed by the consumer's queue name.</summary>
-    public const string DeadLetterExchange = "iam.dlx";
+    public static string ExchangeFor(string source) => "iam." + source;
 
     /// <summary>A consumer's queue: <c>iam.</c> and its name.</summary>
     public static string QueueFor(IMessageHandler handler)
@@ -25,6 +27,9 @@ public static class RabbitMqTopology
         return "iam." + handler.ConsumerName;
     }
 
+    /// <summary>The consumer's own dead-letter exchange (DL-079): no consumer can reach another's dead letters.</summary>
+    public static string DeadLetterExchangeFor(IMessageHandler handler) => QueueFor(handler) + ".dlx";
+
     public static string DeadLetterQueueFor(IMessageHandler handler) => QueueFor(handler) + ".dlq";
 
     /// <summary>Where a consumer republishes a failed message; its queue returns it to the main queue after the retry delay.</summary>
@@ -32,9 +37,6 @@ public static class RabbitMqTopology
 
     /// <summary>Where the retry queue returns a message to the consumer's queue, routed by the queue's name.</summary>
     public static string ReturnExchangeFor(IMessageHandler handler) => QueueFor(handler) + ".return";
-
-    /// <summary>How many times a consumer has tried a message: 1 for the first delivery (DL-078).</summary>
-    public const string AttemptHeader = "iam-attempt";
 
     public static int AttemptOf(IReadOnlyBasicProperties properties)
     {
@@ -47,93 +49,28 @@ public static class RabbitMqTopology
                 _ => null,
             }
             : null;
-        return int.TryParse(text, System.Globalization.NumberStyles.None, CultureInfo.InvariantCulture, out var attempt) && attempt >= 1 ? attempt : 1;
+        return int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var attempt) && attempt >= 1 ? attempt : 1;
     }
 
     /// <summary>
-    /// Declares a consumer's quorum queue, bound to its source module's exchange for exactly the types it takes, with its
-    /// own dead-letter queue and retry queue, and the broker's delivery limit as a back-stop (DL-078). The source exchange must already exist: only its module may
-    /// declare it. Safe to repeat.
+    /// A broker failure as a short code, never message text (DL-079): the broker's refusals (403 access refused, 404 no
+    /// such exchange or queue, 406 arguments differ from the definitions) are configuration errors, told apart from a lost
+    /// connection so operators can see which they have.
     /// </summary>
-    public static async Task<string> DeclareConsumerAsync(IChannel channel, IMessageHandler handler, int deliveryLimit, TimeSpan retryDelay, CancellationToken cancellationToken)
+    public static string ErrorCode(Exception exception) => exception switch
     {
-        ArgumentNullException.ThrowIfNull(channel);
-        var queue = QueueFor(handler);
-        var dlq = DeadLetterQueueFor(handler);
-        var retry = RetryExchangeFor(handler);
+        RabbitMQ.Client.Exceptions.PublishException { IsReturn: true } => "PublishReturned",
+        RabbitMQ.Client.Exceptions.PublishException => "PublishNacked",
+        RabbitMQ.Client.Exceptions.OperationInterruptedException { ShutdownReason.ReplyCode: 403 } => "BrokerAccessRefused",
+        RabbitMQ.Client.Exceptions.OperationInterruptedException { ShutdownReason.ReplyCode: 404 } => "BrokerNotFound",
+        RabbitMQ.Client.Exceptions.OperationInterruptedException { ShutdownReason.ReplyCode: 406 } => "BrokerPreconditionFailed",
+        OperationCanceledException => "PublishTimeout",
+        _ => exception.GetType().Name,
+    };
 
-        // Retry: a direct exchange and a queue that holds a failed message for the retry delay, then returns it to the
-        // main queue through the consumer's own return exchange (the default exchange would need broader permissions).
-        var back = ReturnExchangeFor(handler);
-        await channel.ExchangeDeclareAsync(back, ExchangeType.Direct, durable: true, autoDelete: false, arguments: null, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await channel.ExchangeDeclareAsync(retry, ExchangeType.Direct, durable: true, autoDelete: false, arguments: null, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await channel.QueueDeclareAsync(
-            retry,
-            durable: true,
-            exclusive: false,
-            autoDelete: false,
-            arguments: new Dictionary<string, object?>
-            {
-                ["x-queue-type"] = "quorum",
-                ["x-message-ttl"] = (long)retryDelay.TotalMilliseconds,
-                ["x-dead-letter-exchange"] = back,
-                ["x-dead-letter-routing-key"] = queue,
-            },
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        await channel.QueueBindAsync(retry, retry, queue, cancellationToken: cancellationToken).ConfigureAwait(false);
-
-        await channel.ExchangeDeclareAsync(DeadLetterExchange, ExchangeType.Direct, durable: true, autoDelete: false, arguments: null, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await channel.QueueDeclareAsync(
-            dlq,
-            durable: true,
-            exclusive: false,
-            autoDelete: false,
-            arguments: new Dictionary<string, object?> { ["x-queue-type"] = "quorum" },
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        await channel.QueueBindAsync(dlq, DeadLetterExchange, queue, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await channel.QueueDeclareAsync(
-            queue,
-            durable: true,
-            exclusive: false,
-            autoDelete: false,
-            arguments: new Dictionary<string, object?>
-            {
-                ["x-queue-type"] = "quorum",
-                ["x-delivery-limit"] = deliveryLimit,
-                ["x-dead-letter-exchange"] = DeadLetterExchange,
-                ["x-dead-letter-routing-key"] = queue,
-            },
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        await channel.QueueBindAsync(queue, back, queue, cancellationToken: cancellationToken).ConfigureAwait(false);
-        foreach (var type in handler.MessageTypes)
-        {
-            await channel.QueueBindAsync(queue, ExchangeFor(handler.Source), type, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-
-        return queue;
-    }
-
-    /// <summary>Declares the module's exchange and the unrouted catch-all. Safe to repeat.</summary>
-    public static async Task DeclareAsync(IChannel channel, string source, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(channel);
-        await channel.ExchangeDeclareAsync(UnroutedExchange, ExchangeType.Fanout, durable: true, autoDelete: false, arguments: null, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await channel.QueueDeclareAsync(
-            UnroutedQueue,
-            durable: true,
-            exclusive: false,
-            autoDelete: false,
-            arguments: new Dictionary<string, object?> { ["x-queue-type"] = "quorum" },
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        await channel.QueueBindAsync(UnroutedQueue, UnroutedExchange, string.Empty, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await channel.ExchangeDeclareAsync(
-            ExchangeFor(source),
-            ExchangeType.Topic,
-            durable: true,
-            autoDelete: false,
-            arguments: new Dictionary<string, object?> { ["alternate-exchange"] = UnroutedExchange },
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-    }
+    /// <summary>True for a refusal that retrying won't fix: the topology or permissions are wrong.</summary>
+    public static bool IsConfigurationError(string code) =>
+        code is "BrokerAccessRefused" or "BrokerNotFound" or "BrokerPreconditionFailed" or "PublishReturned";
 }
 
 /// <summary>Sends one message and returns only once the broker has confirmed it; anything else throws.</summary>
@@ -144,8 +81,9 @@ public interface IMessagePublisher
 
 /// <summary>
 /// Publishes to RabbitMQ with publisher confirms (DL-077): persistent messages, mandatory routing, the envelope's ids in
-/// the message properties and headers, the payload as the body. One connection and channel, opened on first use and
-/// thrown away after any failure so the next send starts clean. Not for concurrent use: one relay owns it.
+/// the message properties and headers, the payload as the body. It declares nothing: the exchange comes from the broker
+/// definitions (DL-079). One connection and channel, opened on first use and thrown away after any failure so the next
+/// send starts clean. Not for concurrent use: one relay owns it.
 /// </summary>
 public sealed class RabbitMqPublisher(RabbitMqSettings settings, string source) : IMessagePublisher, IAsyncDisposable
 {
@@ -238,7 +176,6 @@ public sealed class RabbitMqPublisher(RabbitMqSettings settings, string source) 
         _channel = await _connection.CreateChannelAsync(
             new CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true),
             cancellationToken).ConfigureAwait(false);
-        await RabbitMqTopology.DeclareAsync(_channel, source, cancellationToken).ConfigureAwait(false);
         return _channel;
     }
 

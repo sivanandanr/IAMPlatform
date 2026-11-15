@@ -10,11 +10,12 @@ namespace IAM.BuildingBlocks.Messaging.RabbitMq;
 public sealed record OutboxRelayPass(int Due, int Sent, int Failed, int Skipped, int Parked);
 
 /// <summary>
-/// Sends one module's outbox to the broker (ADR-0006, DL-077), with that module's own database login. Each due message is
-/// first claimed (its attempt counted and a lease set, saved under the row's version, so two relays can't both claim it),
-/// then published and confirmed, then marked dispatched. A failed send waits 2, 4, 8 … seconds; after
-/// <see cref="OutboxRelaySettings.MaxAttempts"/> it is parked for people to look at. Delivery is at least once: a relay
-/// that stops after the broker confirmed but before saving sends the message again after the lease.
+/// Sends one module's outbox to the broker (ADR-0006, DL-077, DL-079), with that module's own database login. Each due
+/// message is first claimed (a lease set, saved under the row's version, so two relays can't both claim it), then
+/// published and confirmed, then marked dispatched. Only a failed send counts as an attempt: it waits 2, 4, 8 … seconds,
+/// and after <see cref="OutboxRelaySettings.MaxAttempts"/> the message is parked for people to look at. A row whose content
+/// breaks the envelope rules (written by SQL, say) is parked at once. Delivery is at least once: a relay that stops after
+/// the broker confirmed but before saving sends the message again after the lease.
 /// </summary>
 public sealed partial class OutboxRelay<TContext>(
     IServiceScopeFactory scopes,
@@ -44,8 +45,7 @@ public sealed partial class OutboxRelay<TContext>(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Claim: counted and leased before anything is sent.
-            message.Attempts++;
+            // Claim: leased before anything is sent; an attempt is counted only if the send fails.
             message.NextAttemptAtUtc = clock.GetUtcNow() + settings.Lease;
             if (!await TrySaveAsync(db, message, cancellationToken).ConfigureAwait(false))
             {
@@ -61,10 +61,18 @@ public sealed partial class OutboxRelay<TContext>(
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
-                failed++;
+                // Content that breaks the rules will never send: parked now rather than retried.
+                message.Attempts = ex is InvalidMessageException ? max : message.Attempts + 1;
                 message.LastError = Code(ex);
                 message.NextAttemptAtUtc = clock.GetUtcNow() + OutboxRelaySettings.Backoff(message.Attempts);
-                await TrySaveAsync(db, message, cancellationToken).ConfigureAwait(false);
+                if (!await TrySaveAsync(db, message, cancellationToken).ConfigureAwait(false))
+                {
+                    // Another relay moved it meanwhile; its outcome is that relay's to report.
+                    skipped++;
+                    continue;
+                }
+
+                failed++;
                 if (message.Attempts >= max)
                 {
                     parked++;
@@ -94,10 +102,10 @@ public sealed partial class OutboxRelay<TContext>(
         return new OutboxRelayPass(due.Count, sent, failed, skipped, parked);
     }
 
-    /// <summary>A failure's type name, bounded, never its message text (which can carry hosts or data).</summary>
+    /// <summary>A failure's code (the broker's refusal, or the type name), bounded, never its message text (which can carry hosts or data).</summary>
     private static string Code(Exception ex)
     {
-        var name = ex is OperationCanceledException ? "PublishTimeout" : ex.GetType().Name;
+        var name = ex is InvalidMessageException ? "InvalidMessage" : RabbitMqTopology.ErrorCode(ex);
         return name.Length <= OutboxModel.MaxErrorLength ? name : name[..OutboxModel.MaxErrorLength];
     }
 

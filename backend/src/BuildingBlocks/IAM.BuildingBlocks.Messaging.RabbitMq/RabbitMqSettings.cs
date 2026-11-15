@@ -90,7 +90,8 @@ public sealed class OutboxRelaySettings
         Check(BatchSize is >= 1 and <= 500, nameof(batchSize), "BatchSize must be 1 to 500.");
         Check(MaxAttempts is >= 1 and <= 50, nameof(maxAttempts), "MaxAttempts must be 1 to 50.");
         Check(PublishTimeout >= TimeSpan.FromSeconds(1) && PublishTimeout <= TimeSpan.FromMinutes(1), nameof(publishTimeoutSeconds), "PublishTimeoutSeconds must be 1 to 60.");
-        Check(Lease > PublishTimeout && Lease <= TimeSpan.FromMinutes(15), nameof(leaseSeconds), "LeaseSeconds must be longer than the publish timeout and at most 900.");
+        // The lease covers the claim save, connecting, the send and the dispatched save (DL-079).
+        Check(Lease >= (2 * PublishTimeout) + TimeSpan.FromSeconds(10) && Lease <= TimeSpan.FromMinutes(15), nameof(leaseSeconds), "LeaseSeconds must be at least twice the publish timeout plus 10, and at most 900.");
     }
 
     public TimeSpan Interval { get; }
