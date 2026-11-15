@@ -65,7 +65,7 @@ public sealed class InMemoryOperationLedger : IOperationLedger
 /// retrying runs again under the same id. One operation id, and one operation per target object, runs at a time, so two
 /// requests for the same change can't both read "not done yet" and both make it.
 /// </summary>
-public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger ledger) : IConnector
+public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger ledger, TimeProvider? clock = null) : IConnector
 {
     /// <summary>Actions that may carry attributes; any other action carries none.</summary>
     private static readonly HashSet<string> TakesAttributes = new(StringComparer.Ordinal)
@@ -74,6 +74,7 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
     };
 
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _operationGates = new();
+    private OperationRateLimiter? _rateLimiter;
     private readonly ConcurrentDictionary<ObjectRef, SemaphoreSlim> _targetGates = new();
 
     public abstract ConnectorCapabilities Capabilities { get; }
@@ -122,6 +123,12 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
                 return string.Equals(prior.Fingerprint, fingerprint, StringComparison.Ordinal)
                     ? prior.Result
                     : OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.OperationIdReused);
+            }
+
+            // Only work that reaches the target counts against the speed limit; a throttled operation is retried later.
+            if (!RateLimiter.TryAcquire())
+            {
+                return OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.Throttled);
             }
 
             OperationResult result;
@@ -220,6 +227,22 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
     protected abstract Task<OperationResult> ApplyAsync(ConnectorOperation operation, ObjectSnapshot? current, CancellationToken cancellationToken);
 
     protected abstract Task<ObjectPage> ListCoreAsync(string objectType, string? continuation, int pageSize, CancellationToken cancellationToken);
+
+    /// <summary>The lower of the connector's declared speed limit and the application's (DL-082), made on first use.</summary>
+    private OperationRateLimiter RateLimiter
+    {
+        get
+        {
+            if (Volatile.Read(ref _rateLimiter) is { } limiter)
+            {
+                return limiter;
+            }
+
+            var perSecond = Math.Min(Capabilities.MaxOperationsPerSecond, settings.MaxOperationsPerSecond ?? int.MaxValue);
+            Interlocked.CompareExchange(ref _rateLimiter, new OperationRateLimiter(Math.Max(perSecond, 1), clock ?? TimeProvider.System), null);
+            return _rateLimiter!;
+        }
+    }
 
     /// <summary>A fingerprint of everything an operation asks for, so a reused id that asks for something else is caught.</summary>
     private static string Fingerprint(ConnectorOperation operation)

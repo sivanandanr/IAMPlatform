@@ -122,7 +122,7 @@ public sealed class SdkTests
         private bool _enabled = true;
 
         public override ConnectorCapabilities Capabilities { get; } = new(
-            "test.flaky", false, [ActionCatalog.AccountDisable], [new ObjectTypeCapability(ObjectTypes.Account, false, ["displayName"])], 1, 1);
+            "test.flaky", false, [ActionCatalog.AccountDisable], [new ObjectTypeCapability(ObjectTypes.Account, false, ["displayName"])], 10, 1);
 
         public override Task<ConnectorHealth> CheckHealthAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new ConnectorHealth(HealthStatus.Healthy, null, false));

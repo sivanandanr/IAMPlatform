@@ -8,7 +8,8 @@ namespace IAM.Connectors.ActiveDirectory.Mock;
 /// (users), entitlements (groups) and containers (OUs) under one base DN, with group membership kept on both sides. It
 /// implements the whole action catalog through <see cref="ConnectorBase"/>, so the SDK's safety rules hold; it never talks
 /// to a real directory, keeps nothing across restarts, and reports itself as not production-ready in its capabilities and
-/// health (CLAUDE.md rule 10, FR-REL-103). A new account starts disabled, as in AD.
+/// health (CLAUDE.md rule 10, FR-REL-103). A new account starts disabled, as in AD. <see cref="Faults"/> and the drift
+/// methods simulate a slow, failing or changed directory for tests and demos (DL-082).
 /// </summary>
 public sealed class MockActiveDirectoryConnector : ConnectorBase
 {
@@ -30,10 +31,13 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
     private readonly object _sync = new();
     private readonly Dictionary<string, Node> _directory = new(StringComparer.Ordinal);
     private readonly string _baseDn;
+    private readonly TimeProvider _clock;
+    private int _pagesListed;
 
-    public MockActiveDirectoryConnector(ConnectorSettings settings, IOperationLedger ledger, string baseDn = DefaultBaseDn)
-        : base(settings, ledger)
+    public MockActiveDirectoryConnector(ConnectorSettings settings, IOperationLedger ledger, string baseDn = DefaultBaseDn, TimeProvider? clock = null)
+        : base(settings, ledger, clock)
     {
+        _clock = clock ?? TimeProvider.System;
         if (DistinguishedName.Parse(baseDn) is not { } parts || parts.Any(p => p.Type != "DC"))
         {
             throw new ArgumentException("The base DN must be DC components only.", nameof(baseDn));
@@ -45,6 +49,45 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
     public override ConnectorCapabilities Capabilities => Declared;
 
     public string BaseDn => _baseDn;
+
+    /// <summary>Mock only: switches that make the directory slow, failing or unavailable (DL-082).</summary>
+    public MockFaults Faults { get; } = new();
+
+    /// <summary>Mock only: changes an attribute outside IAM, as an administrator might (drift).</summary>
+    public void DriftAttribute(ObjectRef target, string name, string? value)
+    {
+        lock (_sync)
+        {
+            Merge(_directory[target.Id], new Dictionary<string, string?> { [name] = value });
+        }
+    }
+
+    /// <summary>Mock only: adds a member outside IAM (drift).</summary>
+    public void DriftAddMember(ObjectRef group, ObjectRef account)
+    {
+        lock (_sync)
+        {
+            _directory[group.Id].Links.Add(account.Id);
+            _directory[account.Id].Links.Add(group.Id);
+        }
+    }
+
+    /// <summary>Mock only: deletes an object outside IAM, leaving no dangling membership (drift).</summary>
+    public void DriftRemove(ObjectRef target)
+    {
+        lock (_sync)
+        {
+            foreach (var other in _directory[target.Id].Links)
+            {
+                if (_directory.TryGetValue(other, out var linked))
+                {
+                    linked.Links.Remove(target.Id);
+                }
+            }
+
+            _directory.Remove(target.Id);
+        }
+    }
 
     /// <summary>Mock only: adds an OU, as an administrator would outside IAM.</summary>
     public ObjectRef AddContainer(string ou) => Add(ObjectTypes.Container, $"OU={ou},{_baseDn}", new Node(ObjectTypes.Container));
@@ -80,7 +123,9 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
     }
 
     public override Task<ConnectorHealth> CheckHealthAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(new ConnectorHealth(HealthStatus.Healthy, "Mock", ProductionReady: false));
+        Task.FromResult(Faults.Unavailable
+            ? new ConnectorHealth(HealthStatus.Unavailable, "MockUnavailable", ProductionReady: false)
+            : new ConnectorHealth(HealthStatus.Healthy, "Mock", ProductionReady: false));
 
     protected override bool IsValidId(ObjectRef reference)
     {
@@ -99,7 +144,49 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
         };
     }
 
-    protected override Task<ObjectSnapshot?> ReadCoreAsync(ObjectRef target, CancellationToken cancellationToken)
+    protected override async Task<ObjectSnapshot?> ReadCoreAsync(ObjectRef target, CancellationToken cancellationToken)
+    {
+        await FaultAsync(cancellationToken).ConfigureAwait(false);
+        return await ReadNowAsync(target).ConfigureAwait(false);
+    }
+
+    protected override async Task<OperationResult> ApplyAsync(ConnectorOperation operation, ObjectSnapshot? current, CancellationToken cancellationToken)
+    {
+        await FaultAsync(cancellationToken).ConfigureAwait(false);
+        if (Faults.TakeWriteFailure() is { } code)
+        {
+            throw new ConnectorTransientException(code);
+        }
+
+        return await ApplyNowAsync(operation).ConfigureAwait(false);
+    }
+
+    protected override async Task<ObjectPage> ListCoreAsync(string objectType, string? continuation, int pageSize, CancellationToken cancellationToken)
+    {
+        await FaultAsync(cancellationToken).ConfigureAwait(false);
+        if (Faults.FailListingAfterPages is { } limit && Interlocked.Increment(ref _pagesListed) > limit)
+        {
+            throw new ConnectorTransientException(ResultCodes.TargetUnavailable);
+        }
+
+        return await ListNowAsync(objectType, continuation, pageSize).ConfigureAwait(false);
+    }
+
+    /// <summary>The fault switches that apply to every call: unavailable, then the delay.</summary>
+    private async Task FaultAsync(CancellationToken cancellationToken)
+    {
+        if (Faults.Unavailable)
+        {
+            throw new ConnectorTransientException(ResultCodes.TargetUnavailable);
+        }
+
+        if (Faults.Latency > TimeSpan.Zero)
+        {
+            await Task.Delay(Faults.Latency, _clock, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private Task<ObjectSnapshot?> ReadNowAsync(ObjectRef target)
     {
         lock (_sync)
         {
@@ -107,7 +194,7 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
         }
     }
 
-    protected override Task<OperationResult> ApplyAsync(ConnectorOperation operation, ObjectSnapshot? current, CancellationToken cancellationToken)
+    private Task<OperationResult> ApplyNowAsync(ConnectorOperation operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
         lock (_sync)
@@ -182,7 +269,7 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
         }
     }
 
-    protected override Task<ObjectPage> ListCoreAsync(string objectType, string? continuation, int pageSize, CancellationToken cancellationToken)
+    private Task<ObjectPage> ListNowAsync(string objectType, string? continuation, int pageSize)
     {
         string? after = null;
         if (continuation is not null)
@@ -276,5 +363,47 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
         public bool MustChangePassword { get; set; }
 
         public int PasswordChanges { get; set; }
+    }
+}
+
+/// <summary>
+/// <b>Mock only.</b> Switches that make <see cref="MockActiveDirectoryConnector"/> slow, failing or unavailable, to test what
+/// callers do when a real directory misbehaves (DL-082). Failures are the transient kind: the SDK reports them as Failed
+/// and doesn't remember them, so a retry under the same operation id runs again.
+/// </summary>
+public sealed class MockFaults
+{
+    private int _failNextWrites;
+
+    /// <summary>Every read, write and listing waits this long first (on the connector's clock).</summary>
+    public TimeSpan Latency { get; set; }
+
+    /// <summary>Health reports Unavailable and every read, write and listing fails.</summary>
+    public bool Unavailable { get; set; }
+
+    /// <summary>The code the next failing writes report: <c>Throttled</c>, <c>TargetUnavailable</c> or <c>TimedOut</c>.</summary>
+    public string FailureCode { get; set; } = ResultCodes.TargetUnavailable;
+
+    /// <summary>Listing fails once this many pages have been served since the connector was made.</summary>
+    public int? FailListingAfterPages { get; set; }
+
+    /// <summary>The next <paramref name="count"/> writes fail with <see cref="FailureCode"/>.</summary>
+    public void FailNextWrites(int count) => Interlocked.Exchange(ref _failNextWrites, Math.Max(count, 0));
+
+    internal string? TakeWriteFailure()
+    {
+        while (true)
+        {
+            var left = Volatile.Read(ref _failNextWrites);
+            if (left <= 0)
+            {
+                return null;
+            }
+
+            if (Interlocked.CompareExchange(ref _failNextWrites, left - 1, left) == left)
+            {
+                return FailureCode;
+            }
+        }
     }
 }
