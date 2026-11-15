@@ -92,6 +92,8 @@ dotnet user-secrets set "ConnectionStrings:workflow" "<connection string for the
 ```bash
 IAM_DB_PROVIDER=PostgreSql dotnet run --project backend/src/Workers/IAM.Workers.Workflow
 ```
+Since DL-077 it also sends the workflow outbox to RabbitMQ, so it needs the broker too: `Messaging:RabbitMq:Host`, `VirtualHost`, `UserName` and `Password` (user secrets; locally the compose broker's `RABBITMQ_USER`, vhost `iam`, never `guest`), and `Messaging:RabbitMq:UseTls=false` only because the broker is on this machine. `Workflow:Outbox:*` tunes the relay (interval, batch, attempts, publish timeout, lease). Messages nobody consumes yet wait in the `iam.unrouted` queue; a message that failed `MaxAttempts` times is parked (logged at Error with its id and type) until the setting is raised.
+
 It writes as `system:workflow-timeouts`. A damaged instance is skipped until restart, and so is any instance that fails 3 passes in a row (logged at Error with the instance id only); look damaged ones up in the audit trail (`workflow.approval.damaged`, written once per instance) or `workflow.ApprovalDamage`. It is not in compose yet.
 
 ## 4. Stop / reset

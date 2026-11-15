@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Workflow worker (DL-074, ADR-0001): a separate executable with no HTTP surface. Composes module Infrastructure, never
-       Endpoints; uses the ASP.NET Core shared framework the API already uses for hosting, so it adds no packages. -->
+       Endpoints; uses the ASP.NET Core shared framework the API already uses for hosting; the broker client comes with Messaging.RabbitMq (DL-077). -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <!-- Local connection strings live in user secrets, never in appsettings (ADR-0017, runbook §3b). -->
@@ -10,6 +10,7 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\IAM.BuildingBlocks.Messaging.RabbitMq\IAM.BuildingBlocks.Messaging.RabbitMq.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\IAM.BuildingBlocks.Persistence\IAM.BuildingBlocks.Persistence.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\IAM.BuildingBlocks.Security\IAM.BuildingBlocks.Security.csproj" />
     <ProjectReference Include="..\..\Persistence\IAM.Persistence.PostgreSql\IAM.Persistence.PostgreSql.csproj" />

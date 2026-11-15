@@ -24,6 +24,8 @@ public sealed class ArchitectureRulesNegativeTests
     [InlineData("Identity", "Application", "IAM.Modules.Identity.Endpoints")]
     [InlineData("Identity", "Contracts", "IAM.Modules.Identity.Domain")]
     [InlineData("Identity", "Domain", "IAM.BuildingBlocks.Persistence")]
+    [InlineData("Workflow", "Infrastructure", "IAM.BuildingBlocks.Messaging.RabbitMq")]
+    [InlineData("Workflow", "Application", "IAM.BuildingBlocks.Messaging.RabbitMq")]
     [InlineData("Identity", "Endpoints", "IAM.BuildingBlocks.Persistence")]
     [InlineData("Identity", "Application", "IAM.Api")]
     public void ForbiddenModuleReferencesAreRejected(string module, string layer, string reference) =>

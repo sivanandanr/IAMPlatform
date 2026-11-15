@@ -24,10 +24,14 @@
   <ItemGroup Label="Request validation (ADR-0020, DL-062, approved by owner 2026-11-13)">
     <PackageVersion Include="FluentValidation" Version="12.2.0" />  <!-- Apache-2.0 (nuspec license expression, checked 2026-11-13); published 2026-10-10 -->
   </ItemGroup>
+  <ItemGroup Label="Messaging (ADR-0021, DL-076, approved by owner 2026-11-15)">
+    <PackageVersion Include="RabbitMQ.Client" Version="7.2.2" />  <!-- Apache-2.0 OR MPL-2.0 (nuspec license expression, checked 2026-11-15); published 2026-08-05 -->
+  </ItemGroup>
   <ItemGroup Label="Testing (ADR-0022, approved 2026-11-07)">
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.14" />  <!-- MIT; approved 2026-11-08 (S1-05) -->
     <PackageVersion Include="Testcontainers.MsSql" Version="4.16.0" />                <!-- MIT; approved 2026-11-08 (S1-06) -->
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.16.0" />           <!-- MIT; approved 2026-11-08 (S1-06) -->
+    <PackageVersion Include="Testcontainers.RabbitMq" Version="4.16.0" />             <!-- MIT; approved 2026-11-15 (DL-076d) -->
     <!-- Runs on Microsoft.Testing.Platform (global.json "test.runner"); no VSTest adapter packages needed. -->
     <PackageVersion Include="xunit.v3" Version="4.0.2" />                        <!-- Apache-2.0 -->
     <PackageVersion Include="Shouldly" Version="4.3.0" />                        <!-- BSD-3-Clause -->
