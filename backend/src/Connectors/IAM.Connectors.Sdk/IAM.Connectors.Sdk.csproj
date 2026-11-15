@@ -4,4 +4,7 @@
     that makes operations safe to repeat. No packages and no module or persistence references: connectors run inside
     customer networks and know nothing of the platform's data (architecture rule).
   -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="IAM.Connectors.Tests" />
+  </ItemGroup>
 </Project>

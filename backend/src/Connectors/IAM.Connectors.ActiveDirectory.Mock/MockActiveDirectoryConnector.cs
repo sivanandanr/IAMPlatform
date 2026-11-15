@@ -26,10 +26,12 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
             new ObjectTypeCapability(ObjectTypes.Container, Discoverable: true, ["description"]),
         ],
         MaxOperationsPerSecond: 50,
-        MaxPageSize: 500);
+        MaxPageSize: 500,
+        IdsIgnoreCase: true);
 
     private readonly object _sync = new();
-    private readonly Dictionary<string, Node> _directory = new(StringComparer.Ordinal);
+    // Names compare ignoring case, as in AD (DL-083b); each object keeps the spelling it was created with.
+    private readonly Dictionary<string, Node> _directory = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _baseDn;
     private readonly TimeProvider _clock;
     private int _pagesListed;
@@ -77,17 +79,33 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
     {
         lock (_sync)
         {
-            foreach (var other in _directory[target.Id].Links)
-            {
-                if (_directory.TryGetValue(other, out var linked))
-                {
-                    linked.Links.Remove(target.Id);
-                }
-            }
-
-            _directory.Remove(target.Id);
+            Remove(target.Id);
         }
     }
+
+    /// <summary>Removes an object with every membership and ownership that pointed at it. Call under the lock.</summary>
+    private void Remove(string id)
+    {
+        if (!_directory.Remove(id, out var gone))
+        {
+            return;
+        }
+
+        foreach (var other in gone.Links)
+        {
+            if (_directory.TryGetValue(other, out var linked))
+            {
+                linked.Links.Remove(id);
+            }
+        }
+
+        foreach (var owned in _directory.Values.Where(n => n.Owner is { } owner && string.Equals(owner, id, StringComparison.OrdinalIgnoreCase)))
+        {
+            owned.Owner = null;
+        }
+    }
+
+    private bool Is(string id, string objectType) => _directory.TryGetValue(id, out var node) && node.ObjectType == objectType;
 
     /// <summary>Mock only: adds an OU, as an administrator would outside IAM.</summary>
     public ObjectRef AddContainer(string ou) => Add(ObjectTypes.Container, $"OU={ou},{_baseDn}", new Node(ObjectTypes.Container));
@@ -190,7 +208,7 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
     {
         lock (_sync)
         {
-            return Task.FromResult(_directory.TryGetValue(target.Id, out var node) && node.ObjectType == target.ObjectType ? Snapshot(target.Id, node) : null);
+            return Task.FromResult(_directory.TryGetValue(target.Id, out var node) && node.ObjectType == target.ObjectType ? Snapshot(node.Dn, node) : null);
         }
     }
 
@@ -201,10 +219,24 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
         {
             var id = operation.Target.Id;
             var related = operation.Related?.Id;
+            var creates = operation.Action is ActionCatalog.AccountCreate or ActionCatalog.EntitlementCreate;
+
+            // Checked again under the lock: another operation may have changed either object since the pipeline read them.
+            if (creates ? _directory.ContainsKey(id) : !Is(id, operation.Target.ObjectType) && operation.Action is not (ActionCatalog.AccountDelete or ActionCatalog.EntitlementDelete or ActionCatalog.EntitlementRemove or ActionCatalog.MemberRemove))
+            {
+                return Task.FromResult(OperationResult.Of(operation, OperationStatus.Rejected, creates ? ResultCodes.AlreadyExists : ResultCodes.TargetNotFound));
+            }
+
+            if (operation.Related is { } other && !Is(other.Id, other.ObjectType)
+                && operation.Action is not (ActionCatalog.EntitlementRemove or ActionCatalog.MemberRemove))
+            {
+                return Task.FromResult(OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.RelatedNotFound));
+            }
+
             switch (operation.Action)
             {
                 case ActionCatalog.AccountCreate or ActionCatalog.EntitlementCreate:
-                    if (!string.Equals(DistinguishedName.Parent(id), related, StringComparison.Ordinal))
+                    if (!DistinguishedName.SameName(DistinguishedName.Parent(id), related))
                     {
                         // The DN must sit directly in the container named.
                         return Task.FromResult(OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.InvalidOperation));
@@ -212,6 +244,7 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
 
                     var created = new Node(operation.Target.ObjectType)
                     {
+                        Dn = id,
                         Enabled = operation.Target.ObjectType == ObjectTypes.Account ? false : null,
                         Locked = operation.Target.ObjectType == ObjectTypes.Account ? false : null,
                     };
@@ -228,26 +261,26 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
                     _directory[id].Enabled = false;
                     break;
                 case ActionCatalog.AccountDelete or ActionCatalog.EntitlementDelete:
-                    foreach (var other in _directory[id].Links)
-                    {
-                        if (_directory.TryGetValue(other, out var linked))
-                        {
-                            linked.Links.Remove(id);
-                        }
-                    }
-
-                    _directory.Remove(id);
+                    Remove(id);
                     break;
                 case ActionCatalog.AccountWriteOwner:
-                    _directory[id].Owner = related;
+                    _directory[id].Owner = _directory[related!].Dn;
                     break;
                 case ActionCatalog.EntitlementAdd or ActionCatalog.MemberAdd:
-                    _directory[id].Links.Add(related!);
-                    _directory[related!].Links.Add(id);
+                    _directory[id].Links.Add(_directory[related!].Dn);
+                    _directory[related!].Links.Add(_directory[id].Dn);
                     break;
                 case ActionCatalog.EntitlementRemove or ActionCatalog.MemberRemove:
-                    _directory[id].Links.Remove(related!);
-                    _directory[related!].Links.Remove(id);
+                    if (_directory.TryGetValue(id, out var from))
+                    {
+                        from.Links.Remove(related!);
+                    }
+
+                    if (_directory.TryGetValue(related!, out var to))
+                    {
+                        to.Links.Remove(id);
+                    }
+
                     break;
                 case ActionCatalog.PasswordChange:
                     // The connector would fetch the new password from the vault reference here, inside the customer's
@@ -296,7 +329,7 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
                 .OrderBy(e => e.Key, StringComparer.Ordinal)
                 .Take(pageSize + 1)
                 .ToList();
-            var items = all.Take(pageSize).Select(e => Snapshot(e.Key, e.Value)).ToList();
+            var items = all.Take(pageSize).Select(e => Snapshot(e.Value.Dn, e.Value)).ToList();
             var next = all.Count > pageSize ? Convert.ToBase64String(Encoding.UTF8.GetBytes(items[^1].Ref.Id)) : null;
             return Task.FromResult(new ObjectPage(items, next));
         }
@@ -325,6 +358,7 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
             throw new ArgumentException("Not a name the mock accepts.", nameof(dn));
         }
 
+        node.Dn = dn;
         lock (_sync)
         {
             _directory.TryAdd(dn, node);
@@ -347,6 +381,9 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
 
     private sealed class Node(string objectType)
     {
+        /// <summary>The name as it was created: what reads and listings show.</summary>
+        public string Dn { get; set; } = string.Empty;
+
         public string ObjectType { get; } = objectType;
 
         public bool? Enabled { get; set; }
@@ -356,7 +393,7 @@ public sealed class MockActiveDirectoryConnector : ConnectorBase
         public Dictionary<string, string?> Attributes { get; } = new(StringComparer.Ordinal);
 
         /// <summary>An account's groups, or a group's members, by DN.</summary>
-        public HashSet<string> Links { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> Links { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         public string? Owner { get; set; }
 

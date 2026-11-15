@@ -25,6 +25,13 @@ public abstract class ConnectorContractTests
     /// <summary>A new, valid account identifier the connector hasn't seen.</summary>
     protected abstract ObjectRef NewAccount();
 
+    /// <summary>Settings that switch password changes on, with the vault and path the suite's references use.</summary>
+    protected static ConnectorSettings PasswordSettings { get; } =
+        ConnectorSettings.Allowing(ActionCatalog.PasswordChange, ActionCatalog.PasswordReset) with { SecretVault = "customer-vault", SecretPathPrefix = "accounts/" };
+
+    /// <summary>Whether an account and an entitlement can't share a name, as in a directory (one namespace for all objects).</summary>
+    protected virtual bool OneNamespace => false;
+
     /// <summary>A valid entitlement identifier that doesn't exist.</summary>
     protected virtual ObjectRef AbsentEntitlement => new(ObjectTypes.Entitlement, ExistingEntitlement.Id + "-missing");
 
@@ -103,12 +110,14 @@ public abstract class ConnectorContractTests
         (await connector.ReadAsync(account, Ct)).ShouldNotBeNull().Enabled.ShouldBe(true);
         (await connector.ExecuteAsync(Op(ActionCatalog.AccountEnable, account), Ct)).Status.ShouldBe(OperationStatus.AlreadyInState);
 
-        // Creating the same account again with the same values is already done; with other values, refused.
+        // A create never takes over an account that exists, even with the same values or none (DL-083a).
         var attribute = AccountAttribute(connector);
-        (await connector.ExecuteAsync(Op(ActionCatalog.AccountCreate, account, Container, new Dictionary<string, string?> { [attribute] = "Created" }), Ct))
-            .Status.ShouldBe(OperationStatus.AlreadyInState);
-        var other = Op(ActionCatalog.AccountCreate, account, Container, new Dictionary<string, string?> { [attribute] = "Someone else" });
-        (await connector.ExecuteAsync(other, Ct)).ShouldBe(new OperationResult(other.OperationId, OperationStatus.Rejected, ResultCodes.AlreadyExistsDifferently));
+        foreach (var attributes in new[] { new Dictionary<string, string?> { [attribute] = "Created" }, [], new Dictionary<string, string?> { [attribute] = "Someone else" } })
+        {
+            var again = Op(ActionCatalog.AccountCreate, account, Container, attributes);
+            (await connector.ExecuteAsync(again, Ct)).ShouldBe(new OperationResult(again.OperationId, OperationStatus.Rejected, ResultCodes.AlreadyExists));
+        }
+
         (await connector.ReadAsync(account, Ct)).ShouldNotBeNull().Attributes[attribute].ShouldBe("Created");
     }
 
@@ -186,12 +195,27 @@ public abstract class ConnectorContractTests
     [Fact]
     public async Task PasswordsTravelOnlyAsVaultReferences()
     {
-        var connector = Create(ConnectorSettings.Default);
+        var connector = Create(PasswordSettings);
         var account = await CreatedAccountAsync(connector);
         var reference = new SecretReference("customer-vault", "accounts/new-password");
         if (connector.Capabilities.Supports(ActionCatalog.PasswordChange))
         {
+            // Off unless switched on (DL-083d).
+            var off = Create(ConnectorSettings.Default);
+            var someone = await CreatedAccountAsync(off);
+            (await off.ExecuteAsync(Op(ActionCatalog.PasswordChange, someone, secret: reference), Ct)).Code.ShouldBe(ResultCodes.ActionNotAllowed);
+
             (await connector.ExecuteAsync(Op(ActionCatalog.PasswordChange, account), Ct)).Code.ShouldBe(ResultCodes.SecretReferenceRequired);
+            foreach (var bad in new[] { "accounts/../admin", "/accounts/x", "accounts//x", "accounts/./x" })
+            {
+                (await connector.ExecuteAsync(Op(ActionCatalog.PasswordChange, account, secret: new SecretReference("customer-vault", bad)), Ct)).Code
+                    .ShouldBe(ResultCodes.SecretReferenceRequired, bad);
+            }
+
+            (await connector.ExecuteAsync(Op(ActionCatalog.PasswordChange, account, secret: new SecretReference("other-vault", "accounts/x")), Ct)).Code
+                .ShouldBe(ResultCodes.SecretOutsideAllowlist);
+            (await connector.ExecuteAsync(Op(ActionCatalog.PasswordChange, account, secret: new SecretReference("customer-vault", "admins/x")), Ct)).Code
+                .ShouldBe(ResultCodes.SecretOutsideAllowlist);
             (await connector.ExecuteAsync(Op(ActionCatalog.PasswordChange, account, secret: new SecretReference("Bad Vault", "x")), Ct)).Code.ShouldBe(ResultCodes.SecretReferenceRequired);
             var changed = await connector.ExecuteAsync(Op(ActionCatalog.PasswordChange, account, secret: reference), Ct);
             changed.Status.ShouldBe(OperationStatus.Applied);
@@ -204,9 +228,103 @@ public abstract class ConnectorContractTests
         }
 
         var snapshot = (await connector.ReadAsync(account, Ct)).ShouldNotBeNull();
-        snapshot.Attributes.Keys.ShouldAllBe(k => !ConnectorText.LooksLikeCredential(k), "a snapshot never carries a credential");
+        snapshot.Attributes.Keys.ShouldAllBe(k => !ConnectorText.IsForbiddenAttribute(k), "a snapshot never carries a credential or privilege attribute");
         snapshot.Attributes.Values.ShouldAllBe(v => v == null || !v.Contains(reference.Name, StringComparison.Ordinal));
         reference.ToString().ShouldNotContain(reference.Name);
+    }
+
+    [Fact]
+    public async Task PrivilegeAndCredentialAttributesAreRefused()
+    {
+        var connector = Create(ConnectorSettings.Default);
+        SkipUnless(connector, ActionCatalog.AccountUpdate);
+        var account = await CreatedAccountAsync(connector);
+        foreach (var name in new[] { "userAccountControl", "servicePrincipalName", "sIDHistory", "member", "scriptPath", "userPKCS12", "msDS-KeyCredentialLink" })
+        {
+            var update = Op(ActionCatalog.AccountUpdate, account, attributes: new Dictionary<string, string?> { [name] = "x" });
+            (await connector.ExecuteAsync(update, Ct)).Code.ShouldBeOneOf([ResultCodes.ForbiddenAttribute, ResultCodes.CredentialInAttributes], name);
+        }
+
+        connector.Capabilities.ObjectTypes.SelectMany(t => t.Attributes).ShouldAllBe(a => !ConnectorText.IsForbiddenAttribute(a));
+    }
+
+    [Fact]
+    public async Task AMissingAttributeMapIsRefusedNotThrown()
+    {
+        var connector = Create(ConnectorSettings.Default);
+        SkipUnless(connector, ActionCatalog.AccountUpdate);
+        var account = await CreatedAccountAsync(connector);
+        var broken = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountUpdate, account, null, null!, null);
+        (await connector.ExecuteAsync(broken, Ct)).Code.ShouldBe(ResultCodes.InvalidOperation);
+        (await connector.VerifyAsync(broken, Ct)).Matches.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ClearingAnAttributeIsDoneOnceItIsGone()
+    {
+        var connector = Create(ConnectorSettings.Default);
+        SkipUnless(connector, ActionCatalog.AccountUpdate);
+        var account = await CreatedAccountAsync(connector);
+        var clear = Op(ActionCatalog.AccountUpdate, account, attributes: new Dictionary<string, string?> { [AccountAttribute(connector)] = null });
+        (await connector.ExecuteAsync(clear, Ct)).Status.ShouldBe(OperationStatus.Applied);
+        (await connector.VerifyAsync(clear, Ct)).Matches.ShouldBeTrue();
+        (await connector.ExecuteAsync(clear with { OperationId = Guid.CreateVersion7() }, Ct)).Status.ShouldBe(OperationStatus.AlreadyInState);
+    }
+
+    [Fact]
+    public async Task TakingAccessAwayFromSomethingGoneIsAlreadyDone()
+    {
+        // A leaver's account or a deleted group: the access is gone, which is what was asked (DL-083).
+        var connector = Create(ConnectorSettings.Default);
+        SkipUnless(connector, ActionCatalog.EntitlementRemove);
+        var account = await CreatedAccountAsync(connector);
+        (await connector.ExecuteAsync(Op(ActionCatalog.EntitlementRemove, account, AbsentEntitlement), Ct)).Status.ShouldBe(OperationStatus.AlreadyInState);
+        (await connector.ExecuteAsync(Op(ActionCatalog.EntitlementRemove, NewAccount(), ExistingEntitlement), Ct)).Status.ShouldBe(OperationStatus.AlreadyInState);
+    }
+
+    [Fact]
+    public async Task AFailureThatDependsOnTimingIsNotRemembered()
+    {
+        // An entitlement for an account that doesn't exist yet: refused now, done under the same id once it does.
+        var connector = Create(ConnectorSettings.Default);
+        SkipUnless(connector, ActionCatalog.EntitlementAdd);
+        Assert.SkipUnless(connector.Capabilities.Supports(ActionCatalog.AccountCreate), "creates no accounts");
+        var account = NewAccount();
+        var add = Op(ActionCatalog.EntitlementAdd, account, ExistingEntitlement);
+        (await connector.ExecuteAsync(add, Ct)).Code.ShouldBe(ResultCodes.TargetNotFound);
+        (await connector.ExecuteAsync(Op(ActionCatalog.AccountCreate, account, Container, new Dictionary<string, string?> { [AccountAttribute(connector)] = "Late" }), Ct))
+            .Status.ShouldBe(OperationStatus.Applied);
+        (await connector.ExecuteAsync(add, Ct)).Status.ShouldBe(OperationStatus.Applied);
+    }
+
+    [Fact]
+    public async Task AnotherSpellingOfTheSameNameIsTheSameObject()
+    {
+        var connector = Create(ConnectorSettings.Default);
+        Assert.SkipUnless(connector.Capabilities.IdsIgnoreCase, "names compare exactly");
+        SkipUnless(connector, ActionCatalog.EntitlementRemove);
+        var account = await CreatedAccountAsync(connector);
+        (await connector.ExecuteAsync(Op(ActionCatalog.EntitlementAdd, account, ExistingEntitlement), Ct)).Status.ShouldBe(OperationStatus.Applied);
+
+        // Removing under another spelling really removes it: never "already done" while the access stays (DL-083b).
+        var shouted = new ObjectRef(ObjectTypes.Entitlement, ExistingEntitlement.Id.ToUpperInvariant());
+        var remove = Op(ActionCatalog.EntitlementRemove, account, shouted);
+        (await connector.ExecuteAsync(remove, Ct)).Status.ShouldBe(OperationStatus.Applied);
+        (await connector.ReadAsync(account, Ct)).ShouldNotBeNull().Links.ShouldBeEmpty();
+        (await connector.VerifyAsync(remove, Ct)).Matches.ShouldBeTrue();
+        (await connector.ReadAsync(new ObjectRef(ObjectTypes.Account, account.Id.ToLowerInvariant().Replace("cn=", "CN=", StringComparison.Ordinal).Replace("ou=", "OU=", StringComparison.Ordinal).Replace("dc=", "DC=", StringComparison.Ordinal)), Ct))
+            .ShouldNotBeNull().Ref.Id.ShouldBe(account.Id, "an object keeps the spelling it was created with");
+    }
+
+    [Fact]
+    public async Task ACreateCanNotTakeANameUsedByAnotherType()
+    {
+        var connector = Create(ConnectorSettings.Default);
+        Assert.SkipUnless(OneNamespace, "accounts and entitlements have separate names");
+        Assert.SkipUnless(connector.Capabilities.Supports(ActionCatalog.AccountCreate), "creates no accounts");
+        var clash = Op(ActionCatalog.AccountCreate, new ObjectRef(ObjectTypes.Account, ExistingEntitlement.Id), Container, new Dictionary<string, string?> { [AccountAttribute(connector)] = "Clash" });
+        (await connector.ExecuteAsync(clash, Ct)).Code.ShouldBe(ResultCodes.AlreadyExists);
+        (await connector.ReadAsync(ExistingEntitlement, Ct)).ShouldNotBeNull("the entitlement is untouched");
     }
 
     [Fact]

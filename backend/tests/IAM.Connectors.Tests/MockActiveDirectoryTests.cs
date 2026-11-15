@@ -17,6 +17,8 @@ public sealed class MockActiveDirectoryContractTests : ConnectorContractTests
 
     protected override ObjectRef? MalformedAccount => new(ObjectTypes.Account, $"CN=user,OU=Staff,DC=elsewhere,DC=test");
 
+    protected override bool OneNamespace => true;
+
     protected override IConnector Create(ConnectorSettings settings) => MockActiveDirectoryTests.Directory(settings);
 
     protected override ObjectRef NewAccount() => new(ObjectTypes.Account, $"CN=user-{Guid.CreateVersion7():N},OU=Staff,{Base}");
@@ -172,12 +174,20 @@ public sealed class MockActiveDirectoryTests
         (await directory.ExecuteAsync(Op(ActionCatalog.AccountWriteOwner, service, ann), Ct)).Status.ShouldBe(OperationStatus.Applied);
         (await directory.ReadAsync(service, Ct)).ShouldNotBeNull().Owner.ShouldBe(ann);
         (await directory.ExecuteAsync(Op(ActionCatalog.AccountWriteOwner, service, ann), Ct)).Status.ShouldBe(OperationStatus.AlreadyInState);
+
+        // Deleting the owner leaves no ownership pointing at a name someone else could later be created under.
+        var deleting = Directory(ConnectorSettings.Allowing(ActionCatalog.AccountDelete));
+        var svc = await UserAsync(deleting, "svc-reports");
+        var bob = await UserAsync(deleting, "Bob");
+        await deleting.ExecuteAsync(Op(ActionCatalog.AccountWriteOwner, svc, bob), Ct);
+        (await deleting.ExecuteAsync(Op(ActionCatalog.AccountDelete, bob), Ct)).Status.ShouldBe(OperationStatus.Applied);
+        (await deleting.ReadAsync(svc, Ct)).ShouldNotBeNull().Owner.ShouldBeNull();
     }
 
     [Fact]
     public async Task CredentialActionsChangeStateButNeverHoldASecret()
     {
-        var directory = Directory(ConnectorSettings.Default);
+        var directory = Directory(ConnectorSettings.Allowing(ActionCatalog.PasswordChange, ActionCatalog.PasswordReset) with { SecretVault = "customer-vault", SecretPathPrefix = "people/" });
         var ann = await UserAsync(directory, "Ann");
 
         (await directory.ExecuteAsync(Op(ActionCatalog.PasswordReset, ann), Ct)).Status.ShouldBe(OperationStatus.Applied);
