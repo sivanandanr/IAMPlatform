@@ -168,10 +168,14 @@ public sealed record ConnectorCapabilities(
 }
 
 /// <summary>
-/// How a connector instance is allowed to behave (spec 2.4): destructive actions start off and are switched on one by one.
+/// How a connector instance is allowed to behave (spec 2.4): destructive actions start off and are switched on one by one;
+/// an application can set a speed limit below the connector's own (spec 4.4: "each application has speed limits").
 /// </summary>
 public sealed record ConnectorSettings(IReadOnlySet<string> EnabledDestructiveActions)
 {
+    /// <summary>Operations per second for this application, if lower than the connector's declared limit.</summary>
+    public int? MaxOperationsPerSecond { get; init; }
+
     public static ConnectorSettings Default { get; } = new(new HashSet<string>(StringComparer.Ordinal));
 
     public static ConnectorSettings Allowing(params string[] destructiveActions) => new(new HashSet<string>(destructiveActions, StringComparer.Ordinal));

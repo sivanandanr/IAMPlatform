@@ -1,5 +1,5 @@
 # ADR-0007: Hybrid private connector workers
-Status: Accepted in part (connector SDK and mock AD connector, stage 7 slices 1–2, DL-080, DL-081) | Date: 2026-11-07 | Decision owners: Lead Solution Architect, Security Architect, Network/Infrastructure owner (named approvers TBD)
+Status: Accepted in part (connector SDK, mock AD connector, speed limits and reconciliation, stage 7, DL-080 to DL-082); pending independent review | Date: 2026-11-07 | Decision owners: Lead Solution Architect, Security Architect, Network/Infrastructure owner (named approvers TBD)
 
 Source: Blueprint v1.0 §1 (ADR 007), §4, §10; Spec v3.2 Module 2.1, §12.11; CLAUDE.md "Hybrid private connectors". Drafted by Claude Code (S1-01); not approved.
 
@@ -17,6 +17,8 @@ Option 1, with option 2 acceptable for targets already reachable privately. Conn
 **SDK — built (stage 7 slice 1, DL-080).** `IAM.Connectors.Sdk`: the action catalog (the spec's 15 actions as stored codes), capabilities, the operation and result model, and `ConnectorBase`, a shared pipeline that validates every operation and makes it safe to repeat (operation-id ledger, read-before-write, one operation per target at a time). Credentials travel only as vault references; destructive actions start off. `ConnectorContractTests` is the suite every connector must pass. Connectors may not reference modules or persistence (architecture rule).
 
 **Mock AD connector — built (stage 7 slice 2, DL-081). Not production-ready.** `IAM.Connectors.ActiveDirectory.Mock` covers the whole catalog over an in-memory directory with strict distinguished-name rules, two-sided group membership, and credential actions that never hold a secret. It passes the contract suite and says it is a mock in its capabilities and health.
+
+**Speed limits, faults and reconciliation — built (stage 7 slice 3, DL-082).** The pipeline enforces the lower of the connector's and the application's speed limits; `Reconciler` marks objects missing only after health, pagination, scope and mass-removal checks all pass; the mock simulates latency, failures, an unavailable directory, failed listings and drift.
 
 ## Security and privacy impact
 Allowlisted destinations, SSRF controls on configurable endpoints, timeouts, bounded payloads, secret references only, least-privilege service accounts, mTLS/workload identity.
