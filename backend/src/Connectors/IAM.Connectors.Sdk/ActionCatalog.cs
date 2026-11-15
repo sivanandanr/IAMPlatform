@@ -13,8 +13,9 @@ public enum ActionGroup
 /// <summary>
 /// One catalog action (spec "the master list of actions", 2.4; DL-080). <see cref="Target"/> is the object type the action
 /// changes; <see cref="Related"/> the other object it needs, if any (the entitlement to add, the member to add). A
-/// <see cref="Destructive"/> action is off unless the connector's settings switch it on; a credential action that sets a
-/// password takes a vault reference, never the password (<see cref="NeedsSecretReference"/>).
+/// <see cref="Destructive"/> or <see cref="Sensitive"/> action is off unless the connector's settings switch it on (see
+/// <see cref="Gated"/>); a credential action that sets a password takes a vault reference, never the password
+/// (<see cref="NeedsSecretReference"/>).
 /// </summary>
 public sealed record ActionDefinition(
     string Code,
@@ -22,7 +23,12 @@ public sealed record ActionDefinition(
     string Target,
     string? Related,
     bool Destructive,
-    bool NeedsSecretReference);
+    bool NeedsSecretReference,
+    bool Sensitive = false)
+{
+    /// <summary>Off until the connector's settings switch it on, one by one (DL-080f, DL-083d).</summary>
+    public bool Gated => Destructive || Sensitive;
+}
 
 /// <summary>Object types the catalog's actions work on. A connector may declare more for discovery.</summary>
 public static class ObjectTypes
@@ -69,8 +75,8 @@ public static class ActionCatalog
         new(MemberRemove, ActionGroup.MembersOfAnEntitlement, ObjectTypes.Entitlement, ObjectTypes.Account, Destructive: false, NeedsSecretReference: false),
         new(EntitlementCreate, ActionGroup.EntitlementDefinitions, ObjectTypes.Entitlement, ObjectTypes.Container, Destructive: false, NeedsSecretReference: false),
         new(EntitlementDelete, ActionGroup.EntitlementDefinitions, ObjectTypes.Entitlement, null, Destructive: true, NeedsSecretReference: false),
-        new(PasswordChange, ActionGroup.Credentials, ObjectTypes.Account, null, Destructive: false, NeedsSecretReference: true),
-        new(PasswordReset, ActionGroup.Credentials, ObjectTypes.Account, null, Destructive: false, NeedsSecretReference: false),
+        new(PasswordChange, ActionGroup.Credentials, ObjectTypes.Account, null, Destructive: false, NeedsSecretReference: true, Sensitive: true),
+        new(PasswordReset, ActionGroup.Credentials, ObjectTypes.Account, null, Destructive: false, NeedsSecretReference: false, Sensitive: true),
         new(AccountUnlock, ActionGroup.Credentials, ObjectTypes.Account, null, Destructive: false, NeedsSecretReference: false),
     ];
 

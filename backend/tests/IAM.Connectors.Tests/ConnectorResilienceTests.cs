@@ -211,8 +211,41 @@ public sealed class ConnectorResilienceTests
         result.Code.ShouldBe(ReconciliationCodes.SuspiciousDrop);
         result.Missing.ShouldBeEmpty();
 
-        var capped = await Reconciler.RunAsync(directory, ObjectTypes.Account, users.Append(User("ghost")).ToHashSet(), new ReconciliationSettings(MaxMissingFraction: 1, MaxMissingCount: 0), Ct);
+        var capped = await Reconciler.RunAsync(directory, ObjectTypes.Account, users.Append(User("ghost")).ToHashSet(), new ReconciliationSettings(MaxMissingFraction: 0.5, MaxMissingCount: 0), Ct);
         capped.Code.ShouldBe(ReconciliationCodes.SuspiciousDrop, "the count limit holds on its own");
+    }
+
+    [Fact]
+    public async Task OneRealRemovalInASmallApplicationIsNotSuspicious()
+    {
+        var directory = Directory();
+        var users = await UsersAsync(directory, 3);
+        var result = await Reconciler.RunAsync(directory, ObjectTypes.Account, users.Append(User("left")).ToHashSet(), new ReconciliationSettings(), Ct);
+        result.Complete.ShouldBeTrue();
+        result.Missing.ShouldBe([User("left")]);
+        result.ConnectorProductionReady.ShouldBeFalse("the mock says so, and nothing may act on it");
+    }
+
+    [Fact]
+    public async Task NamesAreComparedTheConnectorsWay()
+    {
+        var directory = Directory();
+        var users = await UsersAsync(directory, 4);
+        var shouted = users.Select(u => new ObjectRef(u.ObjectType, u.Id.ToUpperInvariant())).ToHashSet();
+        var result = await Reconciler.RunAsync(directory, ObjectTypes.Account, shouted, new ReconciliationSettings(), Ct);
+        result.Complete.ShouldBeTrue();
+        result.Missing.ShouldBeEmpty("another spelling of a name is not a missing object");
+        result.Unexpected.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TheMassRemovalGuardCanNotBeSwitchedOff()
+    {
+        var directory = Directory();
+        foreach (var settings in new[] { new ReconciliationSettings(MaxMissingFraction: 1), new ReconciliationSettings(MaxMissingCount: 1_000_000), new ReconciliationSettings(PageSize: 5000), new ReconciliationSettings(MaxPages: 1_000_000) })
+        {
+            await Should.ThrowAsync<ArgumentException>(() => Reconciler.RunAsync(directory, ObjectTypes.Account, new HashSet<ObjectRef>(), settings, Ct), settings.ToString());
+        }
     }
 
     [Fact]

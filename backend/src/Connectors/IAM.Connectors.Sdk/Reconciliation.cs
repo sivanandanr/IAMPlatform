@@ -1,13 +1,16 @@
 namespace IAM.Connectors.Sdk;
 
 /// <summary>
-/// Limits on one reconciliation run (DL-082). <see cref="MaxMissingFraction"/> and <see cref="MaxMissingCount"/> guard
-/// against a mass removal caused by a bad listing rather than a real change: past either, the run is treated as
-/// incomplete and nothing is marked missing until people look.
+/// Limits on one reconciliation run (DL-082, DL-083). <see cref="MaxMissingFraction"/> and <see cref="MaxMissingCount"/>
+/// guard against a mass removal caused by a bad listing rather than a real change: past either, the run is treated as
+/// incomplete and nothing is marked missing until people look. A single missing object is always allowed, so small
+/// applications aren't blocked. Every value has a hard ceiling, so the guard can't be switched off by configuration.
 /// </summary>
 public sealed record ReconciliationSettings(int PageSize = 200, int MaxPages = 10_000, double MaxMissingFraction = 0.1, int MaxMissingCount = 500)
 {
-    public bool IsValid => PageSize >= 1 && MaxPages >= 1 && MaxMissingFraction is >= 0 and <= 1 && MaxMissingCount >= 0;
+    public bool IsValid =>
+        PageSize is >= 1 and <= ConnectorCapabilities.PageSizeLimit && MaxPages is >= 1 and <= 100_000
+        && MaxMissingFraction is >= 0 and <= 0.5 && MaxMissingCount is >= 0 and <= 10_000;
 }
 
 /// <summary>Why a reconciliation run can't be trusted to say what is missing. Stored and never renamed.</summary>
@@ -20,12 +23,15 @@ public static class ReconciliationCodes
     public const string Duplicate = "DuplicateObject";
     public const string OutOfScope = "OutOfScope";
     public const string SuspiciousDrop = "SuspiciousDrop";
+    public const string ConnectorError = "ConnectorError";
 }
 
 /// <summary>
 /// What a reconciliation run found (DL-082). <see cref="Missing"/> (known to IAM, not found in the target) is filled only
 /// when <see cref="Complete"/> is true: an incomplete run never marks anything removed. <see cref="Unexpected"/> (in the
-/// target, unknown to IAM) is reported either way, for people to look at.
+/// target, unknown to IAM) is reported either way, for people to look at. <see cref="ConnectorProductionReady"/> repeats
+/// the connector's own claim: nothing may act on a run from a connector that isn't (CLAUDE.md rule 10), and the platform
+/// should decide that from its own registry, not this flag alone.
 /// </summary>
 public sealed record ReconciliationResult(
     bool Complete,
@@ -33,7 +39,8 @@ public sealed record ReconciliationResult(
     IReadOnlyList<ObjectSnapshot> Found,
     IReadOnlyList<ObjectRef> Missing,
     IReadOnlyList<ObjectRef> Unexpected,
-    int Pages);
+    int Pages,
+    bool ConnectorProductionReady);
 
 /// <summary>
 /// Full discovery of one object type, compared with what IAM expects (spec FR line 1099; DL-082): "a full discovery shall
@@ -60,12 +67,15 @@ public static class Reconciler
         }
 
         var pageSize = Math.Min(settings.PageSize, connector.Capabilities.MaxPageSize);
+        var refs = connector.Capabilities.RefComparer;
+        var ready = connector.Capabilities.ProductionReady;
+        var known = new HashSet<ObjectRef>(expected.Where(e => string.Equals(e.ObjectType, objectType, StringComparison.Ordinal)), refs);
         var found = new List<ObjectSnapshot>();
-        var seen = new HashSet<ObjectRef>();
+        var seen = new HashSet<ObjectRef>(refs);
         var pages = 0;
 
         ReconciliationResult Incomplete(string code) =>
-            new(false, code, found, [], [.. found.Select(f => f.Ref).Where(r => !expected.Contains(r))], pages);
+            new(false, code, found, [], [.. found.Select(f => f.Ref).Where(r => !known.Contains(r))], pages, ready);
 
         if (!await HealthyAsync(connector, cancellationToken).ConfigureAwait(false))
         {
@@ -85,13 +95,18 @@ public static class Reconciler
             {
                 page = await connector.ListAsync(objectType, continuation, pageSize, cancellationToken).ConfigureAwait(false);
             }
+            catch (InvalidOperationException)
+            {
+                return Incomplete(ReconciliationCodes.PageTooLarge);
+            }
             catch (ConnectorTransientException)
             {
                 return Incomplete(ReconciliationCodes.ListingFailed);
             }
-            catch (InvalidOperationException)
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
-                return Incomplete(ReconciliationCodes.PageTooLarge);
+                // Whatever went wrong, what was seen so far is kept and nothing is marked missing.
+                return Incomplete(ReconciliationCodes.ConnectorError);
             }
 
             pages++;
@@ -124,14 +139,13 @@ public static class Reconciler
             return Incomplete(ReconciliationCodes.Unhealthy);
         }
 
-        var missing = expected.Where(e => string.Equals(e.ObjectType, objectType, StringComparison.Ordinal) && !seen.Contains(e)).ToList();
-        var known = expected.Count(e => string.Equals(e.ObjectType, objectType, StringComparison.Ordinal));
-        if (missing.Count > settings.MaxMissingCount || (known > 0 && missing.Count > known * settings.MaxMissingFraction))
+        var missing = known.Where(e => !seen.Contains(e)).ToList();
+        if (missing.Count > settings.MaxMissingCount || missing.Count > Math.Max(1, known.Count * settings.MaxMissingFraction))
         {
             return Incomplete(ReconciliationCodes.SuspiciousDrop);
         }
 
-        return new ReconciliationResult(true, null, found, missing, [.. found.Select(f => f.Ref).Where(r => !expected.Contains(r))], pages);
+        return new ReconciliationResult(true, null, found, missing, [.. found.Select(f => f.Ref).Where(r => !known.Contains(r))], pages, ready);
     }
 
     private static async Task<bool> HealthyAsync(IConnector connector, CancellationToken cancellationToken)
@@ -140,7 +154,7 @@ public static class Reconciler
         {
             return (await connector.CheckHealthAsync(cancellationToken).ConfigureAwait(false)).Status == HealthStatus.Healthy;
         }
-        catch (ConnectorTransientException)
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             return false;
         }

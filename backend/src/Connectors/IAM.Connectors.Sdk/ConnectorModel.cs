@@ -29,7 +29,8 @@ public sealed partial record SecretReference(string Vault, string Name)
     [GeneratedRegex(@"^[a-z][a-z0-9-]{0,49}\z", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
     private static partial Regex VaultPattern();
 
-    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}\z", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    /// <summary>Path segments each start with a letter or digit: no '..', no '//', no leading '/'.</summary>
+    [GeneratedRegex(@"^(?=.{1,200}\z)[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*\z", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
     private static partial Regex NamePattern();
 }
 
@@ -96,7 +97,11 @@ public static class ResultCodes
     public const string OperationIdReused = "OperationIdReused";
     public const string TargetNotFound = "TargetNotFound";
     public const string RelatedNotFound = "RelatedNotFound";
-    public const string AlreadyExistsDifferently = "AlreadyExistsDifferently";
+    public const string AlreadyExists = "AlreadyExists";
+    public const string ForbiddenAttribute = "ForbiddenAttribute";
+    public const string SecretOutsideAllowlist = "SecretOutsideAllowlist";
+    public const string ConnectorError = "ConnectorError";
+    public const string InvalidResponse = "InvalidResponse";
     public const string TargetUnavailable = "TargetUnavailable";
     public const string Throttled = "Throttled";
     public const string TimedOut = "TimedOut";
@@ -146,9 +151,16 @@ public sealed record ConnectorCapabilities(
     IReadOnlyList<string> Actions,
     IReadOnlyList<ObjectTypeCapability> ObjectTypes,
     int MaxOperationsPerSecond,
-    int MaxPageSize)
+    int MaxPageSize,
+    bool IdsIgnoreCase = false)
 {
     public const int PageSizeLimit = 1000;
+
+    /// <summary>How this connector's identifiers compare (DL-083b): a directory such as AD ignores case.</summary>
+    public StringComparer IdComparer => IdsIgnoreCase ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+    /// <summary>Object references compared the connector's way: type exactly, identifier by <see cref="IdComparer"/>.</summary>
+    public IEqualityComparer<ObjectRef> RefComparer => IdsIgnoreCase ? ObjectRefComparer.IgnoreCase : ObjectRefComparer.Exact;
 
     /// <summary>Every action is in the catalog and its object types are declared; limits are in range.</summary>
     public bool IsValid =>
@@ -156,7 +168,7 @@ public sealed record ConnectorCapabilities(
         && Actions.Count > 0
         && Actions.Distinct(StringComparer.Ordinal).Count() == Actions.Count
         && Actions.All(a => ActionCatalog.Find(a) is { } d && Declares(d.Target) && (d.Related is null || Declares(d.Related)))
-        && ObjectTypes.All(t => ConnectorText.IsCode(t.ObjectType, 50) && t.Attributes.All(ConnectorText.IsAttributeName) && !t.Attributes.Any(ConnectorText.LooksLikeCredential))
+        && ObjectTypes.All(t => ConnectorText.IsCode(t.ObjectType, 50) && t.Attributes.All(ConnectorText.IsAttributeName) && !t.Attributes.Any(ConnectorText.IsForbiddenAttribute))
         && MaxOperationsPerSecond is >= 1 and <= 10_000
         && MaxPageSize is >= 1 and <= PageSizeLimit;
 
@@ -168,22 +180,99 @@ public sealed record ConnectorCapabilities(
 }
 
 /// <summary>
-/// How a connector instance is allowed to behave (spec 2.4): destructive actions start off and are switched on one by one;
-/// an application can set a speed limit below the connector's own (spec 4.4: "each application has speed limits").
+/// How a connector instance is allowed to behave (spec 2.4, DL-080f, DL-083): destructive and credential actions start off
+/// and are switched on one by one; an application can set a speed limit below the connector's own (spec 4.4); a password
+/// change may use only entries under one vault path. The action list is copied when made, so it can't be changed later,
+/// and every value is checked.
 /// </summary>
-public sealed record ConnectorSettings(IReadOnlySet<string> EnabledDestructiveActions)
+public sealed record ConnectorSettings
 {
-    /// <summary>Operations per second for this application, if lower than the connector's declared limit.</summary>
-    public int? MaxOperationsPerSecond { get; init; }
+    private readonly int? _maxOperationsPerSecond;
+    private readonly string? _secretVault;
+    private readonly string? _secretPathPrefix;
 
-    public static ConnectorSettings Default { get; } = new(new HashSet<string>(StringComparer.Ordinal));
+    public ConnectorSettings(IEnumerable<string> enabledGatedActions)
+    {
+        ArgumentNullException.ThrowIfNull(enabledGatedActions);
+        var codes = enabledGatedActions.ToHashSet(StringComparer.Ordinal);
+        if (codes.Any(c => ActionCatalog.Find(c) is not { Gated: true }))
+        {
+            throw new ArgumentException("Only destructive or credential catalog actions are switched on.", nameof(enabledGatedActions));
+        }
 
-    public static ConnectorSettings Allowing(params string[] destructiveActions) => new(new HashSet<string>(destructiveActions, StringComparer.Ordinal));
+        EnabledGatedActions = System.Collections.Frozen.FrozenSet.ToFrozenSet(codes, StringComparer.Ordinal);
+    }
+
+    public static ConnectorSettings Default { get; } = new([]);
+
+    /// <summary>The destructive and credential actions switched on for this connector instance.</summary>
+    public IReadOnlySet<string> EnabledGatedActions { get; }
+
+    /// <summary>Operations per second for this application, if lower than the connector's declared limit (1 to 10,000).</summary>
+    public int? MaxOperationsPerSecond
+    {
+        get => _maxOperationsPerSecond;
+        init => _maxOperationsPerSecond = value is null or (>= 1 and <= 10_000)
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(value), "The speed limit must be 1 to 10,000 operations per second.");
+    }
+
+    /// <summary>The only vault a password change may read from.</summary>
+    public string? SecretVault
+    {
+        get => _secretVault;
+        init => _secretVault = value is null || new SecretReference(value, "x").IsValid
+            ? value
+            : throw new ArgumentException("Not a vault name.", nameof(value));
+    }
+
+    /// <summary>The only path, ending in '/', a password change's entry may sit under.</summary>
+    public string? SecretPathPrefix
+    {
+        get => _secretPathPrefix;
+        init => _secretPathPrefix = value is null || (value.EndsWith('/') && new SecretReference("v", value + "x").IsValid)
+            ? value
+            : throw new ArgumentException("Not a vault path ending in '/'.", nameof(value));
+    }
+
+    public static ConnectorSettings Allowing(params string[] gatedActions) => new(gatedActions);
 
     public bool Allows(ActionDefinition action)
     {
         ArgumentNullException.ThrowIfNull(action);
-        return !action.Destructive || EnabledDestructiveActions.Contains(action.Code);
+        return !action.Gated || EnabledGatedActions.Contains(action.Code);
+    }
+
+    /// <summary>A reference inside the configured vault and path; nothing is allowed until both are set.</summary>
+    public bool AllowsSecret(SecretReference secret)
+    {
+        ArgumentNullException.ThrowIfNull(secret);
+        return SecretVault is not null && SecretPathPrefix is not null
+            && string.Equals(secret.Vault, SecretVault, StringComparison.Ordinal)
+            && secret.Name.StartsWith(SecretPathPrefix, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>Compares object references: the type exactly, the identifier exactly or ignoring case.</summary>
+public sealed class ObjectRefComparer : IEqualityComparer<ObjectRef>
+{
+    public static readonly ObjectRefComparer Exact = new(StringComparer.Ordinal);
+    public static readonly ObjectRefComparer IgnoreCase = new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly StringComparer _ids;
+
+    private ObjectRefComparer(StringComparer ids)
+    {
+        _ids = ids;
+    }
+
+    public bool Equals(ObjectRef? x, ObjectRef? y) =>
+        ReferenceEquals(x, y) || (x is not null && y is not null && string.Equals(x.ObjectType, y.ObjectType, StringComparison.Ordinal) && _ids.Equals(x.Id, y.Id));
+
+    public int GetHashCode(ObjectRef obj)
+    {
+        ArgumentNullException.ThrowIfNull(obj);
+        return HashCode.Combine(obj.ObjectType, _ids.GetHashCode(obj.Id));
     }
 }
 
@@ -230,6 +319,29 @@ public static partial class ConnectorText
     /// <summary>An attribute name that would carry a credential: never written or read as an attribute.</summary>
     public static bool LooksLikeCredential(string name) =>
         name is not null && CredentialPattern().IsMatch(name);
+
+    /// <summary>
+    /// Attributes no connector may declare, write or read back (DL-083c): those that hold keys or secrets the name pattern
+    /// misses, and those that grant access or privilege without the gated entitlement actions (CLAUDE.md rule 11). A
+    /// reviewed list; adding a directory type adds its names here.
+    /// </summary>
+    public static IReadOnlySet<string> ForbiddenAttributes { get; } = System.Collections.Frozen.FrozenSet.ToFrozenSet(
+        [
+            // Keys and secrets.
+            "userPKCS12", "msFVE-KeyPackage", "msFVE-RecoveryPassword", "msTPM-OwnerInformation", "msTPM-TpmInformationForComputer",
+            "krbPrincipalKey", "msDS-KeyCredentialLink", "ms-Mcs-AdmPwd", "msLAPS-Password", "msLAPS-EncryptedPassword",
+            "msLAPS-EncryptedDSRMPassword", "supplementalCredentials", "dBCSPwd", "ntPwdHistory", "lmPwdHistory", "unicodePwd",
+            "userPassword", "msDS-ManagedPassword",
+            // Access and privilege.
+            "userAccountControl", "servicePrincipalName", "sIDHistory", "altSecurityIdentities", "userCertificate",
+            "msDS-AllowedToActOnBehalfOfOtherIdentity", "msDS-AllowedToDelegateTo", "member", "memberOf", "primaryGroupID",
+            "scriptPath", "profilePath", "homeDirectory", "adminCount", "nTSecurityDescriptor", "objectSid", "managedBy",
+            "msDS-GroupMSAMembership", "msExchDelegateListLink", "gPLink", "groupType",
+        ],
+        StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsForbiddenAttribute(string name) =>
+        name is not null && (LooksLikeCredential(name) || ForbiddenAttributes.Contains(name));
 
     private static bool IsVisible(char c) =>
         !char.IsControl(c) && !char.IsSurrogate(c)

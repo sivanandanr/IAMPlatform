@@ -20,6 +20,8 @@ public sealed class SdkTests
             [ActionGroup.Credentials] = 3,
         });
         ActionCatalog.All.Where(a => a.Destructive).Select(a => a.Code).ShouldBe([ActionCatalog.AccountDelete, ActionCatalog.EntitlementDelete], ignoreOrder: true);
+        ActionCatalog.All.Where(a => a.Gated).Select(a => a.Code)
+            .ShouldBe([ActionCatalog.AccountDelete, ActionCatalog.EntitlementDelete, ActionCatalog.PasswordChange, ActionCatalog.PasswordReset], ignoreOrder: true);
         ActionCatalog.All.Where(a => a.NeedsSecretReference).Select(a => a.Code).ShouldBe([ActionCatalog.PasswordChange]);
         ActionCatalog.All.ShouldAllBe(a => ConnectorText.IsCode(a.Code, 50));
         ActionCatalog.Find("account.teleport").ShouldBeNull();
@@ -37,6 +39,26 @@ public sealed class SdkTests
     }
 
     [Fact]
+    public void SettingsAreCheckedAndCanNotBeChangedLater()
+    {
+        var codes = new List<string> { ActionCatalog.AccountDelete };
+        var settings = new ConnectorSettings(codes);
+        codes.Add(ActionCatalog.EntitlementDelete);
+        settings.Allows(ActionCatalog.Find(ActionCatalog.EntitlementDelete)!).ShouldBeFalse("the list was copied when the settings were made");
+        Should.Throw<ArgumentException>(() => ConnectorSettings.Allowing("account.teleport"));
+        Should.Throw<ArgumentException>(() => ConnectorSettings.Allowing(ActionCatalog.AccountDisable));
+        Should.Throw<ArgumentOutOfRangeException>(() => ConnectorSettings.Default with { MaxOperationsPerSecond = 0 });
+        Should.Throw<ArgumentOutOfRangeException>(() => ConnectorSettings.Default with { MaxOperationsPerSecond = 10_001 });
+        Should.Throw<ArgumentException>(() => ConnectorSettings.Default with { SecretVault = "Bad Vault" });
+        Should.Throw<ArgumentException>(() => ConnectorSettings.Default with { SecretPathPrefix = "no-slash" });
+        Should.Throw<ArgumentException>(() => ConnectorSettings.Default with { SecretPathPrefix = "../" });
+        ConnectorSettings.Default.AllowsSecret(new SecretReference("v", "a/b")).ShouldBeFalse("nothing is allowed until a vault and path are set");
+        var allowed = ConnectorSettings.Default with { SecretVault = "v", SecretPathPrefix = "a/" };
+        allowed.AllowsSecret(new SecretReference("v", "a/b")).ShouldBeTrue();
+        allowed.AllowsSecret(new SecretReference("v", "ab")).ShouldBeFalse();
+    }
+
+    [Fact]
     public void CapabilitiesMustBeConsistent()
     {
         var good = new ConnectorCapabilities(
@@ -51,6 +73,8 @@ public sealed class SdkTests
             good with { Actions = [ActionCatalog.EntitlementAdd] },
             good with { ObjectTypes = [new ObjectTypeCapability(ObjectTypes.Account, true, ["userPassword"])] },
             good with { ObjectTypes = [new ObjectTypeCapability(ObjectTypes.Account, true, ["bad name"])] },
+            good with { ObjectTypes = [new ObjectTypeCapability(ObjectTypes.Account, true, ["userAccountControl"])] },
+            good with { ObjectTypes = [new ObjectTypeCapability(ObjectTypes.Account, true, ["SERVICEPRINCIPALNAME"])] },
             good with { MaxOperationsPerSecond = 0 },
             good with { MaxPageSize = ConnectorCapabilities.PageSizeLimit + 1 },
         ];
@@ -78,6 +102,14 @@ public sealed class SdkTests
         new SecretReference("customer-vault", "accounts/x").IsValid.ShouldBeTrue();
         new SecretReference("Customer Vault", "x").IsValid.ShouldBeFalse();
         new SecretReference("v", "../../etc").IsValid.ShouldBeFalse();
+        foreach (var bad in new[] { "a/../b", "/a", "a//b", "a/", ".hidden", "a/.b" })
+        {
+            new SecretReference("v", bad).IsValid.ShouldBeFalse(bad);
+        }
+
+        ConnectorText.IsForbiddenAttribute("UserAccountControl").ShouldBeTrue("compared ignoring case");
+        ConnectorText.IsForbiddenAttribute("msDS-AllowedToActOnBehalfOfOtherIdentity").ShouldBeTrue();
+        ConnectorText.IsForbiddenAttribute("department").ShouldBeFalse();
     }
 
     [Fact]
@@ -112,6 +144,76 @@ public sealed class SdkTests
         (await connector.ExecuteAsync(operation, TestContext.Current.CancellationToken)).ShouldBe(new OperationResult(operation.OperationId, OperationStatus.Failed, ResultCodes.Throttled));
         (await connector.ExecuteAsync(operation, TestContext.Current.CancellationToken)).Status.ShouldBe(OperationStatus.Applied, "the same id runs again after a transient failure");
         (await connector.VerifyAsync(operation, TestContext.Current.CancellationToken)).Matches.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AConnectorsOwnErrorIsReportedNeverThrown()
+    {
+        var connector = new FaultyConnector(faultyRead: false);
+        var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountDisable, FaultyConnector.Account, null, new Dictionary<string, string?>(), null);
+        (await connector.ExecuteAsync(operation, TestContext.Current.CancellationToken)).ShouldBe(new OperationResult(operation.OperationId, OperationStatus.Failed, ResultCodes.ConnectorError));
+    }
+
+    [Fact]
+    public async Task WhatAConnectorReturnsIsCheckedAndFiltered()
+    {
+        var connector = new FaultyConnector(faultyRead: true);
+        var snapshot = (await connector.ReadAsync(FaultyConnector.Account, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+        snapshot.Attributes.Keys.ShouldBe(["displayName"], "undeclared, privilege and credential attributes are cut away");
+
+        var broken = new FaultyConnector(faultyRead: true) { BadLink = true };
+        await Should.ThrowAsync<ConnectorTransientException>(() => broken.ReadAsync(FaultyConnector.Account, TestContext.Current.CancellationToken));
+        var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountDisable, FaultyConnector.Account, null, new Dictionary<string, string?>(), null);
+        (await broken.ExecuteAsync(operation, TestContext.Current.CancellationToken)).Code.ShouldBe(ResultCodes.InvalidResponse);
+    }
+
+    [Fact]
+    public async Task LocksAreFreedAfterUseAndAfterCancellation()
+    {
+        var ledger = new InMemoryOperationLedger();
+        var connector = new MinimalTestConnector(ConnectorSettings.Default, ledger);
+        var ops = Enumerable.Range(0, 40).Select(i => new ConnectorOperation(
+            Guid.CreateVersion7(), ActionCatalog.AccountCreate, new ObjectRef(ObjectTypes.Account, $"user-{i}"), MinimalTestConnector.Container,
+            new Dictionary<string, string?> { ["displayName"] = "x" }, null)).ToList();
+        await Task.WhenAll(ops.Select(o => connector.ExecuteAsync(o, TestContext.Current.CancellationToken)));
+        connector.ActiveGates.ShouldBe(0, "every lock is removed when its last user leaves");
+
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        await Should.ThrowAsync<OperationCanceledException>(() => connector.ExecuteAsync(ops[0] with { OperationId = Guid.CreateVersion7() }, cancelled.Token));
+        connector.ActiveGates.ShouldBe(0);
+        (await connector.ExecuteAsync(ops[0], TestContext.Current.CancellationToken)).Status.ShouldBe(OperationStatus.Applied, "nothing was left locked");
+    }
+
+    /// <summary>Throws from its writes, or returns snapshots with things it must not.</summary>
+    private sealed class FaultyConnector(bool faultyRead) : ConnectorBase(ConnectorSettings.Default, new InMemoryOperationLedger())
+    {
+        public static readonly ObjectRef Account = new(ObjectTypes.Account, "faulty");
+
+        public bool BadLink { get; init; }
+
+        public override ConnectorCapabilities Capabilities { get; } = new(
+            "test.faulty", false, [ActionCatalog.AccountDisable], [new ObjectTypeCapability(ObjectTypes.Account, false, ["displayName"])], 10, 1);
+
+        public override Task<ConnectorHealth> CheckHealthAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new ConnectorHealth(HealthStatus.Healthy, null, false));
+
+        protected override Task<ObjectSnapshot?> ReadCoreAsync(ObjectRef target, CancellationToken cancellationToken) =>
+            Task.FromResult<ObjectSnapshot?>(new ObjectSnapshot(
+                Account,
+                true,
+                false,
+                faultyRead
+                    ? new Dictionary<string, string?> { ["displayName"] = "Ann", ["unicodePwd"] = "secret", ["userAccountControl"] = "512", ["notDeclared"] = "x" }
+                    : new Dictionary<string, string?>(),
+                BadLink ? [new ObjectRef(ObjectTypes.Entitlement, "bad\nlink")] : [],
+                null));
+
+        protected override Task<OperationResult> ApplyAsync(ConnectorOperation operation, ObjectSnapshot? current, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("the connector's own bug");
+
+        protected override Task<ObjectPage> ListCoreAsync(string objectType, string? continuation, int pageSize, CancellationToken cancellationToken) =>
+            Task.FromResult(new ObjectPage([], null));
     }
 
     /// <summary>Throttled once, then fine.</summary>

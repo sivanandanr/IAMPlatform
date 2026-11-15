@@ -58,26 +58,55 @@ public sealed class InMemoryOperationLedger : IOperationLedger
 }
 
 /// <summary>
-/// The pipeline every connector inherits (DL-080), so the safety rules hold whatever the target: an operation is checked
-/// against the catalog, the connector's capabilities and its settings; a repeated operation id returns what happened the
-/// first time (and is refused if it now asks for something else); the target is read first, and nothing is changed if it
-/// is already as asked; the change itself is the connector's. Only finished outcomes are remembered, so a failure worth
-/// retrying runs again under the same id. One operation id, and one operation per target object, runs at a time, so two
-/// requests for the same change can't both read "not done yet" and both make it.
+/// The pipeline every connector inherits (DL-080, DL-083), so the safety rules hold whatever the target: an operation is
+/// checked against the catalog, the connector's capabilities and its settings; a repeated operation id returns what
+/// happened the first time (and is refused if it now asks for something else); a create never takes over an object that
+/// already exists; the target is read first, and nothing is changed if it is already as asked; a removal whose account or
+/// entitlement is already gone is already done; the change itself is the connector's. Only finished outcomes are
+/// remembered, and not those that depend on timing, so a retry runs again under the same id. One operation id, and one
+/// operation per target name (compared the connector's way), runs at a time. What a connector returns is checked and
+/// filtered to the attributes it declares and may show. Executing never throws for a problem in the target or the request.
 /// </summary>
 public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger ledger, TimeProvider? clock = null) : IConnector
 {
+    /// <summary>The most links one snapshot may carry.</summary>
+    public const int MaxLinks = 100_000;
+
     /// <summary>Actions that may carry attributes; any other action carries none.</summary>
     private static readonly HashSet<string> TakesAttributes = new(StringComparer.Ordinal)
     {
         ActionCatalog.AccountCreate, ActionCatalog.AccountUpdate, ActionCatalog.EntitlementCreate,
     };
 
-    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _operationGates = new();
+    /// <summary>Outcomes that depend on when the operation ran: not remembered, so the same id can succeed later.</summary>
+    private static readonly HashSet<string> TimingCodes = new(StringComparer.Ordinal)
+    {
+        ResultCodes.TargetNotFound, ResultCodes.RelatedNotFound,
+    };
+
+    private readonly KeyedGates<Guid> _operationGates = new(EqualityComparer<Guid>.Default);
+    private KeyedGates<string>? _targetGates;
     private OperationRateLimiter? _rateLimiter;
-    private readonly ConcurrentDictionary<ObjectRef, SemaphoreSlim> _targetGates = new();
 
     public abstract ConnectorCapabilities Capabilities { get; }
+
+    /// <summary>Locks held or awaited now; every one is removed when its last user leaves.</summary>
+    internal int ActiveGates => _operationGates.Count + (_targetGates?.Count ?? 0);
+
+    /// <summary>One lock per target name, compared the connector's way, whatever the object type (DL-083b).</summary>
+    private KeyedGates<string> TargetGates
+    {
+        get
+        {
+            if (Volatile.Read(ref _targetGates) is { } gates)
+            {
+                return gates;
+            }
+
+            Interlocked.CompareExchange(ref _targetGates, new KeyedGates<string>(Capabilities.IdComparer), null);
+            return _targetGates!;
+        }
+    }
 
     public abstract Task<ConnectorHealth> CheckHealthAsync(CancellationToken cancellationToken);
 
@@ -89,7 +118,7 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
             return null;
         }
 
-        return await ReadCoreAsync(target, cancellationToken).ConfigureAwait(false);
+        return await ReadCheckedAsync(target, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<OperationResult> ExecuteAsync(ConnectorOperation operation, CancellationToken cancellationToken)
@@ -102,57 +131,46 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
 
         var definition = ActionCatalog.Find(operation.Action)!;
         var fingerprint = Fingerprint(operation);
-        // Always the operation's gate first, then its target's: the same order everywhere, so no two can wait on each other.
-        var operationGate = _operationGates.GetOrAdd(operation.OperationId, _ => new SemaphoreSlim(1, 1));
-        var targetGate = _targetGates.GetOrAdd(operation.Target, _ => new SemaphoreSlim(1, 1));
-        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        // Always the operation's lock first, then its target's: the same order everywhere, so no two can wait on each other.
+        using var operationLease = await _operationGates.EnterAsync(operation.OperationId, cancellationToken).ConfigureAwait(false);
+        using var targetLease = await TargetGates.EnterAsync(operation.Target.Id, cancellationToken).ConfigureAwait(false);
+
+        if (await ledger.FindAsync(operation.OperationId, cancellationToken).ConfigureAwait(false) is { } prior)
+        {
+            return string.Equals(prior.Fingerprint, fingerprint, StringComparison.Ordinal)
+                ? prior.Result
+                : OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.OperationIdReused);
+        }
+
+        // Only work that reaches the target counts against the speed limit; a throttled operation is retried later.
+        if (!RateLimiter.TryAcquire())
+        {
+            return OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.Throttled);
+        }
+
+        OperationResult result;
         try
         {
-            await targetGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            result = await RunAsync(definition, operation, cancellationToken).ConfigureAwait(false);
         }
-        catch
+        catch (ConnectorTransientException ex)
         {
-            operationGate.Release();
-            throw;
+            result = OperationResult.Of(operation, OperationStatus.Failed, ex.Code);
         }
-
-        try
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
-            if (await ledger.FindAsync(operation.OperationId, cancellationToken).ConfigureAwait(false) is { } prior)
-            {
-                return string.Equals(prior.Fingerprint, fingerprint, StringComparison.Ordinal)
-                    ? prior.Result
-                    : OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.OperationIdReused);
-            }
-
-            // Only work that reaches the target counts against the speed limit; a throttled operation is retried later.
-            if (!RateLimiter.TryAcquire())
-            {
-                return OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.Throttled);
-            }
-
-            OperationResult result;
-            try
-            {
-                result = await RunAsync(definition, operation, cancellationToken).ConfigureAwait(false);
-            }
-            catch (ConnectorTransientException ex)
-            {
-                result = OperationResult.Of(operation, OperationStatus.Failed, ex.Code);
-            }
-
-            if (result.Status != OperationStatus.Failed)
-            {
-                await ledger.RecordAsync(new LedgerEntry(operation.OperationId, fingerprint, result), cancellationToken).ConfigureAwait(false);
-            }
-
-            return result;
+            // A connector's own fault: reported, never thrown, and retried like any failure.
+            result = OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.ConnectorError);
         }
-        finally
+
+        if (result.Status != OperationStatus.Failed && !(result.Code is { } code && TimingCodes.Contains(code)))
         {
-            targetGate.Release();
-            operationGate.Release();
+            // Recorded even if the caller gave up meanwhile: the change was made, and a repeat must not make it again.
+            await ledger.RecordAsync(new LedgerEntry(operation.OperationId, fingerprint, result), CancellationToken.None).ConfigureAwait(false);
         }
+
+        return result;
     }
 
     public async Task<VerificationResult> VerifyAsync(ConnectorOperation operation, CancellationToken cancellationToken)
@@ -165,12 +183,16 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
 
         try
         {
-            var current = await ReadCoreAsync(operation.Target, cancellationToken).ConfigureAwait(false);
+            var current = await ReadCheckedAsync(operation.Target, cancellationToken).ConfigureAwait(false);
             return new VerificationResult(IsInDesiredState(operation, current), null);
         }
         catch (ConnectorTransientException ex)
         {
             return new VerificationResult(false, ex.Code);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new VerificationResult(false, ResultCodes.ConnectorError);
         }
     }
 
@@ -183,26 +205,35 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
 
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, Capabilities.MaxPageSize);
-        if (continuation is not null && !ConnectorText.IsIdentifier(continuation, 1024))
+        if (continuation is not null && !ConnectorText.IsIdentifier(continuation, 4096))
         {
             throw new ArgumentException("The continuation is not one this connector gave out.", nameof(continuation));
         }
 
         var page = await ListCoreAsync(objectType, continuation, pageSize, cancellationToken).ConfigureAwait(false);
-        return page.Items.Count <= pageSize ? page : throw new InvalidOperationException("The connector returned more than a page.");
+        if (page.Items.Count > pageSize)
+        {
+            throw new InvalidOperationException("The connector returned more than a page.");
+        }
+
+        return page with { Items = [.. page.Items.Select(Sanitize)] };
     }
 
     /// <summary>
-    /// Whether <paramref name="current"/> already is what <paramref name="operation"/> asks for (read before write). The
-    /// default covers the whole catalog from the snapshot; a password change or reset has no state to read, so it is never
-    /// already done: only its operation id stops it running twice.
+    /// Whether <paramref name="current"/> already is what <paramref name="operation"/> asks for (read before write; also
+    /// what verification checks). Identifiers compare the connector's way; an attribute set to null is done when it is
+    /// absent or null. A password change or reset has no state to read, so it is never already done: only its operation id
+    /// stops it running twice.
     /// </summary>
     protected virtual bool IsInDesiredState(ConnectorOperation operation, ObjectSnapshot? current)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        bool Linked(ObjectRef? other) => current is not null && other is not null && current.Links.Contains(other);
+        var refs = Capabilities.RefComparer;
+        bool Linked(ObjectRef? other) => current is not null && other is not null && current.Links.Contains(other, refs);
         bool HasAttributes() => current is not null
-            && operation.Attributes.All(a => current.Attributes.TryGetValue(a.Key, out var value) && string.Equals(value, a.Value, StringComparison.Ordinal));
+            && operation.Attributes.All(a => current.Attributes.TryGetValue(a.Key, out var value)
+                ? string.Equals(value, a.Value, StringComparison.Ordinal)
+                : a.Value is null);
 
         return operation.Action switch
         {
@@ -210,9 +241,9 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
             ActionCatalog.AccountEnable => current?.Enabled == true,
             ActionCatalog.AccountDisable => current?.Enabled == false,
             ActionCatalog.AccountDelete or ActionCatalog.EntitlementDelete => current is null,
-            ActionCatalog.AccountWriteOwner => current?.Owner is { } owner && owner == operation.Related,
+            ActionCatalog.AccountWriteOwner => current?.Owner is { } owner && refs.Equals(owner, operation.Related),
             ActionCatalog.EntitlementAdd or ActionCatalog.MemberAdd => Linked(operation.Related),
-            ActionCatalog.EntitlementRemove or ActionCatalog.MemberRemove => current is not null && !Linked(operation.Related),
+            ActionCatalog.EntitlementRemove or ActionCatalog.MemberRemove => current is null || !Linked(operation.Related),
             ActionCatalog.AccountUnlock => current?.Locked == false,
             _ => false,
         };
@@ -239,7 +270,7 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
             }
 
             var perSecond = Math.Min(Capabilities.MaxOperationsPerSecond, settings.MaxOperationsPerSecond ?? int.MaxValue);
-            Interlocked.CompareExchange(ref _rateLimiter, new OperationRateLimiter(Math.Max(perSecond, 1), clock ?? TimeProvider.System), null);
+            Interlocked.CompareExchange(ref _rateLimiter, new OperationRateLimiter(perSecond, clock ?? TimeProvider.System), null);
             return _rateLimiter!;
         }
     }
@@ -262,19 +293,60 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 
+    private async Task<ObjectSnapshot?> ReadCheckedAsync(ObjectRef target, CancellationToken cancellationToken) =>
+        await ReadCoreAsync(target, cancellationToken).ConfigureAwait(false) is { } snapshot ? Sanitize(snapshot) : null;
+
+    /// <summary>
+    /// What a connector returns is ingress too (BACKEND_INPUT_VALIDATION, DL-083c): references must be valid, attributes are
+    /// cut down to the declared ones that may be shown, and a link list is bounded. A reference that isn't valid makes the
+    /// whole answer untrustworthy, so it is a failure worth retrying, never a quietly shorter list.
+    /// </summary>
+    private ObjectSnapshot Sanitize(ObjectSnapshot snapshot)
+    {
+        bool Valid(ObjectRef? r) => r is { IsValid: true } && Capabilities.TypeOf(r.ObjectType) is not null && IsValidId(r);
+        if (!Valid(snapshot.Ref) || snapshot.Links.Count > MaxLinks || !snapshot.Links.All(Valid) || (snapshot.Owner is not null && !Valid(snapshot.Owner)))
+        {
+            throw new ConnectorTransientException(ResultCodes.InvalidResponse);
+        }
+
+        var declared = Capabilities.TypeOf(snapshot.Ref.ObjectType)!.Attributes;
+        var attributes = snapshot.Attributes
+            .Where(a => declared.Contains(a.Key, StringComparer.Ordinal) && !ConnectorText.IsForbiddenAttribute(a.Key) && ConnectorText.IsAttributeValue(a.Value))
+            .ToDictionary(a => a.Key, a => a.Value, StringComparer.Ordinal);
+        return snapshot with { Attributes = attributes };
+    }
+
     private async Task<OperationResult> RunAsync(ActionDefinition definition, ConnectorOperation operation, CancellationToken cancellationToken)
     {
-        var creates = operation.Action is ActionCatalog.AccountCreate or ActionCatalog.EntitlementCreate;
-        var deletes = operation.Action is ActionCatalog.AccountDelete or ActionCatalog.EntitlementDelete;
-        var current = await ReadCoreAsync(operation.Target, cancellationToken).ConfigureAwait(false);
+        var current = await ReadCheckedAsync(operation.Target, cancellationToken).ConfigureAwait(false);
 
-        if (definition.Related is not null && operation.Related is not null
-            && await ReadCoreAsync(operation.Related, cancellationToken).ConfigureAwait(false) is null)
+        // A create never takes over an object that exists, whatever its values (DL-083a): matching an existing account to a
+        // person is the platform's correlation, not a side effect of a create.
+        if (operation.Action is ActionCatalog.AccountCreate or ActionCatalog.EntitlementCreate)
+        {
+            return current is not null
+                ? OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.AlreadyExists)
+                : await ApplyAsync(operation, current, cancellationToken).ConfigureAwait(false);
+        }
+
+        var removes = operation.Action is ActionCatalog.EntitlementRemove or ActionCatalog.MemberRemove;
+        var deletes = operation.Action is ActionCatalog.AccountDelete or ActionCatalog.EntitlementDelete;
+        var related = definition.Related is not null && operation.Related is not null
+            ? await ReadCheckedAsync(operation.Related, cancellationToken).ConfigureAwait(false)
+            : null;
+
+        // Taking access away from an account or entitlement that is gone: the access is gone too.
+        if (removes && (current is null || related is null))
+        {
+            return OperationResult.Of(operation, OperationStatus.AlreadyInState);
+        }
+
+        if (definition.Related is not null && related is null)
         {
             return OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.RelatedNotFound);
         }
 
-        if (current is null && !creates && !deletes)
+        if (current is null && !deletes)
         {
             return OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.TargetNotFound);
         }
@@ -282,12 +354,6 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
         if (IsInDesiredState(operation, current))
         {
             return OperationResult.Of(operation, OperationStatus.AlreadyInState);
-        }
-
-        if (creates && current is not null)
-        {
-            // It exists, but not as asked: creating it again would overwrite something IAM didn't make.
-            return OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.AlreadyExistsDifferently);
         }
 
         return await ApplyAsync(operation, current, cancellationToken).ConfigureAwait(false);
@@ -311,7 +377,7 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
             return OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.ActionNotAllowed);
         }
 
-        var shapeOk = operation.OperationId != Guid.Empty
+        var shapeOk = operation.OperationId != Guid.Empty && operation.Attributes is not null
             && operation.Target is { IsValid: true } && string.Equals(operation.Target.ObjectType, definition.Target, StringComparison.Ordinal) && IsValidId(operation.Target)
             && (definition.Related is null
                 ? operation.Related is null
@@ -321,10 +387,15 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
             return OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.InvalidOperation);
         }
 
-        var attributes = operation.Attributes ?? new Dictionary<string, string?>();
+        var attributes = operation.Attributes!;
         if (attributes.Keys.Any(ConnectorText.LooksLikeCredential))
         {
             return OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.CredentialInAttributes);
+        }
+
+        if (attributes.Keys.Any(ConnectorText.IsForbiddenAttribute))
+        {
+            return OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.ForbiddenAttribute);
         }
 
         var declared = Capabilities.TypeOf(definition.Target)?.Attributes ?? [];
@@ -340,11 +411,102 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
             return OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.SecretReferenceRequired);
         }
 
+        if (definition.NeedsSecretReference && !settings.AllowsSecret(operation.Secret!))
+        {
+            return OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.SecretOutsideAllowlist);
+        }
+
         if (!definition.NeedsSecretReference && operation.Secret is not null)
         {
             return OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.SecretReferenceNotAllowed);
         }
 
         return null;
+    }
+}
+
+/// <summary>
+/// One lock per key, held only while someone uses it (DL-083): the last user to leave removes it, so a long-running
+/// connector doesn't keep a lock for every operation and object it has ever seen.
+/// </summary>
+internal sealed class KeyedGates<TKey>(IEqualityComparer<TKey> comparer)
+    where TKey : notnull
+{
+    private readonly object _sync = new();
+    private readonly Dictionary<TKey, Entry> _entries = new(comparer);
+
+    public int Count
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _entries.Count;
+            }
+        }
+    }
+
+    public async Task<IDisposable> EnterAsync(TKey key, CancellationToken cancellationToken)
+    {
+        Entry entry;
+        lock (_sync)
+        {
+            if (!_entries.TryGetValue(key, out entry!))
+            {
+                entry = new Entry();
+                _entries[key] = entry;
+            }
+
+            entry.Users++;
+        }
+
+        try
+        {
+            await entry.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            Leave(key, entry, release: false);
+            throw;
+        }
+
+        return new Lease(this, key, entry);
+    }
+
+    private void Leave(TKey key, Entry entry, bool release)
+    {
+        if (release)
+        {
+            entry.Gate.Release();
+        }
+
+        lock (_sync)
+        {
+            if (--entry.Users == 0)
+            {
+                _entries.Remove(key);
+                entry.Gate.Dispose();
+            }
+        }
+    }
+
+    private sealed class Entry
+    {
+        public SemaphoreSlim Gate { get; } = new(1, 1);
+
+        public int Users { get; set; }
+    }
+
+    private sealed class Lease(KeyedGates<TKey> owner, TKey key, Entry entry) : IDisposable
+    {
+        private int _released;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _released, 1) == 0)
+            {
+                owner.Leave(key, entry, release: true);
+            }
+        }
     }
 }
