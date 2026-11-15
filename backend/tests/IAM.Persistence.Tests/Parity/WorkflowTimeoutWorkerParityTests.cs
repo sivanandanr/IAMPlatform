@@ -1,5 +1,6 @@
 using System.Globalization;
 using IAM.BuildingBlocks.Abstractions.People;
+using IAM.BuildingBlocks.Messaging.RabbitMq;
 using IAM.BuildingBlocks.Persistence;
 using IAM.BuildingBlocks.Security;
 using IAM.Modules.Audit.Contracts;
@@ -151,6 +152,11 @@ public sealed class WorkflowTimeoutWorkerParityTests(ParityDatabase db)
         new("ConnectionStrings:catalog", db.CatalogAppConnectionString),
         new("ConnectionStrings:organization", db.OrganizationAppConnectionString),
         new("Workflow:Timeouts:BatchSize", batchSize.ToString(CultureInfo.InvariantCulture)),
+        new("Messaging:RabbitMq:Host", "localhost"),
+        new("Messaging:RabbitMq:VirtualHost", "iam"),
+        new("Messaging:RabbitMq:UserName", "iam-workflow"),
+        new("Messaging:RabbitMq:Password", "not-used-here"),
+        new("Messaging:RabbitMq:UseTls", "false"),
     ]);
 
     /// <summary>Other tests leave due instances too, so this runs passes until the ones named here are no longer due.</summary>
@@ -362,6 +368,11 @@ public sealed class WorkflowWorkerHostTests
         new("ConnectionStrings:workflow", "Host=localhost;Database=iam;Username=u;Password=p"),
         new("ConnectionStrings:catalog", "Host=localhost;Database=iam;Username=u;Password=p"),
         new("ConnectionStrings:organization", "Host=localhost;Database=iam;Username=u;Password=p"),
+        new("Messaging:RabbitMq:Host", "localhost"),
+        new("Messaging:RabbitMq:VirtualHost", "iam"),
+        new("Messaging:RabbitMq:UserName", "iam-workflow"),
+        new("Messaging:RabbitMq:Password", "p"),
+        new("Messaging:RabbitMq:UseTls", "false"),
     ];
 
     [Fact]
@@ -381,5 +392,21 @@ public sealed class WorkflowWorkerHostTests
 
         Should.Throw<ArgumentOutOfRangeException>(() => WorkflowWorkerHost.Build([], [.. Complete, new("Workflow:Timeouts:IntervalSeconds", "1")]));
         Should.Throw<ArgumentOutOfRangeException>(() => WorkflowWorkerHost.Build([], [.. Complete, new("Workflow:Timeouts:BatchSize", "501")]));
+
+        // The broker (DL-077): every setting needed, never guest, TLS unless on this machine; relay settings bounded.
+        foreach (var key in new[] { "Host", "VirtualHost", "UserName", "Password" })
+        {
+            Should.Throw<InvalidOperationException>(() => WorkflowWorkerHost.Build([], Complete.Where(s => s.Key != $"Messaging:RabbitMq:{key}")), key)
+                .Message.ShouldContain(key);
+        }
+
+        Should.Throw<InvalidOperationException>(() => WorkflowWorkerHost.Build([], [.. Complete.Where(s => s.Key != "Messaging:RabbitMq:UserName"), new("Messaging:RabbitMq:UserName", "guest")]));
+        Should.Throw<InvalidOperationException>(() => WorkflowWorkerHost.Build([], [.. Complete.Where(s => s.Key != "Messaging:RabbitMq:Host"), new("Messaging:RabbitMq:Host", "broker.internal")]));
+        Should.Throw<ArgumentOutOfRangeException>(() => WorkflowWorkerHost.Build([], [.. Complete, new("Workflow:Outbox:MaxAttempts", "0")]));
+        using (var host = WorkflowWorkerHost.Build([], Complete))
+        {
+            host.Services.GetRequiredService<OutboxRelaySettings>().BatchSize.ShouldBe(100);
+            host.Services.GetServices<IHostedService>().Count().ShouldBe(2, "the timeout worker and the outbox relay");
+        }
     }
 }

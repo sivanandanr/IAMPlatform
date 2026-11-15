@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The broker side of messaging (ADR-0006, ADR-0021, DL-077): RabbitMQ settings, topology, a confirming publisher and the
+    outbox relay. Only worker hosts reference it; modules never do (architecture rule), so no module can reach the broker.
+  -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="RabbitMQ.Client" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\IAM.BuildingBlocks.Messaging\IAM.BuildingBlocks.Messaging.csproj" />
+    <ProjectReference Include="..\IAM.BuildingBlocks.Persistence\IAM.BuildingBlocks.Persistence.csproj" />
+  </ItemGroup>
+</Project>

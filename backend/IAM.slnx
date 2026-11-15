@@ -9,6 +9,7 @@
   <Folder Name="/src/BuildingBlocks/">
     <Project Path="src/BuildingBlocks/IAM.BuildingBlocks.Abstractions/IAM.BuildingBlocks.Abstractions.csproj" />
     <Project Path="src/BuildingBlocks/IAM.BuildingBlocks.Messaging/IAM.BuildingBlocks.Messaging.csproj" />
+    <Project Path="src/BuildingBlocks/IAM.BuildingBlocks.Messaging.RabbitMq/IAM.BuildingBlocks.Messaging.RabbitMq.csproj" />
     <Project Path="src/BuildingBlocks/IAM.BuildingBlocks.Persistence/IAM.BuildingBlocks.Persistence.csproj" />
     <Project Path="src/BuildingBlocks/IAM.BuildingBlocks.Security/IAM.BuildingBlocks.Security.csproj" />
   </Folder>
