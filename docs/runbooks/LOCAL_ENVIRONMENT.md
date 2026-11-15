@@ -92,7 +92,7 @@ dotnet user-secrets set "ConnectionStrings:workflow" "<connection string for the
 ```bash
 IAM_DB_PROVIDER=PostgreSql dotnet run --project backend/src/Workers/IAM.Workers.Workflow
 ```
-It writes as `system:workflow-timeouts`. A damaged instance is logged once (instance id only) and skipped until restart; look it up in the audit trail (`workflow.approval.damaged`). It is not in compose yet.
+It writes as `system:workflow-timeouts`. A damaged instance is skipped until restart, and so is any instance that fails 3 passes in a row (logged at Error with the instance id only); look damaged ones up in the audit trail (`workflow.approval.damaged`, written once per instance) or `workflow.ApprovalDamage`. It is not in compose yet.
 
 ## 4. Stop / reset
 - Stop, keep data: `docker compose --profile postgres --profile sqlserver stop`

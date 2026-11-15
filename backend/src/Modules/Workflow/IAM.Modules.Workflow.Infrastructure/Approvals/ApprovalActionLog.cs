@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using IAM.BuildingBlocks.Abstractions.People;
@@ -88,6 +91,7 @@ public static class ApprovalActionLog
             throw new InvalidDataException("The first action must bind the instance.");
         }
 
+        RequireActor(action, null);
         var bound = Read<BoundPayload>(action.Payload);
         return ApprovalInstance.Bind(bound.Binding, ApprovalRoute.Create(bound.Stages), action.AtUtc);
     }
@@ -110,21 +114,31 @@ public static class ApprovalActionLog
             case ApprovalActionKind.ApproversSupplied:
                 {
                     var p = Read<SuppliedPayload>(action.Payload);
+                    RequireActor(action, null);
                     instance.SupplyApprovers(p.StageId, p.Resolution, instance.Version, at);
                     break;
                 }
 
             case ApprovalActionKind.Decided:
-                instance.Decide(Read<ApprovalDecision>(action.Payload), at);
-                break;
+                {
+                    var p = Read<ApprovalDecision>(action.Payload);
+                    RequireActor(action, p.Actor);
+                    instance.Decide(p, at);
+                    break;
+                }
 
             case ApprovalActionKind.Completed:
-                instance.CompleteAction(Read<ActionCompletion>(action.Payload), at);
-                break;
+                {
+                    var p = Read<ActionCompletion>(action.Payload);
+                    RequireActor(action, p.Actor);
+                    instance.CompleteAction(p, at);
+                    break;
+                }
 
             case ApprovalActionKind.Returned:
                 {
                     var p = Read<ReturnedPayload>(action.Payload);
+                    RequireActor(action, p.Actor);
                     instance.ReturnForChanges(p.StageId, p.Actor, p.OnBehalfOf, p.Reason, p.ExpectedVersion, at);
                     break;
                 }
@@ -132,6 +146,7 @@ public static class ApprovalActionLog
             case ApprovalActionKind.Withdrawn:
                 {
                     var p = Read<ClosedPayload>(action.Payload);
+                    RequireActor(action, p.Actor);
                     instance.Withdraw(p.Actor, p.Reason, p.ExpectedVersion, at);
                     break;
                 }
@@ -139,6 +154,7 @@ public static class ApprovalActionLog
             case ApprovalActionKind.Cancelled:
                 {
                     var p = Read<ClosedPayload>(action.Payload);
+                    RequireActor(action, p.Actor);
                     instance.Cancel(p.Actor, p.Reason, p.ExpectedVersion, at);
                     break;
                 }
@@ -146,6 +162,7 @@ public static class ApprovalActionLog
             case ApprovalActionKind.Escalated:
                 {
                     var p = Read<EscalationPayload>(action.Payload);
+                    RequireActor(action, p.Actor);
                     instance.Escalate(p.StageId, p.Candidates, p.Actor, p.Reason, p.ExpectedVersion, at);
                     break;
                 }
@@ -153,6 +170,7 @@ public static class ApprovalActionLog
             case ApprovalActionKind.EscalationProposed:
                 {
                     var p = Read<EscalationPayload>(action.Payload);
+                    RequireActor(action, p.Actor);
                     instance.ProposeEscalation(p.StageId, p.Candidates, p.Actor, p.Reason, p.ExpectedVersion, at);
                     break;
                 }
@@ -160,6 +178,7 @@ public static class ApprovalActionLog
             case ApprovalActionKind.EscalationApproved:
                 {
                     var p = Read<EscalationPayload>(action.Payload);
+                    RequireActor(action, p.Actor);
                     instance.ApproveEscalation(p.StageId, p.Candidates, p.Actor, p.Reason, p.ExpectedVersion, at);
                     break;
                 }
@@ -167,16 +186,49 @@ public static class ApprovalActionLog
             case ApprovalActionKind.EscalationWithdrawn:
                 {
                     var p = Read<EscalationPayload>(action.Payload);
+                    RequireActor(action, p.Actor);
                     instance.WithdrawEscalation(p.StageId, p.Actor, p.Reason, p.ExpectedVersion, at);
                     break;
                 }
 
             case ApprovalActionKind.TimeoutsApplied:
+                RequireActor(action, null);
                 instance.ApplyTimeouts(at, Read<TimeoutsPayload>(action.Payload).ExpectedVersion);
                 break;
 
             default:
                 throw new InvalidDataException("Unknown or misplaced action kind.");
+        }
+    }
+
+    /// <summary>
+    /// A SHA-256 of one stored action row, keyed by its instance and sequence (DL-075a). The audit record carries this
+    /// instead of the inputs: the append-only log keeps the evidence, the audit proves which row it was.
+    /// </summary>
+    public static string RowHash(Guid instanceId, int sequence, LoggedAction action, long versionAfter)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        var canonical = JsonSerializer.Serialize(new object?[]
+        {
+            "iam.workflow.action.v1",
+            instanceId.ToString("D"),
+            sequence,
+            action.Kind.ToString(),
+            action.AtUtc.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+            action.Actor,
+            versionAfter,
+            action.Payload,
+        });
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
+
+    /// <summary>The stored actor column must name the person inside the inputs, and nobody for a system action (DL-075c).</summary>
+    private static void RequireActor(LoggedAction action, PersonId? actor)
+    {
+        var expected = actor is { IsValid: true } person ? person.Value : null;
+        if (!string.Equals(action.Actor, expected, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("An action's stored actor does not match its inputs.");
         }
     }
 

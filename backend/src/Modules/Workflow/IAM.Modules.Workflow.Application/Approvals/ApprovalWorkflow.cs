@@ -144,24 +144,23 @@ public interface IApprovalWorkflow
     /// </summary>
     Task<ApprovalInstanceView> StartAsync(ApprovalBinding binding, ApprovalRoute route, CancellationToken cancellationToken);
 
-    /// <summary>The instance with its oversight, or null. No permission check: for internal callers only.</summary>
-    Task<ApprovalInstanceView?> FindAsync(Guid instanceId, CancellationToken cancellationToken);
-
     /// <summary>
     /// The instance as the signed-in person may see it, or null (DL-072d, DL-073a): participants (the requester, the person
     /// getting access, anyone ever listed on a level or who acted) see the participant view; holders of
-    /// <c>workflow.instances.read</c> also see the oversight. Anyone else gets null, as for an id that doesn't exist.
+    /// <c>workflow.instances.read</c> also see the oversight. Anyone else gets null, as for an id that doesn't exist. A
+    /// damaged instance is null too, unless the caller holds <c>workflow.instances.read</c> (DL-075b).
     /// </summary>
     Task<ApprovalInstanceView?> ReadAsync(Guid instanceId, CancellationToken cancellationToken);
 
     /// <summary>The open levels the signed-in person can act on now, earliest deadline first (DL-073b). Page is 1-based.</summary>
     Task<ApprovalTaskPage> MyTasksAsync(int page, int pageSize, CancellationToken cancellationToken);
 
-    Task<ApprovalInstanceView> DecideAsync(Guid instanceId, long expectedVersion, Guid decisionId, Guid stageId, PersonId? onBehalfOf, bool approve, string? reason, CancellationToken cancellationToken);
+    // Nobody acts on another's behalf until a delegation registry exists (DL-075d), so these take no principal.
+    Task<ApprovalInstanceView> DecideAsync(Guid instanceId, long expectedVersion, Guid decisionId, Guid stageId, bool approve, string? reason, CancellationToken cancellationToken);
 
-    Task<ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, PersonId? onBehalfOf, string? note, CancellationToken cancellationToken);
+    Task<ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, string? note, CancellationToken cancellationToken);
 
-    Task<ApprovalInstanceView> ReturnForChangesAsync(Guid instanceId, long expectedVersion, Guid stageId, PersonId? onBehalfOf, string? reason, CancellationToken cancellationToken);
+    Task<ApprovalInstanceView> ReturnForChangesAsync(Guid instanceId, long expectedVersion, Guid stageId, string? reason, CancellationToken cancellationToken);
 
     /// <summary>The requester withdraws the request (the engine checks it is them).</summary>
     Task<ApprovalInstanceView> WithdrawAsync(Guid instanceId, long expectedVersion, string? reason, CancellationToken cancellationToken);

@@ -34,9 +34,11 @@ public sealed class WorkflowParityTests(ParityDatabase db)
     private const string Escalator = "wf-escalator";
     private const string Escalator2 = "wf-escalator-2";
     private const string Canceller = "wf-canceller";
+    private const string Reader = "wf-reader";
 
     private static readonly FakePermissions Permissions = new(
-        (Escalator, WorkflowAuditActions.EscalateAction), (Escalator2, WorkflowAuditActions.EscalateAction), (Canceller, WorkflowAuditActions.CancelAction));
+        (Escalator, WorkflowAuditActions.EscalateAction), (Escalator2, WorkflowAuditActions.EscalateAction), (Canceller, WorkflowAuditActions.CancelAction),
+        (Reader, WorkflowAuditActions.ReadAction));
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -45,9 +47,10 @@ public sealed class WorkflowParityTests(ParityDatabase db)
     [Fact]
     public async Task TheMigrationAppliesOnce()
     {
-        db.WorkflowFirstRunApplied.Count.ShouldBe(2);
+        db.WorkflowFirstRunApplied.Count.ShouldBe(3);
         db.WorkflowFirstRunApplied[0].ShouldEndWith("_WorkflowStorage");
         db.WorkflowFirstRunApplied[1].ShouldEndWith("_WorkflowTasks");
+        db.WorkflowFirstRunApplied[2].ShouldEndWith("_WorkflowReviewFixes");
         db.WorkflowSecondRunPending.ShouldBeEmpty();
         (await AuditCountAsync(Guid.NewGuid(), WorkflowAuditActions.Refused, "Denied")).ShouldBe(0);
     }
@@ -64,12 +67,12 @@ public sealed class WorkflowParityTests(ParityDatabase db)
         started.Stages[1].State.ShouldBe("Pending");
 
         clock.Advance(TimeSpan.FromMinutes(5));
-        var afterA = await Service(A.Value, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), started.Stages[0].StageId, null, true, null, Ct);
+        var afterA = await Service(A.Value, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), started.Stages[0].StageId, true, null, Ct);
         afterA.Stages[1].State.ShouldBe("Active");
         afterA.Stages[1].Candidates.ShouldBe([B.Value]);
 
         clock.Advance(TimeSpan.FromMinutes(5));
-        var done = await Service(B.Value, clock).DecideAsync(id, afterA.Version, Guid.CreateVersion7(), afterA.Stages[1].StageId, null, true, null, Ct);
+        var done = await Service(B.Value, clock).DecideAsync(id, afterA.Version, Guid.CreateVersion7(), afterA.Stages[1].StageId, true, null, Ct);
         done.State.ShouldBe("Approved");
         done.ProvisioningAuthorized.ShouldBeTrue();
 
@@ -93,12 +96,12 @@ public sealed class WorkflowParityTests(ParityDatabase db)
         var stage = started.Stages[0].StageId;
 
         // Someone the request doesn't concern can't tell it exists (DL-073c); the refusal is still audited.
-        await Should.ThrowAsync<ApprovalInstanceNotFoundException>(() => Service(C.Value, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), stage, null, true, null, Ct));
-        (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(A.Value, clock).DecideAsync(id, started.Version - 1, Guid.CreateVersion7(), stage, null, true, null, Ct)))
+        await Should.ThrowAsync<ApprovalInstanceNotFoundException>(() => Service(C.Value, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), stage, true, null, Ct));
+        (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(A.Value, clock).DecideAsync(id, started.Version - 1, Guid.CreateVersion7(), stage, true, null, Ct)))
             .Refusal.ShouldBe(ApprovalRefusal.StaleVersion);
-        (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(null, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), stage, null, true, null, Ct)))
+        (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(null, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), stage, true, null, Ct)))
             .Refusal.ShouldBe(ApprovalRefusal.InvalidActor);
-        await Should.ThrowAsync<ApprovalInstanceNotFoundException>(() => Service(A.Value, clock).DecideAsync(Guid.CreateVersion7(), 1, Guid.CreateVersion7(), stage, null, true, null, Ct));
+        await Should.ThrowAsync<ApprovalInstanceNotFoundException>(() => Service(A.Value, clock).DecideAsync(Guid.CreateVersion7(), 1, Guid.CreateVersion7(), stage, true, null, Ct));
 
         (await CountAsync("ApprovalAction", id)).ShouldBe(2);
         (await AuditCountAsync(id, WorkflowAuditActions.Refused, "Denied")).ShouldBe(3);
@@ -176,8 +179,20 @@ public sealed class WorkflowParityTests(ParityDatabase db)
             $"INSERT INTO {Table("ApprovalHistory")} ({Col("InstanceId")}, {Col("EventVersion")}, {Col("AtUtc")}, {Col("Kind")}, {Col("StageId")}, {Col("Actor")}) VALUES ('{id}', {started.Version + 1}, '2026-11-14T09:00:00+00:00', 'InstanceApproved', NULL, NULL)",
             Ct);
         await Should.ThrowAsync<ApprovalInstanceDamagedException>(() => Service(null, clock).FindAsync(id, Ct));
-        await Should.ThrowAsync<ApprovalInstanceDamagedException>(() => Service(A.Value, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), started.Stages[0].StageId, null, true, null, Ct));
-        (await AuditCountAsync(id, WorkflowAuditActions.Damaged, "Denied")).ShouldBe(2);
+
+        // DL-075b: its stored people can't be trusted, so only oversight learns it exists; everyone else sees not-found.
+        await Should.ThrowAsync<ApprovalInstanceNotFoundException>(() => Service(A.Value, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), started.Stages[0].StageId, true, null, Ct));
+        await Should.ThrowAsync<ApprovalInstanceNotFoundException>(() => Service(C.Value, clock).WithdrawAsync(id, started.Version, null, Ct));
+        (await Service(A.Value, clock).ReadAsync(id, Ct)).ShouldBeNull();
+        (await Service(Requester.Value, clock).ReadAsync(id, Ct)).ShouldBeNull();
+        await Should.ThrowAsync<ApprovalInstanceDamagedException>(() => Service(Reader, clock).ReadAsync(id, Ct));
+        await Should.ThrowAsync<ApprovalInstanceDamagedException>(() => Service(Reader, clock).CancelAsync(id, started.Version, "r", Ct));
+
+        // Audited once however often it is loaded, and the record of it can't be changed.
+        (await AuditCountAsync(id, WorkflowAuditActions.Damaged, "Denied")).ShouldBe(1);
+        (await CountAsync("ApprovalDamage", id)).ShouldBe(1);
+        await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(db.WorkflowAppConnectionString, $"DELETE FROM {Table("ApprovalDamage")} WHERE {Col("InstanceId")} = '{id}'", Ct));
+        await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(db.WorkflowAppConnectionString, $"UPDATE {Table("ApprovalDamage")} SET {Col("DetectedAtUtc")} = {Col("DetectedAtUtc")} WHERE {Col("InstanceId")} = '{id}'", Ct));
 
         // A forged decision in the log: it replays, but not to the stored history.
         var forged = Guid.CreateVersion7();
@@ -235,13 +250,144 @@ public sealed class WorkflowParityTests(ParityDatabase db)
 
         if (!IsSqlServer)
         {
-            foreach (var table in new[] { "approval_instance", "approval_action", "approval_history" })
+            foreach (var table in new[] { "approval_instance", "approval_action", "approval_history", "approval_damage" })
             {
                 await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(db.MigratorConnectionString, $"TRUNCATE workflow.{table} CASCADE", Ct), table);
             }
         }
 
         (await Service(null, clock).FindAsync(id, Ct)).ShouldNotBeNull().State.ShouldBe("Cancelled");
+    }
+
+    [Fact]
+    public async Task LargeRoutesAndAwkwardReasonsAreStoredAndTheAuditCarriesTheirHash()
+    {
+        // DL-075a: 64 levels of 20 people, and a reason that looks like a credential to the audit and is mostly non-ASCII.
+        var clock = new MovingClock(T0);
+        var id = Guid.CreateVersion7();
+        var levels = Enumerable.Range(1, ApprovalLimits.MaxStages)
+            .Select(l => Level(l, [.. Enumerable.Range(1, 20).Select(p => PersonId.Create($"wf-large-approver-{l:D2}-{p:D2}"))]))
+            .ToArray();
+        var started = await Service(null, clock).StartAsync(Binding(id), Route(levels), Ct);
+        started.Stages.Count.ShouldBe(ApprovalLimits.MaxStages);
+
+        var reason = "Need basic read-only-access " + new string('é', 900);
+        var approver = started.Stages[0].Candidates[0];
+        var rejected = await Service(approver, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), started.Stages[0].StageId, false, reason, Ct);
+        rejected.State.ShouldBe("Rejected");
+
+        await using var context = TestSupport.CreateWorkflow(db.Provider, db.WorkflowAppConnectionString);
+        var rows = context.Actions.Where(a => a.InstanceId == id).OrderBy(a => a.Sequence).ToList();
+        rows.Count.ShouldBeGreaterThanOrEqualTo(3);
+        foreach (var row in rows)
+        {
+            var hash = ApprovalActionLog.RowHash(id, row.Sequence, new LoggedAction(Enum.Parse<ApprovalActionKind>(row.Kind), row.Payload, row.AtUtc, row.Actor), row.VersionAfter);
+            (await AuditPayloadCountAsync(id, hash)).ShouldBe(1, $"action {row.Sequence} is audited by its hash");
+        }
+
+        (await AuditPayloadCountAsync(id, "read-only-access")).ShouldBe(0, "inputs stay in the log, not the audit");
+        (await AuditCountAsync(id, WorkflowAuditActions.For(ApprovalActionKind.Decided), "Succeeded")).ShouldBe(1);
+        (await Service(Reader, clock).ReadAsync(id, Ct)).ShouldNotBeNull().Oversight.ShouldNotBeNull().AllDecisions.Single().Reason.ShouldBe(reason);
+    }
+
+    [Fact]
+    public async Task ARefusalWhileSupplyingApproversIsAuditedAndNothingIsSaved()
+    {
+        // DL-075e.
+        var clock = new MovingClock(T0);
+        var id = Guid.CreateVersion7();
+        (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(null, clock, new RefusingResolver()).StartAsync(Binding(id), Route(Level(1, A)), Ct)))
+            .Refusal.ShouldBe(ApprovalRefusal.InvalidResolution);
+        (await AuditCountAsync(id, WorkflowAuditActions.Refused, "Denied")).ShouldBe(1);
+        (await CountAsync("ApprovalAction", id)).ShouldBe(0);
+
+        // Opening the next level: the decision that opened it is not saved either.
+        var next = Guid.CreateVersion7();
+        var started = await Service(null, clock).StartAsync(Binding(next), Route(Level(1, A), Level(2, B)), Ct);
+        (await Should.ThrowAsync<ApprovalRefusedException>(() => Service(A.Value, clock, new RefusingResolver())
+            .DecideAsync(next, started.Version, Guid.CreateVersion7(), started.Stages[0].StageId, true, null, Ct))).Refusal.ShouldBe(ApprovalRefusal.InvalidResolution);
+        (await AuditCountAsync(next, WorkflowAuditActions.Refused, "Denied")).ShouldBe(1);
+        (await Service(null, clock).FindAsync(next, Ct)).ShouldNotBeNull().Version.ShouldBe(started.Version);
+    }
+
+    [Fact]
+    public async Task AHeldLevelThatEscalatesIsDueUntilItsTimeoutIsRecorded()
+    {
+        // DL-075f: the worker's "due" is the engine's own rule, so a level held by its resolution gets its timeout recorded.
+        var clock = new MovingClock(T0);
+        var id = Guid.CreateVersion7();
+        var started = await Service(null, clock).StartAsync(Binding(id), Route(Level(1, Requester)), Ct);
+        started.State.ShouldBe("Held");
+        (await NextDeadlineAsync(id)).ShouldBe(T0.AddHours(4));
+
+        clock.Advance(TimeSpan.FromHours(5));
+        var timedOut = await Service(null, clock).ApplyTimeoutsAsync(id, started.Version, Ct);
+        timedOut.Version.ShouldBeGreaterThan(started.Version);
+        (await NextDeadlineAsync(id)).ShouldBeNull();
+
+        var again = await Service(null, clock).ApplyTimeoutsAsync(id, timedOut.Version, Ct);
+        again.Version.ShouldBe(timedOut.Version);
+        (await CountAsync("ApprovalAction", id)).ShouldBe(3, "bound, supplied, one timeout");
+    }
+
+    [Fact]
+    public async Task AnUpdateThatMatchesNoRowIsAConflictNotADelete()
+    {
+        // DL-075h: what EF sends when another writer saved first. Refused as a delete on SQL Server before this fix.
+        await db.ExecuteAsync(
+            db.WorkflowAppConnectionString,
+            $"UPDATE {Table("ApprovalInstance")} SET {Col("ActionCount")} = {Col("ActionCount")} + 1 WHERE {Col("Id")} = '{Guid.CreateVersion7()}'",
+            Ct);
+
+        // Two people deciding at once: one wins, the other gets a conflict (or the engine's refusal), never a database error.
+        var clock = new MovingClock(T0);
+        for (var round = 0; round < 5; round++)
+        {
+            var id = Guid.CreateVersion7();
+            var started = await Service(null, clock).StartAsync(Binding(id), Route(Level(1, A, B)), Ct);
+            var stage = started.Stages[0].StageId;
+            var results = await Task.WhenAll(
+                Attempt(() => Service(A.Value, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), stage, true, null, Ct)),
+                Attempt(() => Service(B.Value, clock).DecideAsync(id, started.Version, Guid.CreateVersion7(), stage, true, null, Ct)));
+            results.Count(r => r is null).ShouldBeGreaterThanOrEqualTo(1, "one of them wins");
+            foreach (var failure in results.OfType<Exception>())
+            {
+                WorkflowApi.Classify(failure, out _).ShouldBeOneOf([WorkflowFailureKind.Conflict, WorkflowFailureKind.WrongState], failure.ToString());
+            }
+
+            (await Service(null, clock).FindAsync(id, Ct)).ShouldNotBeNull().State.ShouldBe("Approved");
+            (await CountAsync("ApprovalDamage", id)).ShouldBe(0, "a race is not damage (DL-075i)");
+        }
+
+        static async Task<Exception?> Attempt(Func<Task> act)
+        {
+            try
+            {
+                await act();
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex;
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AStoredNextDeadlineThatDoesNotReplayIsDamage()
+    {
+        // DL-075c. The triggers stop the app login doing this (every update must add actions), so the owner does it here.
+        var clock = new MovingClock(T0);
+        var id = Guid.CreateVersion7();
+        await Service(null, clock).StartAsync(Binding(id), Route(Level(1, A)), Ct);
+        var update = $"UPDATE {Table("ApprovalInstance")} SET {Col("NextDeadlineUtc")} = NULL WHERE {Col("Id")} = '{id}'";
+        await db.ExecuteAsync(
+            db.MigratorConnectionString,
+            IsSqlServer
+                ? $"BEGIN TRAN; DISABLE TRIGGER [workflow].[TR_ApprovalInstance_Guarded] ON [workflow].[ApprovalInstance]; {update}; ENABLE TRIGGER [workflow].[TR_ApprovalInstance_Guarded] ON [workflow].[ApprovalInstance]; COMMIT;"
+                : $"BEGIN; ALTER TABLE workflow.approval_instance DISABLE TRIGGER tr_approval_instance_guarded; {update}; ALTER TABLE workflow.approval_instance ENABLE ALWAYS TRIGGER tr_approval_instance_guarded; COMMIT;",
+            Ct);
+        await Should.ThrowAsync<ApprovalInstanceDamagedException>(() => Service(null, clock).FindAsync(id, Ct));
     }
 
     private static ApprovalBinding Binding(Guid id) =>
@@ -278,7 +424,15 @@ public sealed class WorkflowParityTests(ParityDatabase db)
         return Convert.ToInt64(await db.ScalarAsync(db.AuditAppConnectionString, sql, Ct), CultureInfo.InvariantCulture);
     }
 
-    private ApprovalWorkflowService Service(string? actor, TimeProvider clock)
+    private async Task<long> AuditPayloadCountAsync(Guid targetId, string text)
+    {
+        var sql = IsSqlServer
+            ? $"SELECT COUNT(*) FROM [audit].[AuditEvent] WHERE [TargetId] = '{targetId}' AND [PayloadCanonical] LIKE '%{text}%'"
+            : $"SELECT COUNT(*) FROM audit.audit_event WHERE target_id = '{targetId}' AND payload_canonical LIKE '%{text}%'";
+        return Convert.ToInt64(await db.ScalarAsync(db.AuditAppConnectionString, sql, Ct), CultureInfo.InvariantCulture);
+    }
+
+    private ApprovalWorkflowService Service(string? actor, TimeProvider clock, IApproverResolver? resolverOverride = null)
     {
         var context = TestSupport.CreateWorkflow(db.Provider, db.WorkflowAppConnectionString, new AuditingSaveChangesInterceptor(clock, new FixedActor(actor ?? "system:test")));
         var writer = new AuditWriter(
@@ -290,7 +444,13 @@ public sealed class WorkflowParityTests(ParityDatabase db)
             new ApplicationApproverDirectory(TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString)),
             new WorkgroupDirectory(TestSupport.CreateOrganization(db.Provider, db.OrganizationAppConnectionString)),
             new ApproverResolutionSettings());
-        return new ApprovalWorkflowService(context, writer, clock, TestSupport.ProviderFor(db.Provider), new FixedActor(actor), Permissions, resolver);
+        return new ApprovalWorkflowService(context, writer, clock, TestSupport.ProviderFor(db.Provider), new FixedActor(actor), Permissions, resolverOverride ?? resolver);
+    }
+
+    private sealed class RefusingResolver : IApproverResolver
+    {
+        public Task<ApproverResolution> ResolveAsync(ApproverSource source, IReadOnlySet<PersonId> excluded, CancellationToken cancellationToken) =>
+            throw new ApprovalRefusedException(ApprovalRefusal.InvalidResolution);
     }
 
     private sealed class FakePermissions(params (string Person, string Action)[] grants) : IPermissionEvaluator

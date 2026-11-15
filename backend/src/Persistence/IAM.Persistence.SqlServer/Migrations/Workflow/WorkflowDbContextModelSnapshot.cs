@@ -72,6 +72,27 @@ namespace IAM.Persistence.SqlServer.Migrations.Workflow
                         .HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalDamageRow", b =>
+                {
+                    b.Property<Guid>("InstanceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("DetectedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.HasKey("InstanceId");
+
+                    b.ToTable("ApprovalDamage", "workflow", t =>
+                        {
+                            t.HasTrigger("TR_ApprovalDamage_AppendOnly");
+                        });
+
+                    b
+                        .HasAnnotation("Iam:AppendOnly", true)
+                        .HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalHistoryRow", b =>
                 {
                     b.Property<Guid>("InstanceId")
@@ -266,6 +287,15 @@ namespace IAM.Persistence.SqlServer.Migrations.Workflow
                 });
 
             modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalActionRow", b =>
+                {
+                    b.HasOne("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalInstanceRow", null)
+                        .WithMany()
+                        .HasForeignKey("InstanceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalDamageRow", b =>
                 {
                     b.HasOne("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalInstanceRow", null)
                         .WithMany()

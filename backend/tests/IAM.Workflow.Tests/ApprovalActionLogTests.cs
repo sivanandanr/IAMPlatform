@@ -123,6 +123,56 @@ public sealed class ApprovalActionLogTests
     }
 
     [Fact]
+    public void TheStoredActorMustBeThePersonInTheInputs()
+    {
+        // DL-075c: the actor column can't be changed by itself, and a system action names nobody.
+        var route = ApprovalRoute.Create([F.Stage(F.S1, 1, candidates: [F.A])]);
+        var bound = ApprovalActionLog.Bound(F.Binding, route, T0);
+        Should.Throw<InvalidDataException>(() => ApprovalActionLog.Start(bound with { Actor = F.A.Value }));
+
+        var instance = ApprovalActionLog.Start(bound);
+        var supplied = Supply(instance, F.S1, T0);
+        Should.Throw<InvalidDataException>(() => ApprovalActionLog.Apply(instance, supplied with { Actor = F.A.Value }));
+        ApprovalActionLog.Apply(instance, supplied);
+
+        var decided = ApprovalActionLog.Decided(new ApprovalDecision(F.Id(1), F.S1, F.A, null, true, null, instance.Version), T0.AddMinutes(1));
+        Should.Throw<InvalidDataException>(() => ApprovalActionLog.Apply(instance, decided with { Actor = F.B.Value }));
+        Should.Throw<InvalidDataException>(() => ApprovalActionLog.Apply(instance, decided with { Actor = null }));
+        Should.Throw<InvalidDataException>(() => ApprovalActionLog.Apply(instance, ApprovalActionLog.TimeoutsApplied(instance.Version, T0) with { Actor = F.A.Value }));
+        Should.Throw<InvalidDataException>(() => ApprovalActionLog.Apply(instance, ApprovalActionLog.Withdrawn(F.Requester, null, instance.Version, T0) with { Actor = F.A.Value }));
+        Should.Throw<InvalidDataException>(() => ApprovalActionLog.Apply(instance, ApprovalActionLog.Escalated(F.S1, [F.B], F.E, "r", instance.Version, T0) with { Actor = F.A.Value }));
+        Should.Throw<InvalidDataException>(() => ApprovalActionLog.Apply(instance, ApprovalActionLog.Returned(F.S1, F.A, null, "r", instance.Version, T0) with { Actor = F.B.Value }));
+        Should.Throw<InvalidDataException>(() => ApprovalActionLog.Apply(instance, ApprovalActionLog.Completed(new ActionCompletion(F.Id(2), F.S1, F.A, null, null, instance.Version), T0) with { Actor = F.B.Value }));
+
+        ApprovalActionLog.Apply(instance, decided);
+        instance.State.ShouldBe(ApprovalState.Approved);
+    }
+
+    [Fact]
+    public void TheRowHashCoversEveryStoredValue()
+    {
+        // DL-075a: the audit carries this hash, so any change to the stored row shows.
+        var action = ApprovalActionLog.Withdrawn(F.Requester, "Need basic read-only-access " + new string('é', 900), 3, T0);
+        var id = F.Id(1);
+        var hash = ApprovalActionLog.RowHash(id, 2, action, 4);
+        hash.Length.ShouldBe(64);
+        hash.ShouldMatch("^[0-9a-f]{64}$");
+        ApprovalActionLog.RowHash(id, 2, new LoggedAction(action.Kind, new string(action.Payload.AsSpan()), action.AtUtc, action.Actor), 4).ShouldBe(hash);
+        string[] changed =
+        [
+            ApprovalActionLog.RowHash(F.Id(2), 2, action, 4),
+            ApprovalActionLog.RowHash(id, 3, action, 4),
+            ApprovalActionLog.RowHash(id, 2, action, 5),
+            ApprovalActionLog.RowHash(id, 2, action with { Kind = ApprovalActionKind.Cancelled }, 4),
+            ApprovalActionLog.RowHash(id, 2, action with { Payload = action.Payload + " " }, 4),
+            ApprovalActionLog.RowHash(id, 2, action with { AtUtc = T0.AddTicks(10) }, 4),
+            ApprovalActionLog.RowHash(id, 2, action with { Actor = null }, 4),
+        ];
+        changed.ShouldAllBe(h => h != hash);
+        changed.Distinct().Count().ShouldBe(changed.Length);
+    }
+
+    [Fact]
     public void LoggingAnActionNamesNobody()
     {
         var action = ApprovalActionLog.Withdrawn(F.Requester, "secret", 1, T0);

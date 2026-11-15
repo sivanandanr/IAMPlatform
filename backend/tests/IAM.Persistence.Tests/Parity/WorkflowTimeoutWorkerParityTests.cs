@@ -67,20 +67,27 @@ public sealed class WorkflowTimeoutWorkerParityTests(ParityDatabase db)
     public async Task APassTakesAtMostTheBatch()
     {
         var now = DateTimeOffset.UtcNow;
+        var ids = new List<Guid>();
         for (var i = 0; i < 3; i++)
         {
-            await StartAsync(now.AddHours(-10), Level(A, TimeoutAction.Reject));
+            // Older than anything other tests leave behind, so these three come first.
+            ids.Add(await StartAsync(now.AddDays(-30).AddMinutes(i), Level(A, TimeoutAction.Escalate)));
         }
 
         using var host = Worker(batchSize: 2);
+        using var scope = host.Services.CreateScope();
+        var queue = scope.ServiceProvider.GetRequiredService<IAM.Modules.Workflow.Application.Approvals.IDueApprovals>();
+        (await queue.DueAsync(DateTimeOffset.UtcNow, 2, new HashSet<Guid>(), Ct)).Select(d => d.InstanceId).ShouldBe(ids.Take(2));
+
+        // Set-aside ids are left out by the query itself (DL-075g), so the batch is still full and still earliest first.
+        var due = await queue.DueAsync(DateTimeOffset.UtcNow, 2, new HashSet<Guid> { ids[0], ids[1], Guid.CreateVersion7() }, Ct);
+        due.Count.ShouldBe(2);
+        due[0].InstanceId.ShouldBe(ids[2]);
+        due.Select(d => d.InstanceId).ShouldNotContain(ids[0]);
+        due.Select(d => d.InstanceId).ShouldNotContain(ids[1]);
+
         var pass = await host.Services.GetRequiredService<ApprovalTimeoutSweeper>().RunOnceAsync(Ct);
         pass.Due.ShouldBe(2);
-
-        // With ids set aside, more rows are read so the batch stays full, but never more than the batch is returned.
-        using var scope = host.Services.CreateScope();
-        var due = await scope.ServiceProvider.GetRequiredService<IAM.Modules.Workflow.Application.Approvals.IDueApprovals>()
-            .DueAsync(DateTimeOffset.UtcNow, 1, new HashSet<Guid> { Guid.CreateVersion7(), Guid.CreateVersion7() }, Ct);
-        due.Count.ShouldBe(1);
     }
 
     [Fact]
@@ -107,6 +114,10 @@ public sealed class WorkflowTimeoutWorkerParityTests(ParityDatabase db)
             (await StateAsync(id)).ShouldBe("Rejected");
             (await CountAsync(id, "TimeoutsApplied")).ShouldBe(1);
         }
+
+        // A lost race is a conflict on both engines (DL-075h), never a failure.
+        first.Services.GetRequiredService<ApprovalTimeoutSweeper>().SetAside.ShouldNotContain(id => ids.Contains(id));
+        second.Services.GetRequiredService<ApprovalTimeoutSweeper>().SetAside.ShouldNotContain(id => ids.Contains(id));
     }
 
     [Fact]
@@ -200,6 +211,145 @@ public sealed class WorkflowTimeoutWorkerParityTests(ParityDatabase db)
     private sealed class NoPermissions : IPermissionEvaluator
     {
         public Task<bool> CanAsync(string subject, string action, CancellationToken cancellationToken) => Task.FromResult(false);
+    }
+}
+
+/// <summary>
+/// The sweeper's handling of failures (DL-075g), with fakes for the queue and the workflow. No database needed: an instance
+/// that keeps failing is set aside after three passes so it can't keep the others waiting; a conflict is not a failure;
+/// a cancellation that isn't the worker stopping is counted, not thrown.
+/// </summary>
+public sealed class ApprovalTimeoutSweeperTests
+{
+    private static readonly Guid Broken = Guid.CreateVersion7();
+    private static readonly Guid Raced = Guid.CreateVersion7();
+    private static readonly Guid Slow = Guid.CreateVersion7();
+    private static readonly Guid Good = Guid.CreateVersion7();
+
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Fact]
+    public async Task AnInstanceThatKeepsFailingIsSetAsideAfterThreePasses()
+    {
+        var workflow = new FakeWorkflow();
+        var sweeper = Sweeper(workflow, batchSize: 3);
+
+        for (var pass = 1; pass < ApprovalTimeoutSweeper.MaxFailures; pass++)
+        {
+            (await sweeper.RunOnceAsync(Ct)).ShouldBe(new ApprovalTimeoutPass(3, 0, 1, 2));
+            sweeper.SetAside.ShouldBeEmpty();
+        }
+
+        (await sweeper.RunOnceAsync(Ct)).ShouldBe(new ApprovalTimeoutPass(3, 0, 1, 2));
+        sweeper.SetAside.ShouldBe([Broken, Slow], ignoreOrder: true);
+
+        // With them out of the way, the next one in line gets its timeouts.
+        (await sweeper.RunOnceAsync(Ct)).ShouldBe(new ApprovalTimeoutPass(2, 1, 1, 0));
+        workflow.Applied.ShouldBe([Good]);
+        sweeper.SetAside.ShouldNotContain(Raced);
+    }
+
+    [Fact]
+    public async Task ASuccessResetsTheCount()
+    {
+        var workflow = new FakeWorkflow { BrokenSucceedsOnCall = ApprovalTimeoutSweeper.MaxFailures };
+        var sweeper = Sweeper(workflow, batchSize: 1);
+        // Fails twice, succeeds, fails twice: never three in a row.
+        for (var pass = 0; pass < (2 * ApprovalTimeoutSweeper.MaxFailures) - 1; pass++)
+        {
+            await sweeper.RunOnceAsync(Ct);
+        }
+
+        sweeper.SetAside.ShouldNotContain(Broken);
+    }
+
+    [Fact]
+    public async Task StoppingTheWorkerStillStopsThePass()
+    {
+        using var stopping = new CancellationTokenSource();
+        var workflow = new FakeWorkflow { OnCall = stopping.Cancel };
+        var sweeper = Sweeper(workflow, batchSize: 3);
+        await Should.ThrowAsync<OperationCanceledException>(() => sweeper.RunOnceAsync(stopping.Token));
+    }
+
+    private static ApprovalTimeoutSweeper Sweeper(FakeWorkflow workflow, int batchSize)
+    {
+        var services = new ServiceCollection();
+        services.AddScoped<IAM.Modules.Workflow.Application.Approvals.IDueApprovals>(_ => new FakeQueue());
+        services.AddScoped<IAM.Modules.Workflow.Application.Approvals.IApprovalWorkflow>(_ => workflow);
+        var provider = services.BuildServiceProvider();
+        return new ApprovalTimeoutSweeper(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            new ApprovalTimeoutSettings(batchSize: batchSize),
+            TimeProvider.System,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ApprovalTimeoutSweeper>.Instance);
+    }
+
+    /// <summary>Earliest first: the broken one, the raced one, the slow one, then the good one; honours the skip set.</summary>
+    private sealed class FakeQueue : IAM.Modules.Workflow.Application.Approvals.IDueApprovals
+    {
+        public Task<IReadOnlyList<IAM.Modules.Workflow.Application.Approvals.DueApproval>> DueAsync(DateTimeOffset now, int take, IReadOnlySet<Guid> skip, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<IAM.Modules.Workflow.Application.Approvals.DueApproval>>(
+                [.. new[] { Broken, Raced, Slow, Good }.Where(id => !skip.Contains(id)).Take(take).Select(id => new IAM.Modules.Workflow.Application.Approvals.DueApproval(id, 1))]);
+    }
+
+    private sealed class FakeWorkflow : IAM.Modules.Workflow.Application.Approvals.IApprovalWorkflow
+    {
+        private int _brokenCalls;
+
+        public List<Guid> Applied { get; } = [];
+
+        public int? BrokenSucceedsOnCall { get; init; }
+
+        public Action? OnCall { get; init; }
+
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> ApplyTimeoutsAsync(Guid instanceId, long expectedVersion, CancellationToken cancellationToken)
+        {
+            OnCall?.Invoke();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (instanceId == Broken && ++_brokenCalls != BrokenSucceedsOnCall)
+            {
+                throw new InvalidOperationException("broken");
+            }
+
+            if (instanceId == Raced)
+            {
+                throw new IAM.Modules.Workflow.Application.Approvals.ApprovalConflictException("raced");
+            }
+
+            if (instanceId == Slow)
+            {
+                // A provider timeout surfaces as a cancellation that isn't the worker stopping.
+                throw new TaskCanceledException("command timeout");
+            }
+
+            Applied.Add(instanceId);
+            return Task.FromResult<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView>(null!);
+        }
+
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> StartAsync(ApprovalBinding binding, ApprovalRoute route, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView?> ReadAsync(Guid instanceId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalTaskPage> MyTasksAsync(int page, int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> DecideAsync(Guid instanceId, long expectedVersion, Guid decisionId, Guid stageId, bool approve, string? reason, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, string? note, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> ReturnForChangesAsync(Guid instanceId, long expectedVersion, Guid stageId, string? reason, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> WithdrawAsync(Guid instanceId, long expectedVersion, string? reason, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> CancelAsync(Guid instanceId, long expectedVersion, string? reason, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> EscalateAsync(Guid instanceId, long expectedVersion, Guid stageId, IReadOnlyList<PersonId> newCandidates, string? reason, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> ProposeEscalationAsync(Guid instanceId, long expectedVersion, Guid stageId, IReadOnlyList<PersonId> newCandidates, string? reason, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> ApproveEscalationAsync(Guid instanceId, long expectedVersion, Guid stageId, IReadOnlyList<PersonId> reviewedCandidates, string? reason, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> WithdrawEscalationAsync(Guid instanceId, long expectedVersion, Guid stageId, string? reason, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }
 
