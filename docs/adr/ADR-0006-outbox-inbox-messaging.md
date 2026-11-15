@@ -20,6 +20,8 @@ Option 1. Messages carry correlation ID, causation ID, idempotency key, schema v
 
 **Inbox and consumers — built (stage 6 slice 3, DL-078).** Each consumer records a processed message in its module's append-only `InboxMessage` (consumer, message id) in the same transaction as its effects, so a duplicate delivery changes nothing (P0-010). Deliveries are read back into envelopes and refused unless they come from the source module's exchange and name that source; unprocessable messages go to the consumer's dead-letter queue; other failures retry after a delay through the consumer's own retry queue, counted by the consumer (RabbitMQ 4 doesn't count requeues), and dead-letter at the limit. Each module has its own broker user, limited by name patterns to its own exchanges and queues.
 
+**Review fixes (DL-079).** Topology comes from the reviewed `infra/rabbitmq/definitions.json` and module users can't configure anything (`infra/rabbitmq/permissions.json`, with topic permissions); each consumer has its own dead-letter exchange; dead-lettering is at-least-once; `iam.unrouted` is capped and never replayed; the inbox also deduplicates on the source's idempotency key; consumers reconnect rather than stall; `closed` and `authorized` may not be consumed until the audit-chain verifier exists.
+
 **Location of outbox/inbox tables — decided (owner, 2026-11-08, DL-021): per-module.** Each module owns its outbox and inbox tables in its own schema, written in the same transaction as its data by its own login. This keeps "no cross-module writes" enforceable in the database (S1-06 per-module logins). Blueprint §6's shared `integration` schema is not used for them. Built in P0-010.
 
 ## Security and privacy impact

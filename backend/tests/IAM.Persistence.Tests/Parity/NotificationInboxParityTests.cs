@@ -45,8 +45,9 @@ public sealed class NotificationInboxParityTests(ParityDatabase db, RabbitMqBrok
     [Fact]
     public void TheMigrationAppliesOnce()
     {
-        db.NotificationFirstRunApplied.Count.ShouldBe(1);
+        db.NotificationFirstRunApplied.Count.ShouldBe(2);
         db.NotificationFirstRunApplied[0].ShouldEndWith("_NotificationInbox");
+        db.NotificationFirstRunApplied[1].ShouldEndWith("_NotificationInboxKeys");
         db.NotificationSecondRunPending.ShouldBeEmpty();
     }
 
@@ -112,7 +113,6 @@ public sealed class NotificationInboxParityTests(ParityDatabase db, RabbitMqBrok
     [Fact]
     public async Task BadMessagesGoToTheDeadLetterQueueUnprocessed()
     {
-        await DeclareTopologyAsync();
         var malformed = Opened(A) with { Payload = """{"instanceId":1}""" };
         var newVersion = Opened(A);
         var foreign = Opened(A);
@@ -141,7 +141,6 @@ public sealed class NotificationInboxParityTests(ParityDatabase db, RabbitMqBrok
     [Fact]
     public async Task AFailureIsRetriedAndProcessedOnceOrDeadLetteredAtTheLimit()
     {
-        await DeclareTopologyAsync();
         var flaky = Opened(A);
         var broken = Opened(B);
         FlakyHandler.FailuresLeft[flaky.MessageId] = 1;
@@ -168,7 +167,6 @@ public sealed class NotificationInboxParityTests(ParityDatabase db, RabbitMqBrok
     [Fact]
     public async Task AModuleCanNeitherPublishAsAnotherNorReadItsQueues()
     {
-        await DeclareTopologyAsync();
         var envelope = Opened(A);
 
         // The notification user can't write to the workflow exchange.
@@ -189,6 +187,35 @@ public sealed class NotificationInboxParityTests(ParityDatabase db, RabbitMqBrok
             {
                 await Should.ThrowAsync<Exception>(() => channel.QueueDeclareAsync("iam.notification.forged", durable: true, exclusive: false, autoDelete: false, cancellationToken: Ct));
             }
+
+            // Nor empty the shared catch-all, nor send under a routing key outside its own events (topic permission).
+            await using (var channel = await connection.CreateChannelAsync(cancellationToken: Ct))
+            {
+                await Should.ThrowAsync<Exception>(() => channel.QueuePurgeAsync(RabbitMqTopology.UnroutedQueue, Ct));
+            }
+
+            await using var offTopic = new RabbitMqPublisher(broker.Workflow, WorkflowEvents.Source);
+            await Should.ThrowAsync<Exception>(() => offTopic.PublishAsync(
+                MessageEnvelopes.Create(new OffTopic(Guid.CreateVersion7()), WorkflowEvents.Source, "c", null, $"k:{Guid.CreateVersion7():N}", DateTimeOffset.UtcNow), Ct));
+        }
+
+        // No module may create, bind or delete anything: the topology is the reviewed definitions (DL-079).
+        await using (var connection = await RabbitMqBroker.ConnectAsync(broker.Notification, Ct))
+        {
+            await using (var channel = await connection.CreateChannelAsync(cancellationToken: Ct))
+            {
+                await Should.ThrowAsync<Exception>(() => channel.QueueDeclareAsync("iam.notification.everything", durable: true, exclusive: false, autoDelete: false, cancellationToken: Ct));
+            }
+
+            await using (var channel = await connection.CreateChannelAsync(cancellationToken: Ct))
+            {
+                await Should.ThrowAsync<Exception>(() => channel.ExchangeDeleteAsync("iam.notification.approval_tasks.dlx", cancellationToken: Ct));
+            }
+
+            await using (var channel = await connection.CreateChannelAsync(cancellationToken: Ct))
+            {
+                await Should.ThrowAsync<Exception>(() => channel.QueueBindAsync("iam.notification.approval_tasks", "iam.workflow", "#", cancellationToken: Ct));
+            }
         }
 
         (await InboxCountAsync(envelope.MessageId)).ShouldBe(0);
@@ -197,20 +224,102 @@ public sealed class NotificationInboxParityTests(ParityDatabase db, RabbitMqBrok
     [Fact]
     public async Task AWorkflowActionReachesThePeopleItConcernsEndToEnd()
     {
-        await DeclareTopologyAsync();
         var id = Guid.CreateVersion7();
         var started = await Workflow().StartAsync(Binding(id), ApprovalRoute.Create([Level(1, A, B)]), Ct);
 
         await using (await RunningAsync(Consumer<ApprovalTaskNotifications>(Services())))
         await using (var publisher = new RabbitMqPublisher(broker.Workflow, WorkflowEvents.Source))
         {
-            await Relay(publisher).RunOnceAsync(Ct);
-            await EventuallyAsync(async () => (await PendingForInstanceAsync(id)).Count == 2);
+            var relay = Relay(publisher);
+            await EventuallyAsync(async () =>
+            {
+                await relay.RunOnceAsync(Ct);
+                return (await PendingForInstanceAsync(id)).Count == 2;
+            });
         }
 
         var pending = await PendingForInstanceAsync(id);
         pending.Select(p => p.Recipient).ShouldBe([A.Value, B.Value], ignoreOrder: true);
         pending.ShouldAllBe(p => p.Kind == ApprovalTaskNotifications.Kind && p.StageId == started.Stages[0].StageId && p.RequestItemId == started.RequestItemId);
+    }
+
+    [Fact]
+    public async Task TheSameCauseUnderANewMessageIdIsADuplicate()
+    {
+        // DL-079: a replay or repair that issues a new id doesn't process the same cause twice.
+        var consumer = Consumer<ApprovalTaskNotifications>(Services());
+        var first = Opened(A);
+        var again = first with { MessageId = Guid.CreateVersion7() };
+        foreach (var envelope in new[] { first, again })
+        {
+            (await consumer.DispatchAsync("iam.workflow", envelope.Type, RabbitMqPublisher.PropertiesFor(envelope), Encoding.UTF8.GetBytes(envelope.Payload), Ct))
+                .ShouldBe(DeliveryDisposition.Ack);
+        }
+
+        (await PendingAsync(first.MessageId)).Count.ShouldBe(1);
+        (await PendingAsync(again.MessageId)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AClashInAHandlersOwnChangesIsRetriedNotTakenForADuplicate()
+    {
+        // DL-079: only a clash on the inbox itself means "already processed"; anything else must not be acknowledged away.
+        var consumer = Consumer<ClashingHandler>(Services());
+        var envelope = Opened(A);
+        (await consumer.DispatchAsync("iam.workflow", envelope.Type, RabbitMqPublisher.PropertiesFor(envelope), Encoding.UTF8.GetBytes(envelope.Payload), Ct))
+            .ShouldBe(DeliveryDisposition.Retry);
+        (await InboxCountAsync(envelope.MessageId)).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task TheConsumerRecoversWhenItsQueueOrRetryRouteGoesAway()
+    {
+        // DL-079: a lost queue or a retry copy the broker refuses ends the run and reconnects; nothing stays stuck.
+        await using (await RunningAsync(Consumer<FlakyHandler>(Services())))
+        {
+            await using (var connection = await broker.ConnectAsync(Ct))
+            await using (var channel = await connection.CreateChannelAsync(cancellationToken: Ct))
+            {
+                await EventuallyAsync(async () => (await channel.QueueDeclarePassiveAsync("iam.notification.approval_tasks", Ct)).ConsumerCount > 0);
+                await channel.QueueDeleteAsync("iam.notification.approval_tasks", cancellationToken: Ct);
+            }
+
+            await broker.ImportDefinitionsAsync();
+            var afterQueueLoss = Opened(A);
+            await PublishAsWorkflowAsync(afterQueueLoss);
+            await EventuallyAsync(async () => (await PendingAsync(afterQueueLoss.MessageId)).Count == 1);
+
+            // The retry exchange is gone when a message fails once: its copy is refused, so the original is delivered again.
+            await using (var connection = await broker.ConnectAsync(Ct))
+            await using (var channel = await connection.CreateChannelAsync(cancellationToken: Ct))
+            {
+                await channel.ExchangeDeleteAsync("iam.notification.approval_tasks.retry", cancellationToken: Ct);
+            }
+
+            var flaky = Opened(B);
+            FlakyHandler.FailuresLeft[flaky.MessageId] = 1;
+            await PublishAsWorkflowAsync(flaky);
+            await EventuallyAsync(() => Task.FromResult(FlakyHandler.Attempts.GetValueOrDefault(flaky.MessageId) >= 1));
+            await broker.ImportDefinitionsAsync();
+            await EventuallyAsync(async () => (await PendingAsync(flaky.MessageId)).Count == 1);
+
+            // The retry queue is unbound: the copy comes back unroutable and the channel stays open. Only ending the run
+            // stops the delivery sitting unacknowledged for good.
+            await using (var connection = await broker.ConnectAsync(Ct))
+            await using (var channel = await connection.CreateChannelAsync(cancellationToken: Ct))
+            {
+                await channel.QueueUnbindAsync("iam.notification.approval_tasks.retry", "iam.notification.approval_tasks.retry", "iam.notification.approval_tasks", cancellationToken: Ct);
+            }
+
+            var returned = Opened(A, B);
+            FlakyHandler.FailuresLeft[returned.MessageId] = 1;
+            await PublishAsWorkflowAsync(returned);
+            await EventuallyAsync(() => Task.FromResult(FlakyHandler.Attempts.GetValueOrDefault(returned.MessageId) >= 1));
+            await broker.ImportDefinitionsAsync();
+            await EventuallyAsync(async () => (await PendingAsync(returned.MessageId)).Count == 2);
+        }
+
+        await broker.ImportDefinitionsAsync();
     }
 
     [Fact]
@@ -251,27 +360,18 @@ public sealed class NotificationInboxParityTests(ParityDatabase db, RabbitMqBrok
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<ApprovalTaskNotifications>();
         services.AddScoped<FlakyHandler>();
+        services.AddScoped<ClashingHandler>();
         return services.BuildServiceProvider();
     }
 
     private RabbitMqConsumer<T> Consumer<T>(ServiceProvider services)
         where T : class, IMessageHandler =>
-        new(services.GetRequiredService<IServiceScopeFactory>(), broker.Notification, new ConsumerSettings(deliveryLimit: DeliveryLimit, retryDelaySeconds: 1), NullLogger<RabbitMqConsumer<T>>.Instance);
+        new(services.GetRequiredService<IServiceScopeFactory>(), broker.Notification, new ConsumerSettings(deliveryLimit: DeliveryLimit, reconnectDelaySeconds: 1), NullLogger<RabbitMqConsumer<T>>.Instance);
 
-    /// <summary>The workflow module's exchange, then the consumer's queues, as each module's own user would declare them.</summary>
-    private async Task DeclareTopologyAsync()
+    private async Task PublishAsWorkflowAsync(MessageEnvelope envelope)
     {
-        await using (var connection = await RabbitMqBroker.ConnectAsync(broker.Workflow, Ct))
-        await using (var channel = await connection.CreateChannelAsync(cancellationToken: Ct))
-        {
-            await RabbitMqTopology.DeclareAsync(channel, WorkflowEvents.Source, Ct);
-        }
-
-        await using (var connection = await RabbitMqBroker.ConnectAsync(broker.Notification, Ct))
-        await using (var channel = await connection.CreateChannelAsync(cancellationToken: Ct))
-        {
-            await RabbitMqTopology.DeclareConsumerAsync(channel, new FlakyHandler(null!), DeliveryLimit, TimeSpan.FromSeconds(1), Ct);
-        }
+        await using var publisher = new RabbitMqPublisher(broker.Workflow, WorkflowEvents.Source);
+        await publisher.PublishAsync(envelope, Ct);
     }
 
     private static async Task RawPublishAsync(IChannel channel, MessageEnvelope envelope, Action<BasicProperties> change)
@@ -389,6 +489,37 @@ public sealed class NotificationInboxParityTests(ParityDatabase db, RabbitMqBrok
         public Task<bool> CanAsync(string subject, string action, CancellationToken cancellationToken) => Task.FromResult(false);
     }
 
+    /// <summary>An event type outside the workflow's topic permission: <c>notification.*</c> on the workflow exchange.</summary>
+    private sealed record OffTopic(Guid Id) : IAM.BuildingBlocks.Abstractions.Messaging.IIntegrationEvent
+    {
+        public static string MessageType => "notification.forged.event";
+
+        public static int SchemaVersion => 1;
+    }
+
+    /// <summary>A handler whose own changes clash on a unique key of its own table (not the inbox's).</summary>
+    private sealed class ClashingHandler(NotificationDbContext db, IIamDatabaseProvider provider) : IMessageHandler
+    {
+        public string ConsumerName => "notification.approval_tasks";
+
+        public string Source => WorkflowEvents.Source;
+
+        public IReadOnlyList<string> MessageTypes => [ApprovalTaskOpened.MessageType];
+
+        public Task<MessageOutcome> HandleAsync(MessageEnvelope envelope, CancellationToken cancellationToken) =>
+            db.ReceiveOnceAsync(provider, ConsumerName, envelope, DateTimeOffset.UtcNow, () => db.Pending.AddRange(
+                Enumerable.Range(0, 2).Select(_ => new PendingNotificationRow
+                {
+                    Id = Guid.CreateVersion7(),
+                    Kind = "test.clash",
+                    Recipient = "nt-a",
+                    InstanceId = Guid.CreateVersion7(),
+                    RequestItemId = Guid.CreateVersion7(),
+                    SourceMessageId = envelope.MessageId,
+                    CreatedForUtc = envelope.OccurredAtUtc,
+                })), cancellationToken);
+    }
+
     /// <summary>The real handler, failing a set number of times for chosen messages first (a database blip, say).</summary>
     private sealed class FlakyHandler(ApprovalTaskNotifications inner) : IMessageHandler
     {
@@ -400,7 +531,7 @@ public sealed class NotificationInboxParityTests(ParityDatabase db, RabbitMqBrok
 
         public string Source => WorkflowEvents.Source;
 
-        public IReadOnlyList<string> MessageTypes { get; } = [ApprovalTaskOpened.MessageType];
+        public IReadOnlyList<string> MessageTypes => [ApprovalTaskOpened.MessageType];
 
         public Task<MessageOutcome> HandleAsync(MessageEnvelope envelope, CancellationToken cancellationToken)
         {

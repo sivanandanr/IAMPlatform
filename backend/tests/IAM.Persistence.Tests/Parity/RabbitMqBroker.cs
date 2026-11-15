@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using IAM.BuildingBlocks.Messaging.RabbitMq;
 using RabbitMQ.Client;
 using Testcontainers.RabbitMq;
@@ -6,58 +7,73 @@ using Testcontainers.RabbitMq;
 namespace IAM.Persistence.Tests.Parity;
 
 /// <summary>
-/// One throwaway RabbitMQ per test class that needs it (DL-077), the same image compose pins. The test user is not
-/// <c>guest</c>; TLS is off because the broker is on this machine, which <see cref="RabbitMqSettings"/> allows.
+/// One throwaway RabbitMQ per test class that needs it (DL-077 to DL-079), the same image compose pins, set up as an
+/// operator would: the reviewed topology from <c>infra/rabbitmq/definitions.json</c> and each module's broker user with
+/// exactly the permissions in <c>infra/rabbitmq/permissions.json</c>. The administrator is the tests' own user, never a
+/// module's. TLS is off because the broker is on this machine, which <see cref="RabbitMqSettings"/> allows.
 /// </summary>
 public sealed class RabbitMqBroker : IAsyncLifetime
 {
+    public const string VirtualHost = "iam";
+
     private const string Image = "rabbitmq:4.3.7-management-alpine@sha256:eb338b3fc8f5c251028c0022ac0de3fe1db2d599d1c6a08b45898f756f248881";
-    private const string User = "iam-workflow-test";
+    private const string Admin = "iam-test-admin";
 
     private readonly string _password = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
     private RabbitMqContainer? _container;
+    private int _port;
 
+    /// <summary>The broker administrator: for setting up and inspecting, never as a module.</summary>
     public RabbitMqSettings Settings { get; private set; } = null!;
 
-    /// <summary>The workflow module's own broker user: its exchange and the unrouted catch-all only (DL-078).</summary>
+    /// <summary>The workflow module's own broker user (permissions.json).</summary>
     public RabbitMqSettings Workflow { get; private set; } = null!;
 
-    /// <summary>The notification module's own broker user: its queues and the dead-letter exchange, and reading the workflow exchange.</summary>
+    /// <summary>The notification module's own broker user (permissions.json).</summary>
     public RabbitMqSettings Notification { get; private set; } = null!;
 
     public async ValueTask InitializeAsync()
     {
-        _container = new RabbitMqBuilder(Image).WithUsername(User).WithPassword(_password).Build();
+        _container = new RabbitMqBuilder(Image).WithUsername(Admin).WithPassword(_password).Build();
         await _container.StartAsync();
-        Settings = new RabbitMqSettings("127.0.0.1", _container.GetMappedPublicPort(5672), "/", User, _password, useTls: false);
-        Workflow = await AddUserAsync("iam-workflow", @"^iam\.(workflow|unrouted)$", @"^iam\.(workflow|unrouted)$", @"^iam\.(workflow|unrouted)$");
-        Notification = await AddUserAsync(
-            "iam-notification", @"^iam\.(notification\..*|dlx)$", @"^iam\.(notification\..*|dlx)$", @"^iam\.(workflow|notification\..*|dlx)$");
-    }
+        _port = _container.GetMappedPublicPort(5672);
 
-    /// <summary>
-    /// A module's broker user with the permissions DL-078 gives it (configure, write and read, as RabbitMQ name patterns),
-    /// set with <c>rabbitmqctl</c> as a deployment's definitions would.
-    /// </summary>
-    private async Task<RabbitMqSettings> AddUserAsync(string user, string configure, string write, string read)
-    {
-        var password = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
-        await RunAsync(["rabbitmqctl", "add_user", user, password]);
-        await RunAsync(["rabbitmqctl", "set_permissions", "-p", "/", user, configure, write, read]);
-        return new RabbitMqSettings("127.0.0.1", Settings.Port, "/", user, password, useTls: false);
-    }
+        await RunAsync(["rabbitmqctl", "add_vhost", VirtualHost]);
+        await RunAsync(["rabbitmqctl", "set_permissions", "-p", VirtualHost, Admin, ".*", ".*", ".*"]);
+        await ImportDefinitionsAsync();
+        Settings = new RabbitMqSettings("127.0.0.1", _port, VirtualHost, Admin, _password, useTls: false);
 
-    private async Task RunAsync(IList<string> command)
-    {
-        var result = await _container!.ExecAsync(command);
-        if (result.ExitCode != 0)
+        using var permissions = JsonDocument.Parse(await File.ReadAllTextAsync(Repository("permissions.json")));
+        var users = new Dictionary<string, RabbitMqSettings>(StringComparer.Ordinal);
+        foreach (var user in permissions.RootElement.GetProperty("users").EnumerateArray())
         {
-            throw new InvalidOperationException($"{command[1]} failed: {result.Stderr}");
+            var name = user.GetProperty("user").GetString()!;
+            var password = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
+            await RunAsync(["rabbitmqctl", "add_user", name, password]);
+            await RunAsync(["rabbitmqctl", "set_permissions", "-p", VirtualHost, name,
+                user.GetProperty("configure").GetString()!, user.GetProperty("write").GetString()!, user.GetProperty("read").GetString()!]);
+            foreach (var topic in user.GetProperty("topics").EnumerateArray())
+            {
+                await RunAsync(["rabbitmqctl", "set_topic_permissions", "-p", VirtualHost, name,
+                    topic.GetProperty("exchange").GetString()!, topic.GetProperty("write").GetString()!, topic.GetProperty("read").GetString()!]);
+            }
+
+            users[name] = new RabbitMqSettings("127.0.0.1", _port, VirtualHost, name, password, useTls: false);
         }
+
+        Workflow = users["iam-workflow"];
+        Notification = users["iam-notification"];
+    }
+
+    /// <summary>Applies the definitions file again, restoring anything a test deleted.</summary>
+    public async Task ImportDefinitionsAsync()
+    {
+        await _container!.CopyAsync(await File.ReadAllBytesAsync(Repository("definitions.json")), "/tmp/iam-definitions.json");
+        await RunAsync(["rabbitmqctl", "import_definitions", "/tmp/iam-definitions.json"]);
     }
 
     /// <summary>The same broker on a port nothing listens on.</summary>
-    public RabbitMqSettings Unreachable() => new("127.0.0.1", 1, "/", User, _password, useTls: false, connectTimeoutSeconds: 1);
+    public RabbitMqSettings Unreachable() => new("127.0.0.1", 1, VirtualHost, Workflow.UserName, Workflow.Password, useTls: false, connectTimeoutSeconds: 1);
 
     public Task<IConnection> ConnectAsync(CancellationToken cancellationToken) => ConnectAsync(Settings, cancellationToken);
 
@@ -76,6 +92,30 @@ public sealed class RabbitMqBroker : IAsyncLifetime
         if (_container is not null)
         {
             await _container.DisposeAsync();
+        }
+    }
+
+    /// <summary>A file in <c>infra/rabbitmq</c>, found by walking up from the test output to the repository.</summary>
+    public static string Repository(string file)
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, "infra", "rabbitmq", file);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new FileNotFoundException($"infra/rabbitmq/{file} not found above {AppContext.BaseDirectory}.");
+    }
+
+    private async Task RunAsync(IList<string> command)
+    {
+        var result = await _container!.ExecAsync(command);
+        if (result.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"{command[1]} failed: {result.Stderr}");
         }
     }
 }

@@ -144,6 +144,24 @@ public sealed class WorkflowOutboxParityTests(ParityDatabase db)
     }
 
     [Fact]
+    public async Task ALargeLevelIsAnnouncedInChunksThatFitThePayloadLimit()
+    {
+        // DL-079: 70 approvers with 150-character ids that JSON escapes six-fold: one event would exceed 64 KB.
+        var clock = new MovingClock(T0);
+        var id = Guid.CreateVersion7();
+        var people = Enumerable.Range(0, 70).Select(i => PersonId.Create($"wfo-{i:D2}-" + new string('é', 150))).ToArray();
+        var started = await Service(null, clock).StartAsync(Binding(id), Route(Level(1, people)), Ct);
+
+        var opened = (await MessagesAsync(id)).Where(m => m.Type == ApprovalTaskOpened.MessageType).ToList();
+        opened.Count.ShouldBe(3);
+        opened.ShouldAllBe(m => m.Payload.Length <= MessageEnvelopes.MaxPayloadLength);
+        var events = opened.Select(MessageEnvelopes.Read<ApprovalTaskOpened>).ToList();
+        events.ShouldAllBe(e => e.People.Count <= ApprovalTaskOpened.MaxPeople && e.StageId == started.Stages[0].StageId);
+        events.SelectMany(e => e.People).ShouldBe(people.Select(p => p.Value), ignoreOrder: true);
+        opened.Select(m => m.IdempotencyKey).Distinct().Count().ShouldBe(3);
+    }
+
+    [Fact]
     public async Task AnEscalationPublishesOnlyTheNewPeople()
     {
         var clock = new MovingClock(T0);

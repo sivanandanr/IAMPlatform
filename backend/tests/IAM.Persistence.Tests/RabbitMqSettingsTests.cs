@@ -48,6 +48,8 @@ public sealed class RabbitMqSettingsTests
         Should.Throw<ArgumentOutOfRangeException>(() => new OutboxRelaySettings(maxAttempts: 51));
         Should.Throw<ArgumentOutOfRangeException>(() => new OutboxRelaySettings(publishTimeoutSeconds: 61));
         Should.Throw<ArgumentOutOfRangeException>(() => new OutboxRelaySettings(publishTimeoutSeconds: 10, leaseSeconds: 10));
+        Should.Throw<ArgumentOutOfRangeException>(() => new OutboxRelaySettings(publishTimeoutSeconds: 10, leaseSeconds: 29));
+        new OutboxRelaySettings(publishTimeoutSeconds: 10, leaseSeconds: 30).Lease.ShouldBe(TimeSpan.FromSeconds(30));
     }
 
     [Fact]

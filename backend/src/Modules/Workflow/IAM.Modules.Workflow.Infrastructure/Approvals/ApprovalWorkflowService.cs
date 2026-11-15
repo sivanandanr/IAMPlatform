@@ -696,10 +696,15 @@ public sealed class ApprovalWorkflowService(
 
         foreach (var opened in tasks.Where(t => !before.Tasks.Contains((t.StageId, t.Person))).GroupBy(t => t.StageId).OrderBy(g => g.First().Sequence))
         {
+            // At most MaxPeople per event, so a level of 256 long ids can't outgrow the payload limit and fail the action.
             var first = opened.First();
-            yield return Envelope(
-                new ApprovalTaskOpened(id, item, first.StageId, first.Sequence, first.Kind, [.. opened.Select(t => t.Person).Order(StringComparer.Ordinal)], first.DeadlineUtc, instance.Version),
-                string.Create(CultureInfo.InvariantCulture, $":{first.StageId:N}"));
+            var chunks = opened.Select(t => t.Person).Order(StringComparer.Ordinal).Chunk(ApprovalTaskOpened.MaxPeople).ToList();
+            for (var part = 0; part < chunks.Count; part++)
+            {
+                yield return Envelope(
+                    new ApprovalTaskOpened(id, item, first.StageId, first.Sequence, first.Kind, chunks[part], first.DeadlineUtc, instance.Version),
+                    string.Create(CultureInfo.InvariantCulture, $":{first.StageId:N}:{part}"));
+            }
         }
 
         if (!before.Authorized && instance.ProvisioningAuthorized)
