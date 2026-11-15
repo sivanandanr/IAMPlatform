@@ -230,6 +230,15 @@ public static class ArchitectureRules
             }
         }
 
+        // Connectors run inside customer networks (ADR-0007): they know nothing of the platform's modules or databases.
+        foreach (var p in projects.Where(p => p.Kind is ProjectKind.Connector))
+        {
+            foreach (var r in p.ProjectReferences.Where(r => ProjectInfo.Classify(r) is ProjectKind.Module or ProjectKind.Persistence || r == "IAM.BuildingBlocks.Persistence"))
+            {
+                violations.Add($"{p.Name} -> {r}: connectors may not reference modules or persistence (ADR-0007, DL-080).");
+            }
+        }
+
         return violations;
     }
 

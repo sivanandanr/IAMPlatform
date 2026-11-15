@@ -96,6 +96,18 @@ public sealed class ArchitectureRulesNegativeTests
     public void ToolReferencingModuleApplicationIsReported() =>
         ArchitectureRules.CheckHostsWorkersConnectors([Project("IAM.Tools.AccessBootstrap", projects: ["IAM.Modules.Administration.Application"])]).ShouldNotBeEmpty();
 
+    [Theory]
+    [InlineData("IAM.Modules.Catalog.Contracts")]
+    [InlineData("IAM.Modules.Provisioning.Infrastructure")]
+    [InlineData("IAM.Persistence.SqlServer")]
+    [InlineData("IAM.BuildingBlocks.Persistence")]
+    public void ConnectorsKnowNothingOfModulesOrDatabases(string reference) =>
+        ArchitectureRules.CheckHostsWorkersConnectors([Project("IAM.Connectors.ActiveDirectory.Mock", projects: [reference])]).ShouldNotBeEmpty();
+
+    [Fact]
+    public void ConnectorsMayUseTheSdk() =>
+        ArchitectureRules.CheckHostsWorkersConnectors([Project("IAM.Connectors.ActiveDirectory.Mock", projects: ["IAM.Connectors.Sdk", "IAM.BuildingBlocks.Abstractions"])]).ShouldBeEmpty();
+
     [Fact]
     public void ToolComposingThroughEndpointsIsAllowed() =>
         ArchitectureRules.CheckHostsWorkersConnectors([Project("IAM.Tools.AccessBootstrap", projects: ["IAM.Modules.Administration.Endpoints", "IAM.Persistence.SqlServer", "IAM.BuildingBlocks.Persistence"])]).ShouldBeEmpty();
