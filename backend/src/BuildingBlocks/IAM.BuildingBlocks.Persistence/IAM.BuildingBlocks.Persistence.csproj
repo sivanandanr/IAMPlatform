@@ -7,6 +7,9 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\IAM.BuildingBlocks.Messaging\IAM.BuildingBlocks.Messaging.csproj" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="IAM.Persistence.Tests" />
   </ItemGroup>
 </Project>

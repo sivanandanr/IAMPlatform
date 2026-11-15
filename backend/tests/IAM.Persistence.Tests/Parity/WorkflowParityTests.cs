@@ -47,10 +47,11 @@ public sealed class WorkflowParityTests(ParityDatabase db)
     [Fact]
     public async Task TheMigrationAppliesOnce()
     {
-        db.WorkflowFirstRunApplied.Count.ShouldBe(3);
+        db.WorkflowFirstRunApplied.Count.ShouldBe(4);
         db.WorkflowFirstRunApplied[0].ShouldEndWith("_WorkflowStorage");
         db.WorkflowFirstRunApplied[1].ShouldEndWith("_WorkflowTasks");
         db.WorkflowFirstRunApplied[2].ShouldEndWith("_WorkflowReviewFixes");
+        db.WorkflowFirstRunApplied[3].ShouldEndWith("_WorkflowOutbox");
         db.WorkflowSecondRunPending.ShouldBeEmpty();
         (await AuditCountAsync(Guid.NewGuid(), WorkflowAuditActions.Refused, "Denied")).ShouldBe(0);
     }

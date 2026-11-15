@@ -11,7 +11,7 @@ Read actual source files before making claims about requirements. If unavailable
 - .NET 10 ASP.NET Core Minimal APIs, Angular (supported version pinned in repo), EF Core 10, YARP.
 - One relational provider per deployment: SQL Server/Azure SQL MI **or** PostgreSQL; separate reviewed migrations and CI parity tests for both.
 - Modular monolith: Identity, Organization, Catalog, Account, Policy, Workflow, Request, Provisioning, Governance, Audit, Integration, Notification, Administration.
-- Background workers for provisioning, discovery, HR sync and notifications; MassTransit/RabbitMQ with outbox/inbox; Redis for cache; OpenTelemetry.
+- Background workers for provisioning, discovery, HR sync and notifications; RabbitMQ (RabbitMQ.Client) with an in-house outbox/inbox (ADR-0021, DL-076; MassTransit is not used); Redis for cache; OpenTelemetry.
 - Hybrid private connectors; no internet exposure of LDAP, SAP RFC, DB or broker.
 - Keep module contracts explicit; no cross-module direct table writes; no premature microservices.
 

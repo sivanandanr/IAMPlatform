@@ -99,9 +99,16 @@
       "iam.buildingblocks.abstractions": {
         "type": "Project"
       },
+      "iam.buildingblocks.messaging": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
       "iam.buildingblocks.persistence": {
         "type": "Project",
         "dependencies": {
+          "IAM.BuildingBlocks.Messaging": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore.Relational": "[10.0.14, )"
         }
       },

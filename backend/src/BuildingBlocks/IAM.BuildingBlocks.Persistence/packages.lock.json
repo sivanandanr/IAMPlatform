@@ -107,6 +107,15 @@
         "type": "Transitive",
         "resolved": "10.0.14",
         "contentHash": "1bbZqqCJTPba3inTADExbp/9PsGVyvGOX3zr6tFr7ySCgVkX9Lpw7BV0TizktNItd3SsbUu1sQfSAYm1GZMoNw=="
+      },
+      "iam.buildingblocks.abstractions": {
+        "type": "Project"
+      },
+      "iam.buildingblocks.messaging": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
       }
     }
   }

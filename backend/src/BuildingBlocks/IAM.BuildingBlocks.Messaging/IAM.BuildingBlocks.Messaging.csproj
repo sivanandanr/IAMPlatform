@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Message envelope and its rules (ADR-0006, ADR-0021, DL-076). No packages: Application layers may use it, and the
+    broker client (RabbitMQ.Client) is added by the relay and consumer hosts only.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\IAM.BuildingBlocks.Abstractions\IAM.BuildingBlocks.Abstractions.csproj" />
+  </ItemGroup>
+</Project>
