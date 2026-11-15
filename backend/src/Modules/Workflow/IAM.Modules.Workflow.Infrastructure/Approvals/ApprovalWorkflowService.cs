@@ -241,6 +241,12 @@ public sealed class ApprovalWorkflowService(
             throw;
         }
 
+        // An action that changed nothing (timeouts with nothing expired) isn't stored: the log holds only what happened.
+        if (loaded.Instance.Version == row.EngineVersion)
+        {
+            return View(loaded, oversight: false);
+        }
+
         List<(LoggedAction Action, long VersionAfter)> actions = [(action, loaded.Instance.Version)];
         await SupplyOpenedLevelsAsync(loaded, actions, now, cancellationToken).ConfigureAwait(false);
         await SaveAsync(tx, loaded, actions, cancellationToken).ConfigureAwait(false);

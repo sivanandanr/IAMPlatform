@@ -84,6 +84,16 @@ cd backend && IAM_PARITY_PROVIDER=PostgreSql dotnet test --project tests/IAM.Per
   For SQL Server set `IAM_PARITY_PROVIDER=SqlServer` and, only if **you** accept the SQL Server Developer licence, `MSSQL_ACCEPT_EULA=Y`. The tests fail rather than accept it for you.
 - New migrations: add one for **each** provider with `dotnet ef migrations add` (see `backend/README.md`), review both, and keep `IdentityMigrationsMatchTheModel`-style tests green. Recovery from a bad migration is restore/PITR plus a compensating forward migration (DL-020); there are no down migrations.
 
+## 3c. Workflow worker (DL-074)
+`IAM.Workers.Workflow` applies approval deadlines in the background. It needs `IAM_DB_PROVIDER` and the `workflow`, `catalog` and `organization` connection strings (user secrets, as for the API), and optionally `Workflow:Timeouts:IntervalSeconds` (5 to 3600, default 60) and `Workflow:Timeouts:BatchSize` (1 to 500, default 50):
+```bash
+dotnet user-secrets set "ConnectionStrings:workflow" "<connection string for the iam_app_workflow login>" --project backend/src/Workers/IAM.Workers.Workflow
+```
+```bash
+IAM_DB_PROVIDER=PostgreSql dotnet run --project backend/src/Workers/IAM.Workers.Workflow
+```
+It writes as `system:workflow-timeouts`. A damaged instance is logged once (instance id only) and skipped until restart; look it up in the audit trail (`workflow.approval.damaged`). It is not in compose yet.
+
 ## 4. Stop / reset
 - Stop, keep data: `docker compose --profile postgres --profile sqlserver stop`
 - Remove containers, keep data volumes: `docker compose --profile postgres --profile sqlserver down`

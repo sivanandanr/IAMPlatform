@@ -1,5 +1,5 @@
 # ADR-0005: Durable approval workflow state machine
-Status: Proposed, implemented and stored (S2-02, stage 1 of AR-1 to AR-3, stage 4; stored as a replayed action log since stage 5, ADR-0028; no API, timeout worker or provisioning event yet, so not production-ready) | Date: 2026-11-07, updated 2026-11-10 | Decision owners: IAM Domain / Workflow lead, Security Architect (named approvers TBD)
+Status: Proposed, implemented and stored (S2-02, stage 1 of AR-1 to AR-3, stage 4; stored as a replayed action log with an API and a timeout worker since stage 5, ADR-0028; no Request module or provisioning event yet, so not production-ready) | Date: 2026-11-07, updated 2026-11-10 | Decision owners: IAM Domain / Workflow lead, Security Architect (named approvers TBD)
 
 Source: Blueprint v1.0 §1 (ADR 005), §9, §10; Spec v3.2 Module 7, IAM-WF-001, -003, -004, -006, -009, -011, -012, K.1, K.6; CLAUDE.md rule 3. Drafted by Claude Code (S1-01); not approved.
 
