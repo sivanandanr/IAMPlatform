@@ -25,6 +25,9 @@ public abstract class ConnectorContractTests
     /// <summary>A new, valid account identifier the connector hasn't seen.</summary>
     protected abstract ObjectRef NewAccount();
 
+    /// <summary>A valid entitlement identifier that doesn't exist.</summary>
+    protected virtual ObjectRef AbsentEntitlement => new(ObjectTypes.Entitlement, ExistingEntitlement.Id + "-missing");
+
     /// <summary>An identifier with the right shape for the SDK but wrong for this connector's own syntax, if it has one.</summary>
     protected virtual ObjectRef? MalformedAccount => null;
 
@@ -77,8 +80,13 @@ public abstract class ConnectorContractTests
         var connector = Create(ConnectorSettings.Default);
         SkipUnless(connector, ActionCatalog.AccountDisable);
         var account = await CreatedAccountAsync(connector);
+        if (connector.Capabilities.Supports(ActionCatalog.AccountEnable))
+        {
+            await connector.ExecuteAsync(Op(ActionCatalog.AccountEnable, account), Ct);
+        }
+
         var id = Guid.CreateVersion7();
-        (await connector.ExecuteAsync(Op(ActionCatalog.AccountDisable, account, id: id), Ct)).Status.ShouldBe(OperationStatus.Applied);
+        (await connector.ExecuteAsync(Op(ActionCatalog.AccountDisable, account, id: id), Ct)).Status.ShouldBeOneOf(OperationStatus.Applied, OperationStatus.AlreadyInState);
         var reused = await connector.ExecuteAsync(Op(ActionCatalog.AccountDisable, await CreatedAccountAsync(connector), id: id), Ct);
         reused.ShouldBe(new OperationResult(id, OperationStatus.Rejected, ResultCodes.OperationIdReused));
     }
@@ -89,6 +97,9 @@ public abstract class ConnectorContractTests
         var connector = Create(ConnectorSettings.Default);
         SkipUnless(connector, ActionCatalog.AccountEnable);
         var account = await CreatedAccountAsync(connector);
+
+        // Whether a new account starts enabled is the target's business; enabling twice changes it once.
+        (await connector.ExecuteAsync(Op(ActionCatalog.AccountEnable, account), Ct)).Status.ShouldBeOneOf(OperationStatus.Applied, OperationStatus.AlreadyInState);
         (await connector.ReadAsync(account, Ct)).ShouldNotBeNull().Enabled.ShouldBe(true);
         (await connector.ExecuteAsync(Op(ActionCatalog.AccountEnable, account), Ct)).Status.ShouldBe(OperationStatus.AlreadyInState);
 
@@ -207,7 +218,7 @@ public abstract class ConnectorContractTests
         if (connector.Capabilities.Supports(ActionCatalog.EntitlementAdd))
         {
             var account = await CreatedAccountAsync(connector);
-            (await connector.ExecuteAsync(Op(ActionCatalog.EntitlementAdd, account, new ObjectRef(ObjectTypes.Entitlement, ExistingEntitlement.Id + "-missing")), Ct))
+            (await connector.ExecuteAsync(Op(ActionCatalog.EntitlementAdd, account, AbsentEntitlement), Ct))
                 .Code.ShouldBe(ResultCodes.RelatedNotFound);
         }
     }

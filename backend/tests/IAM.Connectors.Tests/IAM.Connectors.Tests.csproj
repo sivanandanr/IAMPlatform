@@ -12,5 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Connectors\IAM.Connectors.Sdk\IAM.Connectors.Sdk.csproj" />
+    <ProjectReference Include="..\..\src\Connectors\IAM.Connectors.ActiveDirectory.Mock\IAM.Connectors.ActiveDirectory.Mock.csproj" />
   </ItemGroup>
 </Project>

@@ -166,6 +166,12 @@
           "xunit.v3.runner.common": "[4.0.2]"
         }
       },
+      "iam.connectors.activedirectory.mock": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.Connectors.Sdk": "[1.0.0, )"
+        }
+      },
       "iam.connectors.sdk": {
         "type": "Project"
       }

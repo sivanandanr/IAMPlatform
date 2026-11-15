@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    MOCK Active Directory connector (P0-011, ADR-0007, DL-081). An in-memory directory for tests and demos: it never
+    talks to a real directory and is NOT production-ready (CLAUDE.md rule 10, FR-REL-103). It says so in its capabilities
+    and health.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\IAM.Connectors.Sdk\IAM.Connectors.Sdk.csproj" />
+  </ItemGroup>
+</Project>
