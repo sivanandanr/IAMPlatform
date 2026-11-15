@@ -81,6 +81,16 @@ public sealed class ArchitectureRulesNegativeTests
     }
 
     [Fact]
+    public void MessagingStaysFreeOfPackagesAndOtherBuildingBlocks()
+    {
+        const string messaging = "IAM.BuildingBlocks.Messaging";
+        ArchitectureRules.CheckPurity([Project(messaging, projects: ["IAM.BuildingBlocks.Abstractions"])]).ShouldBeEmpty();
+        ArchitectureRules.CheckPurity([Project(messaging, packages: ["RabbitMQ.Client"])]).ShouldNotBeEmpty();
+        ArchitectureRules.CheckPurity([Project(messaging, frameworks: ["Microsoft.AspNetCore.App"])]).ShouldNotBeEmpty();
+        ArchitectureRules.CheckPurity([Project(messaging, projects: ["IAM.BuildingBlocks.Persistence"])]).ShouldNotBeEmpty();
+    }
+
+    [Fact]
     public void ToolReferencingModuleApplicationIsReported() =>
         ArchitectureRules.CheckHostsWorkersConnectors([Project("IAM.Tools.AccessBootstrap", projects: ["IAM.Modules.Administration.Application"])]).ShouldNotBeEmpty();
 

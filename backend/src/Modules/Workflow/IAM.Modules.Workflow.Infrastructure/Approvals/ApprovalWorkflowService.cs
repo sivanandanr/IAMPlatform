@@ -1,13 +1,16 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using IAM.BuildingBlocks.Abstractions.Messaging;
 using IAM.BuildingBlocks.Abstractions.People;
+using IAM.BuildingBlocks.Messaging;
 using IAM.BuildingBlocks.Persistence;
 using IAM.BuildingBlocks.Security;
 using IAM.Modules.Administration.Contracts;
 using IAM.Modules.Audit.Contracts;
 using IAM.Modules.Workflow.Application.Approvals;
 using IAM.Modules.Workflow.Application.Approvers;
+using IAM.Modules.Workflow.Contracts;
 using IAM.Modules.Workflow.Domain.Approvals;
 using IAM.Modules.Workflow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -110,7 +113,7 @@ public sealed class ApprovalWorkflowService(
         db.Instances.Add(loaded.Row);
         List<(LoggedAction Action, long VersionAfter)> actions = [(bound, instance.Version)];
         await SupplyOpenedLevelsAsync(tx, loaded, actions, now, "start", cancellationToken).ConfigureAwait(false);
-        await SaveAsync(tx, loaded, actions, cancellationToken).ConfigureAwait(false);
+        await SaveAsync(tx, loaded, actions, Before.Nothing, cancellationToken).ConfigureAwait(false);
         return View(loaded, oversight: false);
     }
 
@@ -245,6 +248,7 @@ public sealed class ApprovalWorkflowService(
             throw new ApprovalInstanceNotFoundException();
         }
 
+        var before = Before.Of(loaded);
         var now = Now();
         LoggedAction action;
         try
@@ -286,7 +290,7 @@ public sealed class ApprovalWorkflowService(
 
         List<(LoggedAction Action, long VersionAfter)> actions = [(action, loaded.Instance.Version)];
         await SupplyOpenedLevelsAsync(tx, loaded, actions, now, step, cancellationToken).ConfigureAwait(false);
-        await SaveAsync(tx, loaded, actions, cancellationToken).ConfigureAwait(false);
+        await SaveAsync(tx, loaded, actions, before, cancellationToken).ConfigureAwait(false);
         return View(loaded, oversight: needsPerson && await CanAsync(actor, WorkflowAuditActions.ReadAction, cancellationToken).ConfigureAwait(false));
     }
 
@@ -452,7 +456,7 @@ public sealed class ApprovalWorkflowService(
             && pair.First.StageId == pair.Second.StageId
             && (pair.First.Actor is { } actor ? actor.Value : null) == pair.Second.Actor);
 
-    private async Task SaveAsync(IDbContextTransaction tx, Loaded loaded, List<(LoggedAction Action, long VersionAfter)> actions, CancellationToken cancellationToken)
+    private async Task SaveAsync(IDbContextTransaction tx, Loaded loaded, List<(LoggedAction Action, long VersionAfter)> actions, Before before, CancellationToken cancellationToken)
     {
         var instance = loaded.Instance;
         var row = loaded.Row;
@@ -492,7 +496,11 @@ public sealed class ApprovalWorkflowService(
 
         // The inbox is rebuilt for this instance in the same transaction (DL-073b).
         await db.Tasks.Where(x => x.InstanceId == row.Id).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
-        db.Tasks.AddRange(TasksOf(loaded));
+        var tasks = TasksOf(loaded).ToList();
+        db.Tasks.AddRange(tasks);
+
+        // What other modules hear about, in the same transaction: it exists only if this is saved (DL-076).
+        db.Outbox.AddRange(EventsOf(loaded, before, tasks, sequence, actions[^1].Action.AtUtc).Select(OutboxMessageRow.From));
         try
         {
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -664,6 +672,58 @@ public sealed class ApprovalWorkflowService(
     };
 
     private static AuditPayloadField Field(string name, string value) => new(name, value, AuditFieldClass.Plain);
+
+    /// <summary>
+    /// The events an action caused (DL-076): started, people newly able to act on a level, authorised, closed. Each has an
+    /// idempotency key fixed by the instance, the last action's sequence and the event, so the same save can't give two.
+    /// </summary>
+    private static IEnumerable<MessageEnvelope> EventsOf(Loaded loaded, Before before, List<ApprovalTaskRow> tasks, int lastSequence, DateTimeOffset at)
+    {
+        var instance = loaded.Instance;
+        var id = instance.Binding.InstanceId;
+        var item = instance.Binding.RequestItemId;
+        var correlation = Activity.Current?.TraceId.ToHexString() ?? Guid.NewGuid().ToString("N");
+        var causation = string.Create(CultureInfo.InvariantCulture, $"workflow.action:{id:N}:{lastSequence}");
+
+        MessageEnvelope Envelope<T>(T message, string? key = null)
+            where T : IIntegrationEvent =>
+            MessageEnvelopes.Create(message, WorkflowEvents.Source, correlation, causation, $"{causation}:{T.MessageType}{key}", at);
+
+        if (before.State is null)
+        {
+            yield return Envelope(new ApprovalStarted(id, item, instance.Binding.Requester.Value, instance.Binding.Beneficiary.Value, instance.Version));
+        }
+
+        foreach (var opened in tasks.Where(t => !before.Tasks.Contains((t.StageId, t.Person))).GroupBy(t => t.StageId).OrderBy(g => g.First().Sequence))
+        {
+            var first = opened.First();
+            yield return Envelope(
+                new ApprovalTaskOpened(id, item, first.StageId, first.Sequence, first.Kind, [.. opened.Select(t => t.Person).Order(StringComparer.Ordinal)], first.DeadlineUtc, instance.Version),
+                string.Create(CultureInfo.InvariantCulture, $":{first.StageId:N}"));
+        }
+
+        if (!before.Authorized && instance.ProvisioningAuthorized)
+        {
+            yield return Envelope(new ApprovalAuthorized(id, item, lastSequence, instance.Version));
+        }
+
+        if (IsClosed(instance.State) && !(before.State is { } was && IsClosed(was)))
+        {
+            yield return Envelope(new ApprovalClosed(id, item, instance.State.ToString(), instance.ProvisioningAuthorized, instance.Version));
+        }
+    }
+
+    private static bool IsClosed(ApprovalState state) =>
+        state is ApprovalState.Approved or ApprovalState.Rejected or ApprovalState.Cancelled or ApprovalState.Withdrawn or ApprovalState.Returned;
+
+    /// <summary>What other modules already knew before an action: its state, whether it was authorised, who could act where.</summary>
+    private sealed record Before(ApprovalState? State, bool Authorized, HashSet<(Guid StageId, string Person)> Tasks)
+    {
+        public static Before Nothing { get; } = new(null, false, []);
+
+        public static Before Of(Loaded loaded) =>
+            new(loaded.Instance.State, loaded.Instance.ProvisioningAuthorized, [.. TasksOf(loaded).Select(t => (t.StageId, t.Person))]);
+    }
 
     /// <summary>A loaded instance: its summary row, the replayed engine, its route, and how much history was stored.</summary>
     private sealed record Loaded(ApprovalInstanceRow Row, ApprovalInstance Instance, IReadOnlyList<StageDefinition> Stages, int StoredHistory);

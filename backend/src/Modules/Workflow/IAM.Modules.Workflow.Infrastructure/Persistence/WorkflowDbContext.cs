@@ -28,6 +28,9 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
 
     public DbSet<ApprovalDamageRow> Damage => Set<ApprovalDamageRow>();
 
+    /// <summary>Events for other modules, written in each action's transaction (DL-076).</summary>
+    public DbSet<OutboxMessageRow> Outbox => Set<OutboxMessageRow>();
+
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         var instance = modelBuilder.Entity<ApprovalInstanceRow>();
@@ -69,6 +72,8 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
         damage.IsAppendOnly();
         damage.HasKey(x => x.InstanceId);
         damage.HasOne<ApprovalInstanceRow>().WithMany().HasForeignKey(x => x.InstanceId).OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.ConfigureOutbox("TR_OutboxMessage_Guarded");
     }
 }
 

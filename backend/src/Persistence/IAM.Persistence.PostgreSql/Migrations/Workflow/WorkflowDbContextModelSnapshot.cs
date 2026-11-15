@@ -23,6 +23,142 @@ namespace IAM.Persistence.PostgreSql.Migrations.Workflow
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("IAM.BuildingBlocks.Persistence.OutboxMessageRow", b =>
+                {
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<string>("CausationId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("causation_id")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("correlation_id")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("created_by");
+
+                    b.Property<DateTimeOffset?>("DispatchedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("dispatched_at_utc");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("idempotency_key")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("last_error")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("modified_at_utc");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("modified_by");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("next_attempt_at_utc");
+
+                    b.Property<DateTimeOffset>("OccurredAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("occurred_at_utc");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasMaxLength(65536)
+                        .HasColumnType("character varying(65536)")
+                        .HasColumnName("payload");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("schema_version");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("source")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("type")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("MessageId")
+                        .HasName("pk_outbox_message");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_outbox_message_idempotency_key");
+
+                    b.HasIndex("DispatchedAtUtc", "OccurredAtUtc")
+                        .HasDatabaseName("ix_outbox_message_dispatched_at_utc_occurred_at_utc");
+
+                    b.ToTable("outbox_message", "workflow", t =>
+                        {
+                            t.HasTrigger("tr_outbox_message_guarded");
+
+                            t.HasCheckConstraint("ck_outbox_message_causation_id_code", "\"causation_id\" <> '' AND \"causation_id\" = btrim(\"causation_id\")");
+
+                            t.HasCheckConstraint("ck_outbox_message_correlation_id_code", "\"correlation_id\" <> '' AND \"correlation_id\" = btrim(\"correlation_id\")");
+
+                            t.HasCheckConstraint("ck_outbox_message_idempotency_key_code", "\"idempotency_key\" <> '' AND \"idempotency_key\" = btrim(\"idempotency_key\")");
+
+                            t.HasCheckConstraint("ck_outbox_message_last_error_code", "\"last_error\" <> '' AND \"last_error\" = btrim(\"last_error\")");
+
+                            t.HasCheckConstraint("ck_outbox_message_source_code", "\"source\" <> '' AND \"source\" = btrim(\"source\")");
+
+                            t.HasCheckConstraint("ck_outbox_message_type_code", "\"type\" <> '' AND \"type\" = btrim(\"type\")");
+                        });
+                });
+
             modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalActionRow", b =>
                 {
                     b.Property<Guid>("InstanceId")

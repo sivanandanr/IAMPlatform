@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\..\..\BuildingBlocks\IAM.BuildingBlocks.Abstractions\IAM.BuildingBlocks.Abstractions.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\IAM.BuildingBlocks.Messaging\IAM.BuildingBlocks.Messaging.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\IAM.BuildingBlocks.Persistence\IAM.BuildingBlocks.Persistence.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\IAM.BuildingBlocks.Security\IAM.BuildingBlocks.Security.csproj" />
     <ProjectReference Include="..\..\Administration\IAM.Modules.Administration.Contracts\IAM.Modules.Administration.Contracts.csproj" />

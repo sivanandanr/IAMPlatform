@@ -23,6 +23,123 @@ namespace IAM.Persistence.SqlServer.Migrations.Workflow
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("IAM.BuildingBlocks.Persistence.OutboxMessageRow", b =>
+                {
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<string>("CausationId")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTimeOffset?>("DispatchedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<DateTimeOffset>("OccurredAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasMaxLength(65536)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("MessageId");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("DispatchedAtUtc", "OccurredAtUtc");
+
+                    b.ToTable("OutboxMessage", "workflow", t =>
+                        {
+                            t.HasTrigger("TR_OutboxMessage_Guarded");
+
+                            t.HasCheckConstraint("CK_OutboxMessage_CausationId_Code", "DATALENGTH([CausationId]) > 0 AND DATALENGTH([CausationId]) = DATALENGTH(LTRIM(RTRIM([CausationId])))");
+
+                            t.HasCheckConstraint("CK_OutboxMessage_CorrelationId_Code", "DATALENGTH([CorrelationId]) > 0 AND DATALENGTH([CorrelationId]) = DATALENGTH(LTRIM(RTRIM([CorrelationId])))");
+
+                            t.HasCheckConstraint("CK_OutboxMessage_IdempotencyKey_Code", "DATALENGTH([IdempotencyKey]) > 0 AND DATALENGTH([IdempotencyKey]) = DATALENGTH(LTRIM(RTRIM([IdempotencyKey])))");
+
+                            t.HasCheckConstraint("CK_OutboxMessage_LastError_Code", "DATALENGTH([LastError]) > 0 AND DATALENGTH([LastError]) = DATALENGTH(LTRIM(RTRIM([LastError])))");
+
+                            t.HasCheckConstraint("CK_OutboxMessage_Source_Code", "DATALENGTH([Source]) > 0 AND DATALENGTH([Source]) = DATALENGTH(LTRIM(RTRIM([Source])))");
+
+                            t.HasCheckConstraint("CK_OutboxMessage_Type_Code", "DATALENGTH([Type]) > 0 AND DATALENGTH([Type]) = DATALENGTH(LTRIM(RTRIM([Type])))");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("IAM.Modules.Workflow.Infrastructure.Persistence.ApprovalActionRow", b =>
                 {
                     b.Property<Guid>("InstanceId")

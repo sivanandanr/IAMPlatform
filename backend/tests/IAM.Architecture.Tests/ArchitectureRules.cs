@@ -169,6 +169,15 @@ public static class ArchitectureRules
             violations.AddRange(p.ProjectReferences.Select(r => $"{p.Name}: Abstractions may not reference other projects (found {r})."));
         }
 
+        // Application layers may use Messaging, so it carries no packages or frameworks and builds only on Abstractions (DL-076).
+        foreach (var p in projects.Where(p => p.Kind == ProjectKind.BuildingBlock && p.Name == "IAM.BuildingBlocks.Messaging"))
+        {
+            violations.AddRange(p.PackageReferences.Select(pkg => $"{p.Name}: Messaging may not reference packages (found {pkg})."));
+            violations.AddRange(p.FrameworkReferences.Select(fw => $"{p.Name}: Messaging may not reference frameworks (found {fw})."));
+            violations.AddRange(p.ProjectReferences.Where(r => r != "IAM.BuildingBlocks.Abstractions")
+                .Select(r => $"{p.Name}: Messaging may reference only Abstractions (found {r})."));
+        }
+
         return violations;
     }
 
