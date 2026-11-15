@@ -18,6 +18,7 @@
     <Project Path="src/Persistence/IAM.Persistence.SqlServer/IAM.Persistence.SqlServer.csproj" />
   </Folder>
   <Folder Name="/src/Connectors/">
+    <Project Path="src/Connectors/IAM.Connectors.ActiveDirectory.Mock/IAM.Connectors.ActiveDirectory.Mock.csproj" />
     <Project Path="src/Connectors/IAM.Connectors.Sdk/IAM.Connectors.Sdk.csproj" />
   </Folder>
   <Folder Name="/src/Host/">
