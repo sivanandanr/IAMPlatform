@@ -1,5 +1,5 @@
 # ADR-0007: Hybrid private connector workers
-Status: Proposed | Date: 2026-11-07 | Decision owners: Lead Solution Architect, Security Architect, Network/Infrastructure owner (named approvers TBD)
+Status: Accepted in part (connector SDK, stage 7 slice 1, DL-080; mock AD connector to follow) | Date: 2026-11-07 | Decision owners: Lead Solution Architect, Security Architect, Network/Infrastructure owner (named approvers TBD)
 
 Source: Blueprint v1.0 §1 (ADR 007), §4, §10; Spec v3.2 Module 2.1, §12.11; CLAUDE.md "Hybrid private connectors". Drafted by Claude Code (S1-01); not approved.
 
@@ -14,6 +14,8 @@ AD/LDAP, SAP RFC, databases and the broker must never be exposed to the internet
 ## Decision and rationale
 Option 1, with option 2 acceptable for targets already reachable privately. Connector SDK contract: capabilities, read-before-write, create/update/disable/delete, entitlement add/remove, verification, rate limits, health, reconciliation (blueprint §10). Phase 0 delivers SDK + **mock** AD connector only, clearly labelled as not production-ready (CLAUDE.md rule 10).
 
+**SDK — built (stage 7 slice 1, DL-080).** `IAM.Connectors.Sdk`: the action catalog (the spec's 15 actions as stored codes), capabilities, the operation and result model, and `ConnectorBase`, a shared pipeline that validates every operation and makes it safe to repeat (operation-id ledger, read-before-write, one operation per target at a time). Credentials travel only as vault references; destructive actions start off. `ConnectorContractTests` is the suite every connector must pass. Connectors may not reference modules or persistence (architecture rule).
+
 ## Security and privacy impact
 Allowlisted destinations, SSRF controls on configurable endpoints, timeouts, bounded payloads, secret references only, least-privilege service accounts, mTLS/workload identity.
 
@@ -27,7 +29,7 @@ Core of this ADR; traffic matrix to be produced in P0-017.
 Agents need lifecycle management (certificate rotation, version skew, health reporting).
 
 ## Tests / evidence
-Mock connector contract and idempotency tests (P0-011, Sprint 2). Evidence: none yet.
+Mock connector contract and idempotency tests (P0-011). Slice 1: `IAM.Connectors.Tests` (`SdkTests`, the contract suite against a minimal test connector), architecture rule `ConnectorsKnowNothingOfModulesOrDatabases`.
 
 ## Open questions and approvals
 - Network topology and data residency approval (blueprint §17).
