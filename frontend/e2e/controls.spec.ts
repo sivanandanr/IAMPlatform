@@ -113,6 +113,8 @@ test.describe('controls page in a real browser', () => {
     // Calendar with a selected date.
     const start = page.getByRole('textbox', { name: 'Start date' });
     await page.getByRole('button', { name: 'Choose date' }).first().click();
+    // Focus moves to a day after the calendar renders: keys pressed before that would go nowhere.
+    await expect(page.locator('.iam-calendar [tabindex="0"]')).toBeFocused();
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('Enter');
     await page.getByRole('button', { name: 'Choose date' }).first().click();
@@ -193,6 +195,7 @@ test.describe('controls page in a real browser', () => {
     await page.getByRole('button', { name: 'Choose date' }).first().click();
     const calendar = page.getByRole('dialog');
     await expect(calendar).toBeVisible();
+    await expect(page.locator('.iam-calendar [tabindex="0"]')).toBeFocused();
     // The day after the one the calendar marks as today (read from the page, so midnight cannot split them).
     const todayLabel = await page
       .locator('.iam-calendar [aria-current=date]')
