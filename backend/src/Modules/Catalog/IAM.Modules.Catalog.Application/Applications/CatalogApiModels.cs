@@ -82,10 +82,12 @@ public static class CatalogApi
                 return refused.Refusal switch
                 {
                     ApplicationRefusal.NotAllowed or ApplicationRefusal.MakerCannotDecide or ApplicationRefusal.OwnerCannotDecide
-                        or ApplicationRefusal.HolderCannotDecide or ApplicationRefusal.NotMaker or ApplicationRefusal.MakerNoLongerAllowed => CatalogFailureKind.Forbidden,
+                        or ApplicationRefusal.HolderCannotDecide or ApplicationRefusal.NotMaker or ApplicationRefusal.MakerNoLongerAllowed
+                        or ApplicationRefusal.NotOwner or ApplicationRefusal.AcceptorCannotDecide => CatalogFailureKind.Forbidden,
                     ApplicationRefusal.NotProposed or ApplicationRefusal.AlreadyPending or ApplicationRefusal.DraftExists
                         or ApplicationRefusal.NoDraft or ApplicationRefusal.DraftChanged
-                        or ApplicationRefusal.RoleTypeExists => CatalogFailureKind.WrongState,
+                        or ApplicationRefusal.RoleTypeExists or ApplicationRefusal.OwnerNotAccepted or ApplicationRefusal.ApplicationNotActive
+                        or ApplicationRefusal.NothingToAccept => CatalogFailureKind.WrongState,
                     ApplicationRefusal.InvalidRecord or null => CatalogFailureKind.Unavailable,
                     _ => CatalogFailureKind.Invalid,
                 };

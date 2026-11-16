@@ -26,7 +26,9 @@ public sealed class PermissionCheckTests
     [Fact]
     public void OnlyTheReviewedActionsBelongToEveryone() =>
         // DL-073: anyone may look at and act on approvals that concern them; the workflow service decides which those are.
-        ActionCatalog.EveryoneActions.Order(StringComparer.Ordinal).ShouldBe([ActionCatalog.OwnPermissionsRead, ActionCatalog.SelfRead, ActionCatalog.ApprovalsAct, ActionCatalog.InstancesView]);
+        // DL-087: anyone may accept ownership of an entitlement; the catalog service checks they are the owner named.
+        ActionCatalog.EveryoneActions.Order(StringComparer.Ordinal).ShouldBe(
+            [ActionCatalog.OwnPermissionsRead, ActionCatalog.EntitlementOwnershipAccept, ActionCatalog.SelfRead, ActionCatalog.ApprovalsAct, ActionCatalog.InstancesView]);
 
     [Fact]
     public async Task UnknownActionsAndEmptySubjectsAreRefusedWithoutReadingTheStore()

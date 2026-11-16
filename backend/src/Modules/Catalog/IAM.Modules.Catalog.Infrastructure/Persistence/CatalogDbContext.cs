@@ -1,12 +1,14 @@
 using IAM.BuildingBlocks.Persistence;
 using IAM.Modules.Catalog.Domain.Applications;
+using IAM.Modules.Catalog.Domain.Entitlements;
 using Microsoft.EntityFrameworkCore;
 
 namespace IAM.Modules.Catalog.Infrastructure.Persistence;
 
 /// <summary>
 /// Catalog module DbContext, schema <c>catalog</c> (ADR-0011, ADR-0017). Stage 3 adds applications, their numbered settings
-/// versions (owner and application roles), the requests that activate them, and application role types (DL-066).
+/// versions (owner and application roles), the requests that activate them, and application role types (DL-066). Stage 8
+/// adds entitlements with their numbered versions and the requests that activate them (DL-087).
 /// Immutability and approval rules are also enforced by hand-written triggers and CHECKs in the ApplicationCatalog
 /// migrations; the trigger names are declared here so EF Core does not use OUTPUT without INTO on SQL Server.
 /// </summary>
@@ -23,6 +25,12 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
     public DbSet<ApplicationSettingsRequestRow> SettingsRequests => Set<ApplicationSettingsRequestRow>();
 
     public DbSet<ApplicationRoleType> RoleTypes => Set<ApplicationRoleType>();
+
+    public DbSet<Entitlement> Entitlements => Set<Entitlement>();
+
+    public DbSet<EntitlementVersion> EntitlementVersions => Set<EntitlementVersion>();
+
+    public DbSet<EntitlementChangeRequestRow> EntitlementRequests => Set<EntitlementChangeRequestRow>();
 
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
@@ -85,6 +93,60 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         type.Ignore(x => x.HoldsCode);
 
         // Codes are looked up through the filtered unique index on live codes (hand-written in the ApplicationCatalog migrations).
+
+        ConfigureEntitlements(modelBuilder);
+    }
+
+    private static void ConfigureEntitlements(ModelBuilder modelBuilder)
+    {
+        var entitlement = modelBuilder.Entity<Entitlement>();
+        entitlement.ToTable("Entitlement", t => t.HasTrigger("TR_Entitlement_KeyImmutable"));
+        entitlement.HasKey(x => x.Id);
+        entitlement.Property(x => x.Key).IsRequired().IsCode(CatalogRules.KeyMaxLength);
+        entitlement.HasIndex(x => new { x.ApplicationId, x.Key }).IsUnique();
+        entitlement.Property(x => x.DisplayName).IsRequired().HasMaxLength(CatalogRules.DisplayNameMaxLength);
+        entitlement.HasOne<Domain.Applications.Application>().WithMany().HasForeignKey(x => x.ApplicationId).OnDelete(DeleteBehavior.Restrict);
+        entitlement.Ignore(x => x.CurrentDraft);
+        entitlement.Ignore(x => x.CurrentActive);
+        entitlement.Ignore(x => x.DraftNeedsAcceptance);
+        entitlement.HasMany(x => x.Versions).WithOne().HasForeignKey(x => x.EntitlementId).OnDelete(DeleteBehavior.Restrict);
+        entitlement.Navigation(x => x.Versions).UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        var version = modelBuilder.Entity<EntitlementVersion>();
+        version.ToTable("EntitlementVersion", t => t.HasTrigger("TR_EntitlementVersion_Immutable"));
+        version.HasKey(x => x.Id);
+        version.HasIndex(x => new { x.EntitlementId, x.VersionNumber }).IsUnique();
+        version.Property(x => x.State).HasConversion<string>().IsRequired().IsCode(16);
+        version.Property(x => x.Type).HasConversion<string>().IsRequired().IsCode(32);
+        version.Property(x => x.TechnicalName).IsRequired().HasMaxLength(EntitlementRules.TechnicalNameMaxLength);
+        version.Property(x => x.Description).IsRequired().HasMaxLength(EntitlementRules.DescriptionMaxLength);
+        version.Property(x => x.OwnerKind).HasConversion<string>().IsRequired().IsCode(16);
+        version.Property(x => x.OwnerId).IsRequired().IsCode(AuditColumns.ActorMaxLength);
+        version.Property(x => x.EscalationWorkgroup).IsRequired().IsCode(CatalogRules.KeyMaxLength);
+        version.Property(x => x.Risk).HasConversion<string>().IsRequired().IsCode(16);
+        version.Property(x => x.AllowedAccountClasses).IsRequired().IsCode(64);
+        version.Property(x => x.AccessForMode).HasConversion<string>().IsRequired().IsCode(32);
+        version.Property(x => x.ContentHash).IsRequired().IsCode(CatalogRules.HashLength).IsFixedLength();
+        version.Property(x => x.EditedBy).IsRequired().IsCode(AuditColumns.ActorMaxLength);
+        version.Property(x => x.OwnerAcceptedBy).IsCode(AuditColumns.ActorMaxLength);
+        version.Ignore(x => x.IsAccepted);
+        version.HasOne<EntitlementChangeRequestRow>().WithMany().HasForeignKey(x => x.ActivatedByRequestId).OnDelete(DeleteBehavior.Restrict);
+
+        var request = modelBuilder.Entity<EntitlementChangeRequestRow>();
+        request.ToTable("EntitlementChangeRequest", t => t.HasTrigger("TR_EntitlementChangeRequest_DecidedImmutable"));
+        request.HasKey(x => x.Id);
+        request.Property(x => x.ContentHash).IsRequired().IsCode(CatalogRules.HashLength).IsFixedLength();
+        request.Property(x => x.OwnerKind).IsRequired().IsCode(16);
+        request.Property(x => x.OwnerId).IsRequired().IsCode(AuditColumns.ActorMaxLength);
+        request.Property(x => x.AcceptedBy).IsCode(AuditColumns.ActorMaxLength);
+        request.Property(x => x.Maker).IsRequired().IsCode(AuditColumns.ActorMaxLength);
+        request.Property(x => x.Reason).IsRequired().HasMaxLength(1000);
+        request.Property(x => x.State).IsRequired().IsCode(16);
+        request.Property(x => x.Checker).IsCode(AuditColumns.ActorMaxLength);
+        request.Property(x => x.DecisionReason).HasMaxLength(1000);
+        request.HasOne<Entitlement>().WithMany().HasForeignKey(x => x.EntitlementId).OnDelete(DeleteBehavior.Restrict);
+        request.HasOne<EntitlementVersion>().WithMany().HasForeignKey(x => x.VersionId).OnDelete(DeleteBehavior.Restrict);
+        request.HasIndex(x => new { x.State, x.ProposedAtUtc });
     }
 }
 
@@ -102,6 +164,40 @@ public sealed class ApplicationSettingsRequestRow
     public required string ContentHash { get; init; }
 
     public required string ProposedOwner { get; init; }
+
+    public required string Maker { get; init; }
+
+    public required string Reason { get; init; }
+
+    public required DateTimeOffset ProposedAtUtc { get; init; }
+
+    public required string State { get; set; }
+
+    public string? Checker { get; set; }
+
+    public string? DecisionReason { get; set; }
+
+    public DateTimeOffset? DecidedAtUtc { get; set; }
+}
+
+/// <summary>A stored entitlement change request (DL-087). The domain object is rebuilt from it with <c>EntitlementChangeRequest.Restore</c>.</summary>
+public sealed class EntitlementChangeRequestRow
+{
+    public required Guid Id { get; init; }
+
+    public required Guid EntitlementId { get; init; }
+
+    public required Guid VersionId { get; init; }
+
+    public required int VersionNumber { get; init; }
+
+    public required string ContentHash { get; init; }
+
+    public required string OwnerKind { get; init; }
+
+    public required string OwnerId { get; init; }
+
+    public string? AcceptedBy { get; init; }
 
     public required string Maker { get; init; }
 

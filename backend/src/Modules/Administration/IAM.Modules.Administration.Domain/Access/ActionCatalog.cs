@@ -29,6 +29,10 @@ public static class ActionCatalog
     public const string WorkgroupsRead = "organization.workgroups.read";
     public const string WorkgroupsManage = "organization.workgroups.manage";
     public const string WorkgroupsApprove = "organization.workgroups.approve";
+    public const string EntitlementsRead = "catalog.entitlements.read";
+    public const string EntitlementsManage = "catalog.entitlements.manage";
+    public const string EntitlementsApprove = "catalog.entitlements.approve";
+    public const string EntitlementOwnershipAccept = "catalog.entitlements.accept-ownership";
 
     public static IReadOnlyList<ActionDefinition> All { get; } = Array.AsReadOnly(
     [
@@ -52,6 +56,10 @@ public static class ActionCatalog
         new ActionDefinition(WorkgroupsRead, "See workgroups, their members and change requests", Everyone: false),
         new ActionDefinition(WorkgroupsManage, "Register and rename workgroups, edit draft member lists and propose them", Everyone: false),
         new ActionDefinition(WorkgroupsApprove, "Approve or reject someone else's workgroup member change", Everyone: false),
+        new ActionDefinition(EntitlementsRead, "See entitlements, their owners, versions and change requests (DL-087)", Everyone: false),
+        new ActionDefinition(EntitlementsManage, "Register and rename entitlements, edit drafts and propose them (DL-087)", Everyone: false),
+        new ActionDefinition(EntitlementsApprove, "Approve or reject someone else's entitlement change (DL-087)", Everyone: false),
+        new ActionDefinition(EntitlementOwnershipAccept, "Accept ownership of an entitlement you are named owner of (DL-087)", Everyone: true),
     ]);
 
     private static readonly Dictionary<string, ActionDefinition> ById = All.ToDictionary(a => a.Id, StringComparer.Ordinal);
@@ -75,6 +83,7 @@ public static class ActionCatalog
         (AttributesManage, AttributesApprove),
         (ApplicationsManage, ApplicationsApprove),
         (WorkgroupsManage, WorkgroupsApprove),
+        (EntitlementsManage, EntitlementsApprove),
     ];
 }
 
