@@ -1,0 +1,33 @@
+namespace IAM.Modules.Account.Contracts;
+
+/// <summary>
+/// An account as other modules see it (DL-089). Enum-like fields carry their stable names (<c>Primary</c>, <c>Active</c>),
+/// so this contract does not depend on the Account module's domain types.
+/// </summary>
+public sealed record AccountRecord(Guid Id, Guid ApplicationId, string Type, string Name, string? TargetId, string Owner, string Status, bool Verified)
+{
+    /// <summary>The account id only: logging this object must not expose a person or a login.</summary>
+    public override string ToString() => $"{nameof(AccountRecord)} {Id}";
+}
+
+/// <summary>Read-only view of recorded accounts for other modules (Request, Provisioning; ADR-0001: no cross-module table access).</summary>
+public interface IAccountDirectory
+{
+    Task<AccountRecord?> FindAsync(Guid accountId, CancellationToken cancellationToken);
+
+    /// <summary>The person's live (not closed) accounts in the application, at most 100.</summary>
+    Task<IReadOnlyList<AccountRecord>> ForOwnerAsync(Guid applicationId, string owner, CancellationToken cancellationToken);
+}
+
+/// <summary>A proposed account name with the naming rule version it came from (evidence), or why there is none.</summary>
+public sealed record ProposedAccountName(string? Name, string? Failure, int? RuleVersionNumber, string? RuleContentHash);
+
+/// <summary>
+/// Proposes the name of a new Primary or Secondary account from the application's active naming rule (DL-089c). The caller
+/// passes the attribute values it holds (keys from the attribute catalog). A missing value or an invalid result fails closed;
+/// so does a name another live account already has (DL-086).
+/// </summary>
+public interface IAccountNaming
+{
+    Task<ProposedAccountName> ProposeAsync(Guid applicationId, string accountType, IReadOnlyDictionary<string, string?> attributes, CancellationToken cancellationToken);
+}

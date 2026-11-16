@@ -33,6 +33,9 @@ public static class ActionCatalog
     public const string EntitlementsManage = "catalog.entitlements.manage";
     public const string EntitlementsApprove = "catalog.entitlements.approve";
     public const string EntitlementOwnershipAccept = "catalog.entitlements.accept-ownership";
+    public const string AccountsRead = "account.accounts.read";
+    public const string AccountsManage = "account.accounts.manage";
+    public const string AccountsApprove = "account.accounts.approve";
 
     public static IReadOnlyList<ActionDefinition> All { get; } = Array.AsReadOnly(
     [
@@ -60,6 +63,9 @@ public static class ActionCatalog
         new ActionDefinition(EntitlementsManage, "Register and rename entitlements, edit drafts and propose them (DL-087)", Everyone: false),
         new ActionDefinition(EntitlementsApprove, "Approve or reject someone else's entitlement change (DL-087)", Everyone: false),
         new ActionDefinition(EntitlementOwnershipAccept, "Accept ownership of an entitlement you are named owner of (DL-087)", Everyone: true),
+        new ActionDefinition(AccountsRead, "See accounts, link requests and naming rules (DL-089)", Everyone: false),
+        new ActionDefinition(AccountsManage, "Propose linking existing accounts and edit and propose naming rules (DL-089)", Everyone: false),
+        new ActionDefinition(AccountsApprove, "Approve or reject someone else's account link or naming rule (DL-089)", Everyone: false),
     ]);
 
     private static readonly Dictionary<string, ActionDefinition> ById = All.ToDictionary(a => a.Id, StringComparer.Ordinal);
@@ -84,6 +90,7 @@ public static class ActionCatalog
         (ApplicationsManage, ApplicationsApprove),
         (WorkgroupsManage, WorkgroupsApprove),
         (EntitlementsManage, EntitlementsApprove),
+        (AccountsManage, AccountsApprove),
     ];
 }
 

@@ -39,6 +39,7 @@ Template: [ADR_TEMPLATE.md](ADR_TEMPLATE.md). Open questions are tracked in [../
 | [0026](ADR-0026-iam-workgroups.md) | IAM workgroups — internal approval groups managed with a second person | Proposed (DL-068 decided); sign-off pending | Stage 4 |
 | [0027](ADR-0027-approver-resolution.md) | Approver resolution when a level opens | Proposed (DL-069 decided); sign-off pending | Stage 4 |
 | [0028](ADR-0028-workflow-storage.md) | Workflow storage as a replayed action log, and its API | Proposed (DL-072, DL-073 decided); sign-off pending | Stage 5 |
+| [0029](ADR-0029-accounts-and-naming-rules.md) | Accounts, linking existing accounts, and naming rules | Proposed (DL-089 decided); sign-off pending | Stage 8 |
 
 ## Approval record
 | ADR | Approver (name, role) | Date | Decision |

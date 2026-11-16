@@ -1,3 +1,4 @@
+using IAM.Modules.Account.Infrastructure.Persistence;
 using IAM.Modules.Administration.Infrastructure.Persistence;
 using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
@@ -83,5 +84,15 @@ internal sealed class NotificationDesignTimeFactory : IDesignTimeDbContextFactor
         var options = new DbContextOptionsBuilder<NotificationDbContext>();
         new SqlServerDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, NotificationDbContext.SchemaName);
         return new NotificationDbContext(options.Options);
+    }
+}
+
+internal sealed class AccountDesignTimeFactory : IDesignTimeDbContextFactory<AccountDbContext>
+{
+    public AccountDbContext CreateDbContext(string[] args)
+    {
+        var options = new DbContextOptionsBuilder<AccountDbContext>();
+        new SqlServerDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, AccountDbContext.SchemaName);
+        return new AccountDbContext(options.Options);
     }
 }
