@@ -360,6 +360,276 @@ namespace IAM.Persistence.PostgreSql.Migrations.Catalog
                         });
                 });
 
+            modelBuilder.Entity("IAM.Modules.Catalog.Domain.Entitlements.Entitlement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ApplicationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("application_id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("display_name");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("key")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("modified_at_utc");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("modified_by");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id")
+                        .HasName("pk_entitlement");
+
+                    b.HasIndex("ApplicationId", "Key")
+                        .IsUnique()
+                        .HasDatabaseName("ix_entitlement_application_id_key");
+
+                    b.ToTable("entitlement", "catalog", t =>
+                        {
+                            t.HasTrigger("tr_entitlement_key_immutable");
+
+                            t.HasCheckConstraint("ck_entitlement_key_code", "\"key\" <> '' AND \"key\" = btrim(\"key\")");
+                        });
+                });
+
+            modelBuilder.Entity("IAM.Modules.Catalog.Domain.Entitlements.EntitlementVersion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int?>("AccessForDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("access_for_days");
+
+                    b.Property<int?>("AccessForDefaultDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("access_for_default_days");
+
+                    b.Property<int?>("AccessForMaxDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("access_for_max_days");
+
+                    b.Property<string>("AccessForMode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("access_for_mode")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<Guid?>("ActivatedByRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("activated_by_request_id");
+
+                    b.Property<string>("AllowedAccountClasses")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("allowed_account_classes")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .HasColumnName("content_hash")
+                        .IsFixedLength()
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("description");
+
+                    b.Property<string>("EditedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("edited_by")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<Guid>("EntitlementId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("entitlement_id");
+
+                    b.Property<string>("EscalationWorkgroup")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("escalation_workgroup")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("modified_at_utc");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("modified_by");
+
+                    b.Property<DateTimeOffset?>("OwnerAcceptedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("owner_accepted_at_utc");
+
+                    b.Property<string>("OwnerAcceptedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("owner_accepted_by")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("owner_id")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("OwnerKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("owner_kind")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<bool>("Privileged")
+                        .HasColumnType("boolean")
+                        .HasColumnName("privileged");
+
+                    b.Property<string>("Risk")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("risk")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("state")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("TechnicalName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("technical_name");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("type")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("version_number");
+
+                    b.HasKey("Id")
+                        .HasName("pk_entitlement_version");
+
+                    b.HasIndex("ActivatedByRequestId")
+                        .HasDatabaseName("ix_entitlement_version_activated_by_request_id");
+
+                    b.HasIndex("EntitlementId", "VersionNumber")
+                        .IsUnique()
+                        .HasDatabaseName("ix_entitlement_version_entitlement_id_version_number");
+
+                    b.ToTable("entitlement_version", "catalog", t =>
+                        {
+                            t.HasTrigger("tr_entitlement_version_immutable");
+
+                            t.HasCheckConstraint("ck_entitlement_version_access_for_mode_code", "\"access_for_mode\" <> '' AND \"access_for_mode\" = btrim(\"access_for_mode\")");
+
+                            t.HasCheckConstraint("ck_entitlement_version_allowed_account_classes_code", "\"allowed_account_classes\" <> '' AND \"allowed_account_classes\" = btrim(\"allowed_account_classes\")");
+
+                            t.HasCheckConstraint("ck_entitlement_version_content_hash_code", "\"content_hash\" <> '' AND \"content_hash\" = btrim(\"content_hash\")");
+
+                            t.HasCheckConstraint("ck_entitlement_version_edited_by_code", "\"edited_by\" <> '' AND \"edited_by\" = btrim(\"edited_by\")");
+
+                            t.HasCheckConstraint("ck_entitlement_version_escalation_workgroup_code", "\"escalation_workgroup\" <> '' AND \"escalation_workgroup\" = btrim(\"escalation_workgroup\")");
+
+                            t.HasCheckConstraint("ck_entitlement_version_owner_accepted_by_code", "\"owner_accepted_by\" <> '' AND \"owner_accepted_by\" = btrim(\"owner_accepted_by\")");
+
+                            t.HasCheckConstraint("ck_entitlement_version_owner_id_code", "\"owner_id\" <> '' AND \"owner_id\" = btrim(\"owner_id\")");
+
+                            t.HasCheckConstraint("ck_entitlement_version_owner_kind_code", "\"owner_kind\" <> '' AND \"owner_kind\" = btrim(\"owner_kind\")");
+
+                            t.HasCheckConstraint("ck_entitlement_version_risk_code", "\"risk\" <> '' AND \"risk\" = btrim(\"risk\")");
+
+                            t.HasCheckConstraint("ck_entitlement_version_state_code", "\"state\" <> '' AND \"state\" = btrim(\"state\")");
+
+                            t.HasCheckConstraint("ck_entitlement_version_type_code", "\"type\" <> '' AND \"type\" = btrim(\"type\")");
+                        });
+                });
+
             modelBuilder.Entity("IAM.Modules.Catalog.Infrastructure.Persistence.ApplicationSettingsRequestRow", b =>
                 {
                     b.Property<Guid>("Id")
@@ -494,6 +764,159 @@ namespace IAM.Persistence.PostgreSql.Migrations.Catalog
                         });
                 });
 
+            modelBuilder.Entity("IAM.Modules.Catalog.Infrastructure.Persistence.EntitlementChangeRequestRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AcceptedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("accepted_by")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("Checker")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("checker")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .HasColumnName("content_hash")
+                        .IsFixedLength()
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("created_by");
+
+                    b.Property<DateTimeOffset?>("DecidedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("decided_at_utc");
+
+                    b.Property<string>("DecisionReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("decision_reason");
+
+                    b.Property<Guid>("EntitlementId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("entitlement_id");
+
+                    b.Property<string>("Maker")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("maker")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("modified_at_utc");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("modified_by");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("owner_id")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("OwnerKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("owner_kind")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ProposedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("proposed_at_utc");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("reason");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("state")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.Property<Guid>("VersionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("version_id");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("version_number");
+
+                    b.HasKey("Id")
+                        .HasName("pk_entitlement_change_request");
+
+                    b.HasIndex("EntitlementId")
+                        .HasDatabaseName("ix_entitlement_change_request_entitlement_id");
+
+                    b.HasIndex("VersionId")
+                        .HasDatabaseName("ix_entitlement_change_request_version_id");
+
+                    b.HasIndex("State", "ProposedAtUtc")
+                        .HasDatabaseName("ix_entitlement_change_request_state_proposed_at_utc");
+
+                    b.ToTable("entitlement_change_request", "catalog", t =>
+                        {
+                            t.HasTrigger("tr_entitlement_change_request_decided_immutable");
+
+                            t.HasCheckConstraint("ck_entitlement_change_request_accepted_by_code", "\"accepted_by\" <> '' AND \"accepted_by\" = btrim(\"accepted_by\")");
+
+                            t.HasCheckConstraint("ck_entitlement_change_request_checker_code", "\"checker\" <> '' AND \"checker\" = btrim(\"checker\")");
+
+                            t.HasCheckConstraint("ck_entitlement_change_request_content_hash_code", "\"content_hash\" <> '' AND \"content_hash\" = btrim(\"content_hash\")");
+
+                            t.HasCheckConstraint("ck_entitlement_change_request_maker_code", "\"maker\" <> '' AND \"maker\" = btrim(\"maker\")");
+
+                            t.HasCheckConstraint("ck_entitlement_change_request_owner_id_code", "\"owner_id\" <> '' AND \"owner_id\" = btrim(\"owner_id\")");
+
+                            t.HasCheckConstraint("ck_entitlement_change_request_owner_kind_code", "\"owner_kind\" <> '' AND \"owner_kind\" = btrim(\"owner_kind\")");
+
+                            t.HasCheckConstraint("ck_entitlement_change_request_state_code", "\"state\" <> '' AND \"state\" = btrim(\"state\")");
+                        });
+                });
+
             modelBuilder.Entity("IAM.Modules.Catalog.Domain.Applications.ApplicationSettingsRole", b =>
                 {
                     b.HasOne("IAM.Modules.Catalog.Domain.Applications.ApplicationRoleType", null)
@@ -527,6 +950,32 @@ namespace IAM.Persistence.PostgreSql.Migrations.Catalog
                         .HasConstraintName("fk_application_settings_version_application_application_id");
                 });
 
+            modelBuilder.Entity("IAM.Modules.Catalog.Domain.Entitlements.Entitlement", b =>
+                {
+                    b.HasOne("IAM.Modules.Catalog.Domain.Applications.Application", null)
+                        .WithMany()
+                        .HasForeignKey("ApplicationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_entitlement_application_application_id");
+                });
+
+            modelBuilder.Entity("IAM.Modules.Catalog.Domain.Entitlements.EntitlementVersion", b =>
+                {
+                    b.HasOne("IAM.Modules.Catalog.Infrastructure.Persistence.EntitlementChangeRequestRow", null)
+                        .WithMany()
+                        .HasForeignKey("ActivatedByRequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_entitlement_version_entitlement_change_request_activated_by_r~");
+
+                    b.HasOne("IAM.Modules.Catalog.Domain.Entitlements.Entitlement", null)
+                        .WithMany("Versions")
+                        .HasForeignKey("EntitlementId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_entitlement_version_entitlement_entitlement_id");
+                });
+
             modelBuilder.Entity("IAM.Modules.Catalog.Infrastructure.Persistence.ApplicationSettingsRequestRow", b =>
                 {
                     b.HasOne("IAM.Modules.Catalog.Domain.Applications.Application", null)
@@ -544,6 +993,23 @@ namespace IAM.Persistence.PostgreSql.Migrations.Catalog
                         .HasConstraintName("fk_application_settings_request_application_settings_version_s~");
                 });
 
+            modelBuilder.Entity("IAM.Modules.Catalog.Infrastructure.Persistence.EntitlementChangeRequestRow", b =>
+                {
+                    b.HasOne("IAM.Modules.Catalog.Domain.Entitlements.Entitlement", null)
+                        .WithMany()
+                        .HasForeignKey("EntitlementId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_entitlement_change_request_entitlement_entitlement_id");
+
+                    b.HasOne("IAM.Modules.Catalog.Domain.Entitlements.EntitlementVersion", null)
+                        .WithMany()
+                        .HasForeignKey("VersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_entitlement_change_request_entitlement_version_version_id");
+                });
+
             modelBuilder.Entity("IAM.Modules.Catalog.Domain.Applications.Application", b =>
                 {
                     b.Navigation("Versions");
@@ -552,6 +1018,11 @@ namespace IAM.Persistence.PostgreSql.Migrations.Catalog
             modelBuilder.Entity("IAM.Modules.Catalog.Domain.Applications.ApplicationSettingsVersion", b =>
                 {
                     b.Navigation("Roles");
+                });
+
+            modelBuilder.Entity("IAM.Modules.Catalog.Domain.Entitlements.Entitlement", b =>
+                {
+                    b.Navigation("Versions");
                 });
 #pragma warning restore 612, 618
         }

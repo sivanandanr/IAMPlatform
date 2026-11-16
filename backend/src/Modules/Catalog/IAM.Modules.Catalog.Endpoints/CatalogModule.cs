@@ -26,6 +26,11 @@ public static class CatalogModule
         services.AddSingleton<FluentValidation.IValidator<CatalogReasonBody>, CatalogReasonBodyValidator>();
         services.AddSingleton<FluentValidation.IValidator<ApproveSettingsBody>, ApproveSettingsBodyValidator>();
         services.AddSingleton<FluentValidation.IValidator<ProposeRoleTypeBody>, ProposeRoleTypeBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<RegisterEntitlementBody>, RegisterEntitlementBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<RenameEntitlementBody>, RenameEntitlementBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<UpdateEntitlementDraftBody>, UpdateEntitlementDraftBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<NewEntitlementDraftBody>, NewEntitlementDraftBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<AcceptOwnershipBody>, AcceptOwnershipBodyValidator>();
         return services;
     }
 
@@ -35,6 +40,9 @@ public static class CatalogModule
 
         // DL-066: the application catalog, with activation and owner or role changes decided by a second person.
         ApplicationCatalogEndpoints.Map(endpoints);
+
+        // DL-087: entitlements, activated by a second person after a new owner accepts.
+        EntitlementCatalogEndpoints.Map(endpoints);
         return endpoints;
     }
 }

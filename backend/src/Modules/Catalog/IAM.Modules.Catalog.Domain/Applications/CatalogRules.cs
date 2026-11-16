@@ -62,6 +62,33 @@ public enum ApplicationRefusal
 
     /// <summary>The checker is named as a person holding a role in the settings they would decide (DL-067a).</summary>
     HolderCannotDecide = 17,
+
+    /// <summary>Privileged access can never be placed on a Primary account (spec v3.2 §2.5).</summary>
+    PrivilegedOnPrimary = 18,
+
+    /// <summary>A Secondary account is only for privileged access (spec v3.2 §3.1).</summary>
+    SecondaryOnlyForPrivileged = 19,
+
+    /// <summary>Privileged access must always have an end date (spec v3.2 §6.4).</summary>
+    PrivilegedNeedsEndDate = 20,
+
+    /// <summary>A new owner hasn't accepted this exact draft yet (spec v3.2 §6.3, DL-087b).</summary>
+    OwnerNotAccepted = 21,
+
+    /// <summary>Only the named owner, or an active member of the owning workgroup, can accept ownership (DL-087b).</summary>
+    NotOwner = 22,
+
+    /// <summary>The person who accepted ownership can't also be the second person (DL-087b).</summary>
+    AcceptorCannotDecide = 23,
+
+    /// <summary>The entitlement's application isn't active yet (DL-087).</summary>
+    ApplicationNotActive = 24,
+
+    /// <summary>Another active entitlement of the application already has this technical name (DL-087).</summary>
+    TechnicalNameInUse = 25,
+
+    /// <summary>The draft names the same owner as the active version, so there is nothing to accept (DL-087b).</summary>
+    NothingToAccept = 26,
 }
 
 /// <summary>A catalog change was refused by a rule (see <see cref="ApplicationRefusal"/>).</summary>

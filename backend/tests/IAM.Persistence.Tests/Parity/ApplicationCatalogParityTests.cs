@@ -49,18 +49,19 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
     [Fact]
     public async Task TheMigrationAppliesOnceAndSeedsTheBuiltInRoleTypes()
     {
-        db.CatalogFirstRunApplied.Count.ShouldBe(3);
+        db.CatalogFirstRunApplied.Count.ShouldBe(4);
         db.CatalogFirstRunApplied[0].ShouldEndWith("_ApplicationCatalog");
         db.CatalogFirstRunApplied[1].ShouldEndWith("_ApplicationCatalogHardening");
         db.CatalogFirstRunApplied[2].ShouldEndWith("_GroupHoldersAreWorkgroups");
+        db.CatalogFirstRunApplied[3].ShouldEndWith("_Entitlements");
         db.CatalogSecondRunPending.ShouldBeEmpty();
 
         var tables = IsSqlServer
             ? "SELECT STRING_AGG(TABLE_NAME, ',') FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'catalog'"
             : "SELECT string_agg(table_name, ',') FROM information_schema.tables WHERE table_schema = 'catalog'";
         string[] expected = IsSqlServer
-            ? ["Application", "ApplicationRoleType", "ApplicationSettingsRequest", "ApplicationSettingsRole", "ApplicationSettingsVersion", "__EFMigrationsHistory"]
-            : ["__ef_migrations_history", "application", "application_role_type", "application_settings_request", "application_settings_role", "application_settings_version"];
+            ? ["Application", "ApplicationRoleType", "ApplicationSettingsRequest", "ApplicationSettingsRole", "ApplicationSettingsVersion", "Entitlement", "EntitlementChangeRequest", "EntitlementVersion", "__EFMigrationsHistory"]
+            : ["__ef_migrations_history", "application", "application_role_type", "application_settings_request", "application_settings_role", "application_settings_version", "entitlement", "entitlement_change_request", "entitlement_version"];
         ((string)(await db.ScalarAsync(db.MigratorConnectionString, tables, Ct))!).Split(',').Order(StringComparer.Ordinal).ShouldBe(expected.Order(StringComparer.Ordinal).ToArray());
 
         await using var scope = Service();

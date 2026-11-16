@@ -27,4 +27,8 @@ public static class AccessActions
     public const string WorkgroupsRead = "organization.workgroups.read";
     public const string WorkgroupsManage = "organization.workgroups.manage";
     public const string WorkgroupsApprove = "organization.workgroups.approve";
+    public const string EntitlementsRead = "catalog.entitlements.read";
+    public const string EntitlementsManage = "catalog.entitlements.manage";
+    public const string EntitlementsApprove = "catalog.entitlements.approve";
+    public const string EntitlementOwnershipAccept = "catalog.entitlements.accept-ownership";
 }

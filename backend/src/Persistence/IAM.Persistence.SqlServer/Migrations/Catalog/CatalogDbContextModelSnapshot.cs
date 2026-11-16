@@ -315,6 +315,239 @@ namespace IAM.Persistence.SqlServer.Migrations.Catalog
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("IAM.Modules.Catalog.Domain.Entitlements.Entitlement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ApplicationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApplicationId", "Key")
+                        .IsUnique();
+
+                    b.ToTable("Entitlement", "catalog", t =>
+                        {
+                            t.HasTrigger("TR_Entitlement_KeyImmutable");
+
+                            t.HasCheckConstraint("CK_Entitlement_Key_Code", "DATALENGTH([Key]) > 0 AND DATALENGTH([Key]) = DATALENGTH(LTRIM(RTRIM([Key])))");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("IAM.Modules.Catalog.Domain.Entitlements.EntitlementVersion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int?>("AccessForDays")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("AccessForDefaultDays")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("AccessForMaxDays")
+                        .HasColumnType("int");
+
+                    b.Property<string>("AccessForMode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<Guid?>("ActivatedByRequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AllowedAccountClasses")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength()
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<string>("EditedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<Guid>("EntitlementId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("EscalationWorkgroup")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTimeOffset?>("OwnerAcceptedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("OwnerAcceptedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("OwnerKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<bool>("Privileged")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Risk")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("TechnicalName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActivatedByRequestId");
+
+                    b.HasIndex("EntitlementId", "VersionNumber")
+                        .IsUnique();
+
+                    b.ToTable("EntitlementVersion", "catalog", t =>
+                        {
+                            t.HasTrigger("TR_EntitlementVersion_Immutable");
+
+                            t.HasCheckConstraint("CK_EntitlementVersion_AccessForMode_Code", "DATALENGTH([AccessForMode]) > 0 AND DATALENGTH([AccessForMode]) = DATALENGTH(LTRIM(RTRIM([AccessForMode])))");
+
+                            t.HasCheckConstraint("CK_EntitlementVersion_AllowedAccountClasses_Code", "DATALENGTH([AllowedAccountClasses]) > 0 AND DATALENGTH([AllowedAccountClasses]) = DATALENGTH(LTRIM(RTRIM([AllowedAccountClasses])))");
+
+                            t.HasCheckConstraint("CK_EntitlementVersion_ContentHash_Code", "DATALENGTH([ContentHash]) > 0 AND DATALENGTH([ContentHash]) = DATALENGTH(LTRIM(RTRIM([ContentHash])))");
+
+                            t.HasCheckConstraint("CK_EntitlementVersion_EditedBy_Code", "DATALENGTH([EditedBy]) > 0 AND DATALENGTH([EditedBy]) = DATALENGTH(LTRIM(RTRIM([EditedBy])))");
+
+                            t.HasCheckConstraint("CK_EntitlementVersion_EscalationWorkgroup_Code", "DATALENGTH([EscalationWorkgroup]) > 0 AND DATALENGTH([EscalationWorkgroup]) = DATALENGTH(LTRIM(RTRIM([EscalationWorkgroup])))");
+
+                            t.HasCheckConstraint("CK_EntitlementVersion_OwnerAcceptedBy_Code", "DATALENGTH([OwnerAcceptedBy]) > 0 AND DATALENGTH([OwnerAcceptedBy]) = DATALENGTH(LTRIM(RTRIM([OwnerAcceptedBy])))");
+
+                            t.HasCheckConstraint("CK_EntitlementVersion_OwnerId_Code", "DATALENGTH([OwnerId]) > 0 AND DATALENGTH([OwnerId]) = DATALENGTH(LTRIM(RTRIM([OwnerId])))");
+
+                            t.HasCheckConstraint("CK_EntitlementVersion_OwnerKind_Code", "DATALENGTH([OwnerKind]) > 0 AND DATALENGTH([OwnerKind]) = DATALENGTH(LTRIM(RTRIM([OwnerKind])))");
+
+                            t.HasCheckConstraint("CK_EntitlementVersion_Risk_Code", "DATALENGTH([Risk]) > 0 AND DATALENGTH([Risk]) = DATALENGTH(LTRIM(RTRIM([Risk])))");
+
+                            t.HasCheckConstraint("CK_EntitlementVersion_State_Code", "DATALENGTH([State]) > 0 AND DATALENGTH([State]) = DATALENGTH(LTRIM(RTRIM([State])))");
+
+                            t.HasCheckConstraint("CK_EntitlementVersion_Type_Code", "DATALENGTH([Type]) > 0 AND DATALENGTH([Type]) = DATALENGTH(LTRIM(RTRIM([Type])))");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("IAM.Modules.Catalog.Infrastructure.Persistence.ApplicationSettingsRequestRow", b =>
                 {
                     b.Property<Guid>("Id")
@@ -429,6 +662,137 @@ namespace IAM.Persistence.SqlServer.Migrations.Catalog
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("IAM.Modules.Catalog.Infrastructure.Persistence.EntitlementChangeRequestRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AcceptedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("Checker")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength()
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTimeOffset?>("DecidedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("DecisionReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<Guid>("EntitlementId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Maker")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("OwnerKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("ProposedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("VersionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EntitlementId");
+
+                    b.HasIndex("VersionId");
+
+                    b.HasIndex("State", "ProposedAtUtc");
+
+                    b.ToTable("EntitlementChangeRequest", "catalog", t =>
+                        {
+                            t.HasTrigger("TR_EntitlementChangeRequest_DecidedImmutable");
+
+                            t.HasCheckConstraint("CK_EntitlementChangeRequest_AcceptedBy_Code", "DATALENGTH([AcceptedBy]) > 0 AND DATALENGTH([AcceptedBy]) = DATALENGTH(LTRIM(RTRIM([AcceptedBy])))");
+
+                            t.HasCheckConstraint("CK_EntitlementChangeRequest_Checker_Code", "DATALENGTH([Checker]) > 0 AND DATALENGTH([Checker]) = DATALENGTH(LTRIM(RTRIM([Checker])))");
+
+                            t.HasCheckConstraint("CK_EntitlementChangeRequest_ContentHash_Code", "DATALENGTH([ContentHash]) > 0 AND DATALENGTH([ContentHash]) = DATALENGTH(LTRIM(RTRIM([ContentHash])))");
+
+                            t.HasCheckConstraint("CK_EntitlementChangeRequest_Maker_Code", "DATALENGTH([Maker]) > 0 AND DATALENGTH([Maker]) = DATALENGTH(LTRIM(RTRIM([Maker])))");
+
+                            t.HasCheckConstraint("CK_EntitlementChangeRequest_OwnerId_Code", "DATALENGTH([OwnerId]) > 0 AND DATALENGTH([OwnerId]) = DATALENGTH(LTRIM(RTRIM([OwnerId])))");
+
+                            t.HasCheckConstraint("CK_EntitlementChangeRequest_OwnerKind_Code", "DATALENGTH([OwnerKind]) > 0 AND DATALENGTH([OwnerKind]) = DATALENGTH(LTRIM(RTRIM([OwnerKind])))");
+
+                            t.HasCheckConstraint("CK_EntitlementChangeRequest_State_Code", "DATALENGTH([State]) > 0 AND DATALENGTH([State]) = DATALENGTH(LTRIM(RTRIM([State])))");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("IAM.Modules.Catalog.Domain.Applications.ApplicationSettingsRole", b =>
                 {
                     b.HasOne("IAM.Modules.Catalog.Domain.Applications.ApplicationRoleType", null)
@@ -458,6 +822,29 @@ namespace IAM.Persistence.SqlServer.Migrations.Catalog
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("IAM.Modules.Catalog.Domain.Entitlements.Entitlement", b =>
+                {
+                    b.HasOne("IAM.Modules.Catalog.Domain.Applications.Application", null)
+                        .WithMany()
+                        .HasForeignKey("ApplicationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("IAM.Modules.Catalog.Domain.Entitlements.EntitlementVersion", b =>
+                {
+                    b.HasOne("IAM.Modules.Catalog.Infrastructure.Persistence.EntitlementChangeRequestRow", null)
+                        .WithMany()
+                        .HasForeignKey("ActivatedByRequestId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("IAM.Modules.Catalog.Domain.Entitlements.Entitlement", null)
+                        .WithMany("Versions")
+                        .HasForeignKey("EntitlementId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("IAM.Modules.Catalog.Infrastructure.Persistence.ApplicationSettingsRequestRow", b =>
                 {
                     b.HasOne("IAM.Modules.Catalog.Domain.Applications.Application", null)
@@ -473,6 +860,21 @@ namespace IAM.Persistence.SqlServer.Migrations.Catalog
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("IAM.Modules.Catalog.Infrastructure.Persistence.EntitlementChangeRequestRow", b =>
+                {
+                    b.HasOne("IAM.Modules.Catalog.Domain.Entitlements.Entitlement", null)
+                        .WithMany()
+                        .HasForeignKey("EntitlementId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("IAM.Modules.Catalog.Domain.Entitlements.EntitlementVersion", null)
+                        .WithMany()
+                        .HasForeignKey("VersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("IAM.Modules.Catalog.Domain.Applications.Application", b =>
                 {
                     b.Navigation("Versions");
@@ -481,6 +883,11 @@ namespace IAM.Persistence.SqlServer.Migrations.Catalog
             modelBuilder.Entity("IAM.Modules.Catalog.Domain.Applications.ApplicationSettingsVersion", b =>
                 {
                     b.Navigation("Roles");
+                });
+
+            modelBuilder.Entity("IAM.Modules.Catalog.Domain.Entitlements.Entitlement", b =>
+                {
+                    b.Navigation("Versions");
                 });
 #pragma warning restore 612, 618
         }
