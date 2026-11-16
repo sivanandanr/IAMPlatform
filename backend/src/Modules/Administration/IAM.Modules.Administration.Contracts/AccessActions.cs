@@ -31,4 +31,7 @@ public static class AccessActions
     public const string EntitlementsManage = "catalog.entitlements.manage";
     public const string EntitlementsApprove = "catalog.entitlements.approve";
     public const string EntitlementOwnershipAccept = "catalog.entitlements.accept-ownership";
+    public const string AccountsRead = "account.accounts.read";
+    public const string AccountsManage = "account.accounts.manage";
+    public const string AccountsApprove = "account.accounts.approve";
 }

@@ -1,4 +1,5 @@
 using IAM.BuildingBlocks.Persistence;
+using IAM.Modules.Account.Infrastructure.Persistence;
 using IAM.Modules.Administration.Infrastructure.Persistence;
 using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
@@ -91,6 +92,18 @@ internal static class TestSupport
         }
 
         return new CatalogDbContext(options.Options);
+    }
+
+    public static AccountDbContext CreateAccount(DatabaseProvider provider, string connectionString, AuditingSaveChangesInterceptor? interceptor = null)
+    {
+        var options = new DbContextOptionsBuilder<AccountDbContext>();
+        ProviderFor(provider).Configure(options, connectionString, AccountDbContext.SchemaName);
+        if (interceptor is not null)
+        {
+            options.AddInterceptors(interceptor);
+        }
+
+        return new AccountDbContext(options.Options);
     }
 
     public static OrganizationDbContext CreateOrganization(DatabaseProvider provider, string connectionString, AuditingSaveChangesInterceptor? interceptor = null)

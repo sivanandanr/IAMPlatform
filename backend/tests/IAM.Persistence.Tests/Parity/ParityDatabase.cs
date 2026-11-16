@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using DotNet.Testcontainers.Containers;
 using IAM.BuildingBlocks.Persistence;
+using IAM.Modules.Account.Infrastructure.Persistence;
 using IAM.Modules.Administration.Infrastructure.Persistence;
 using IAM.Modules.Audit.Infrastructure.Persistence;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
@@ -44,6 +45,7 @@ public sealed class ParityDatabase : IAsyncLifetime
     public const string OrganizationAppLogin = "iam_app_organization";
     public const string WorkflowAppLogin = "iam_app_workflow";
     public const string NotificationAppLogin = "iam_app_notification";
+    public const string AccountAppLogin = "iam_app_account";
 
     private const string SqlServerImage = "mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718";
     private const string PostgreSqlImage = "postgres:17.11-alpine3.24@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac";
@@ -58,6 +60,7 @@ public sealed class ParityDatabase : IAsyncLifetime
     private readonly string _organizationAppPassword = NewPassword();
     private readonly string _workflowAppPassword = NewPassword();
     private readonly string _notificationAppPassword = NewPassword();
+    private readonly string _accountAppPassword = NewPassword();
     private IDatabaseContainer? _container;
     private string _adminConnectionString = string.Empty;
 
@@ -98,6 +101,12 @@ public sealed class ParityDatabase : IAsyncLifetime
     public IReadOnlyList<string> NotificationFirstRunApplied { get; private set; } = [];
 
     public IReadOnlyList<string> NotificationSecondRunPending { get; private set; } = [];
+
+    public string AccountAppConnectionString => WithLogin(AccountAppLogin, _accountAppPassword);
+
+    public IReadOnlyList<string> AccountFirstRunApplied { get; private set; } = [];
+
+    public IReadOnlyList<string> AccountSecondRunPending { get; private set; } = [];
 
     public IReadOnlyList<string> CatalogSecondRunPending { get; private set; } = [];
 
@@ -154,10 +163,11 @@ public sealed class ParityDatabase : IAsyncLifetime
         await BootstrapAsync(OrganizationDbContext.SchemaName, OrganizationAppLogin, _organizationAppPassword, ct);
         await BootstrapAsync(WorkflowDbContext.SchemaName, WorkflowAppLogin, _workflowAppPassword, ct);
         await BootstrapAsync(NotificationDbContext.SchemaName, NotificationAppLogin, _notificationAppPassword, ct);
+        await BootstrapAsync(AccountDbContext.SchemaName, AccountAppLogin, _accountAppPassword, ct);
 
         // Every module runtime login may append audit events in its own transaction; only the audit login may read
         // them (ADR-0018). Roles must exist before the audit migration grants to them.
-        foreach (var login in new[] { IdentityAppLogin, ProbeAppLogin, AuditAppLogin, AdministrationAppLogin, CatalogAppLogin, OrganizationAppLogin, WorkflowAppLogin })
+        foreach (var login in new[] { IdentityAppLogin, ProbeAppLogin, AuditAppLogin, AdministrationAppLogin, CatalogAppLogin, OrganizationAppLogin, WorkflowAppLogin, AccountAppLogin })
         {
             await GrantAuditRoleAsync(login, AuditDbContext.WriterRole, ct);
         }
@@ -241,6 +251,19 @@ public sealed class ParityDatabase : IAsyncLifetime
         {
             WorkflowSecondRunPending = (await workflow.Database.GetPendingMigrationsAsync(ct)).ToList();
             await workflow.Database.MigrateAsync(ct);
+        }
+
+        await using (var account = TestSupport.CreateAccount(Provider, MigratorConnectionString))
+        {
+            var pending = (await account.Database.GetPendingMigrationsAsync(ct)).ToList();
+            await account.Database.MigrateAsync(ct);
+            AccountFirstRunApplied = pending;
+        }
+
+        await using (var account = TestSupport.CreateAccount(Provider, MigratorConnectionString))
+        {
+            AccountSecondRunPending = (await account.Database.GetPendingMigrationsAsync(ct)).ToList();
+            await account.Database.MigrateAsync(ct);
         }
 
         await using (var notification = TestSupport.CreateNotification(Provider, MigratorConnectionString))

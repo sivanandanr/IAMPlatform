@@ -11,6 +11,7 @@
     <ProjectReference Include="..\..\Modules\Catalog\IAM.Modules.Catalog.Infrastructure\IAM.Modules.Catalog.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Modules\Identity\IAM.Modules.Identity.Infrastructure\IAM.Modules.Identity.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Modules\Organization\IAM.Modules.Organization.Infrastructure\IAM.Modules.Organization.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Account\IAM.Modules.Account.Infrastructure\IAM.Modules.Account.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Modules\Workflow\IAM.Modules.Workflow.Infrastructure\IAM.Modules.Workflow.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Modules\Notification\IAM.Modules.Notification.Infrastructure\IAM.Modules.Notification.Infrastructure.csproj" />
   </ItemGroup>
