@@ -5,6 +5,7 @@ using IAM.Modules.Catalog.Infrastructure.Persistence;
 using IAM.Modules.Identity.Infrastructure.Persistence;
 using IAM.Modules.Notification.Infrastructure.Persistence;
 using IAM.Modules.Organization.Infrastructure.Persistence;
+using IAM.Modules.Policy.Infrastructure.Persistence;
 using IAM.Modules.Workflow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
@@ -94,5 +95,15 @@ internal sealed class AccountDesignTimeFactory : IDesignTimeDbContextFactory<Acc
         var options = new DbContextOptionsBuilder<AccountDbContext>();
         new SqlServerDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, AccountDbContext.SchemaName);
         return new AccountDbContext(options.Options);
+    }
+}
+
+internal sealed class PolicyDesignTimeFactory : IDesignTimeDbContextFactory<PolicyDbContext>
+{
+    public PolicyDbContext CreateDbContext(string[] args)
+    {
+        var options = new DbContextOptionsBuilder<PolicyDbContext>();
+        new SqlServerDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, PolicyDbContext.SchemaName);
+        return new PolicyDbContext(options.Options);
     }
 }

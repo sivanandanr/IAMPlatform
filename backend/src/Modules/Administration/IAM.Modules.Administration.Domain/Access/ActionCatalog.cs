@@ -36,6 +36,9 @@ public static class ActionCatalog
     public const string AccountsRead = "account.accounts.read";
     public const string AccountsManage = "account.accounts.manage";
     public const string AccountsApprove = "account.accounts.approve";
+    public const string MatrixRead = "policy.matrix.read";
+    public const string MatrixManage = "policy.matrix.manage";
+    public const string MatrixApprove = "policy.matrix.approve";
 
     public static IReadOnlyList<ActionDefinition> All { get; } = Array.AsReadOnly(
     [
@@ -66,6 +69,9 @@ public static class ActionCatalog
         new ActionDefinition(AccountsRead, "See accounts, link requests and naming rules (DL-089)", Everyone: false),
         new ActionDefinition(AccountsManage, "Propose linking existing accounts and edit and propose naming rules (DL-089)", Everyone: false),
         new ActionDefinition(AccountsApprove, "Approve or reject someone else's account link or naming rule (DL-089)", Everyone: false),
+        new ActionDefinition(MatrixRead, "See the approval matrix, its drafts, change requests and built-in facts (DL-090)", Everyone: false),
+        new ActionDefinition(MatrixManage, "Edit the approval matrix draft and propose it (DL-090)", Everyone: false),
+        new ActionDefinition(MatrixApprove, "Approve or reject someone else's approval matrix change (DL-090)", Everyone: false),
     ]);
 
     private static readonly Dictionary<string, ActionDefinition> ById = All.ToDictionary(a => a.Id, StringComparer.Ordinal);
@@ -91,6 +97,7 @@ public static class ActionCatalog
         (WorkgroupsManage, WorkgroupsApprove),
         (EntitlementsManage, EntitlementsApprove),
         (AccountsManage, AccountsApprove),
+        (MatrixManage, MatrixApprove),
     ];
 }
 
