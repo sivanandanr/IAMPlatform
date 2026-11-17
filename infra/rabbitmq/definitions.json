@@ -8,45 +8,30 @@
     { "name": "iam.workflow", "vhost": "iam", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": { "alternate-exchange": "iam.unrouted" } },
     { "name": "iam.notification.approval_tasks.dlx", "vhost": "iam", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
     { "name": "iam.notification.approval_tasks.retry", "vhost": "iam", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
-    { "name": "iam.notification.approval_tasks.return", "vhost": "iam", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {} }
+    { "name": "iam.notification.approval_tasks.return", "vhost": "iam", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "iam.request", "vhost": "iam", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": { "alternate-exchange": "iam.unrouted" } },
+    { "name": "iam.workflow.request_items.dlx", "vhost": "iam", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "iam.workflow.request_items.retry", "vhost": "iam", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "iam.workflow.request_items.return", "vhost": "iam", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {} }
   ],
   "queues": [
-    {
-      "name": "iam.unrouted", "vhost": "iam", "durable": true, "auto_delete": false,
-      "arguments": { "x-queue-type": "quorum", "x-max-length": 100000, "x-max-length-bytes": 104857600, "x-overflow": "drop-head", "x-message-ttl": 604800000 }
-    },
-    {
-      "name": "iam.notification.approval_tasks", "vhost": "iam", "durable": true, "auto_delete": false,
-      "arguments": {
-        "x-queue-type": "quorum",
-        "x-delivery-limit": 20,
-        "x-dead-letter-exchange": "iam.notification.approval_tasks.dlx",
-        "x-dead-letter-routing-key": "iam.notification.approval_tasks",
-        "x-dead-letter-strategy": "at-least-once",
-        "x-overflow": "reject-publish"
-      }
-    },
-    {
-      "name": "iam.notification.approval_tasks.dlq", "vhost": "iam", "durable": true, "auto_delete": false,
-      "arguments": { "x-queue-type": "quorum" }
-    },
-    {
-      "name": "iam.notification.approval_tasks.retry", "vhost": "iam", "durable": true, "auto_delete": false,
-      "arguments": {
-        "x-queue-type": "quorum",
-        "x-message-ttl": 5000,
-        "x-dead-letter-exchange": "iam.notification.approval_tasks.return",
-        "x-dead-letter-routing-key": "iam.notification.approval_tasks",
-        "x-dead-letter-strategy": "at-least-once",
-        "x-overflow": "reject-publish"
-      }
-    }
+    { "name": "iam.unrouted", "vhost": "iam", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum", "x-max-length": 100000, "x-max-length-bytes": 104857600, "x-overflow": "drop-head", "x-message-ttl": 604800000 } },
+    { "name": "iam.notification.approval_tasks", "vhost": "iam", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum", "x-delivery-limit": 20, "x-dead-letter-exchange": "iam.notification.approval_tasks.dlx", "x-dead-letter-routing-key": "iam.notification.approval_tasks", "x-dead-letter-strategy": "at-least-once", "x-overflow": "reject-publish" } },
+    { "name": "iam.notification.approval_tasks.dlq", "vhost": "iam", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } },
+    { "name": "iam.notification.approval_tasks.retry", "vhost": "iam", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum", "x-message-ttl": 5000, "x-dead-letter-exchange": "iam.notification.approval_tasks.return", "x-dead-letter-routing-key": "iam.notification.approval_tasks", "x-dead-letter-strategy": "at-least-once", "x-overflow": "reject-publish" } },
+    { "name": "iam.workflow.request_items", "vhost": "iam", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum", "x-delivery-limit": 20, "x-dead-letter-exchange": "iam.workflow.request_items.dlx", "x-dead-letter-routing-key": "iam.workflow.request_items", "x-dead-letter-strategy": "at-least-once", "x-overflow": "reject-publish" } },
+    { "name": "iam.workflow.request_items.dlq", "vhost": "iam", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } },
+    { "name": "iam.workflow.request_items.retry", "vhost": "iam", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum", "x-message-ttl": 5000, "x-dead-letter-exchange": "iam.workflow.request_items.return", "x-dead-letter-routing-key": "iam.workflow.request_items", "x-dead-letter-strategy": "at-least-once", "x-overflow": "reject-publish" } }
   ],
   "bindings": [
     { "source": "iam.unrouted", "vhost": "iam", "destination": "iam.unrouted", "destination_type": "queue", "routing_key": "", "arguments": {} },
     { "source": "iam.workflow", "vhost": "iam", "destination": "iam.notification.approval_tasks", "destination_type": "queue", "routing_key": "workflow.approval.task_opened", "arguments": {} },
     { "source": "iam.notification.approval_tasks.dlx", "vhost": "iam", "destination": "iam.notification.approval_tasks.dlq", "destination_type": "queue", "routing_key": "iam.notification.approval_tasks", "arguments": {} },
     { "source": "iam.notification.approval_tasks.retry", "vhost": "iam", "destination": "iam.notification.approval_tasks.retry", "destination_type": "queue", "routing_key": "iam.notification.approval_tasks", "arguments": {} },
-    { "source": "iam.notification.approval_tasks.return", "vhost": "iam", "destination": "iam.notification.approval_tasks", "destination_type": "queue", "routing_key": "iam.notification.approval_tasks", "arguments": {} }
+    { "source": "iam.notification.approval_tasks.return", "vhost": "iam", "destination": "iam.notification.approval_tasks", "destination_type": "queue", "routing_key": "iam.notification.approval_tasks", "arguments": {} },
+    { "source": "iam.request", "vhost": "iam", "destination": "iam.workflow.request_items", "destination_type": "queue", "routing_key": "request.item.submitted", "arguments": {} },
+    { "source": "iam.workflow.request_items.dlx", "vhost": "iam", "destination": "iam.workflow.request_items.dlq", "destination_type": "queue", "routing_key": "iam.workflow.request_items", "arguments": {} },
+    { "source": "iam.workflow.request_items.retry", "vhost": "iam", "destination": "iam.workflow.request_items.retry", "destination_type": "queue", "routing_key": "iam.workflow.request_items", "arguments": {} },
+    { "source": "iam.workflow.request_items.return", "vhost": "iam", "destination": "iam.workflow.request_items", "destination_type": "queue", "routing_key": "iam.workflow.request_items", "arguments": {} }
   ]
 }

@@ -24,6 +24,8 @@ Option 1. Messages carry correlation ID, causation ID, idempotency key, schema v
 
 **Location of outbox/inbox tables — decided (owner, 2026-11-08, DL-021): per-module.** Each module owns its outbox and inbox tables in its own schema, written in the same transaction as its data by its own login. This keeps "no cross-module writes" enforceable in the database (S1-06 per-module logins). Blueprint §6's shared `integration` schema is not used for them. Built in P0-010.
 
+**Request items (DL-091).** The Request module is the second publisher: its outbox (same guards as Workflow's) is relayed by `IAM.Workers.Request` with its own login and broker user to `iam.request`; the Workflow worker consumes `request.item.submitted` and starts the approval with the item id as the instance id, which is what makes a redelivery harmless.
+
 ## Security and privacy impact
 Payloads contain no tokens, secrets or full HR records (schema assertion). Unknown schema version / oversized / malformed messages go to DLQ unprocessed. Broker users per vhost; no `guest`.
 

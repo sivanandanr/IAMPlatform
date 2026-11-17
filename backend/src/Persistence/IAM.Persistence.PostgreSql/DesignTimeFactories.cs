@@ -6,6 +6,7 @@ using IAM.Modules.Identity.Infrastructure.Persistence;
 using IAM.Modules.Notification.Infrastructure.Persistence;
 using IAM.Modules.Organization.Infrastructure.Persistence;
 using IAM.Modules.Policy.Infrastructure.Persistence;
+using IAM.Modules.Request.Infrastructure.Persistence;
 using IAM.Modules.Workflow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
@@ -105,5 +106,15 @@ internal sealed class PolicyDesignTimeFactory : IDesignTimeDbContextFactory<Poli
         var options = new DbContextOptionsBuilder<PolicyDbContext>();
         new PostgreSqlDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, PolicyDbContext.SchemaName);
         return new PolicyDbContext(options.Options);
+    }
+}
+
+internal sealed class RequestDesignTimeFactory : IDesignTimeDbContextFactory<RequestDbContext>
+{
+    public RequestDbContext CreateDbContext(string[] args)
+    {
+        var options = new DbContextOptionsBuilder<RequestDbContext>();
+        new PostgreSqlDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, RequestDbContext.SchemaName);
+        return new RequestDbContext(options.Options);
     }
 }

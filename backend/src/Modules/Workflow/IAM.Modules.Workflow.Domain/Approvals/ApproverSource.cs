@@ -37,7 +37,8 @@ public sealed record ApproverSource(
     IReadOnlyList<PersonId> People,
     string? WorkgroupKey = null,
     Guid? ApplicationId = null,
-    Guid? RoleTypeId = null)
+    Guid? RoleTypeId = null,
+    Guid? EntitlementId = null)
 {
     public const int WorkgroupKeyMaxLength = 64;
 
@@ -50,8 +51,18 @@ public sealed record ApproverSource(
     public static ApproverSource ApplicationRole(Guid applicationId, Guid roleTypeId) =>
         new(ApproverSourceKind.ApplicationRole, [], ApplicationId: applicationId, RoleTypeId: roleTypeId);
 
-    /// <summary>A source whose data doesn't exist yet: Manager, ManagerOfManager, EntitlementOwner or Matrix.</summary>
+    /// <summary>
+    /// An entitlement's owner (DL-091): the owner person, or the owning workgroup's active members, then the entitlement's
+    /// escalation workgroup (DEC-002). Never the IAM fallback group (DL-069d).
+    /// </summary>
+    public static ApproverSource EntitlementOwner(Guid entitlementId) => new(ApproverSourceKind.EntitlementOwner, [], EntitlementId: entitlementId);
+
+    /// <summary>A source whose data doesn't exist yet: Manager, ManagerOfManager, Matrix, or an entitlement owner with no entitlement named.</summary>
     public static ApproverSource Unbuilt(ApproverSourceKind kind) => new(kind, []);
+
+    /// <summary>Whether the source has no data to resolve from yet, so it holds (DL-069d).</summary>
+    public bool IsUnbuilt => Kind is ApproverSourceKind.Manager or ApproverSourceKind.ManagerOfManager or ApproverSourceKind.Matrix
+        || (Kind == ApproverSourceKind.EntitlementOwner && EntitlementId is null);
 
     /// <summary>The kind only: logging this object must not expose a person.</summary>
     public override string ToString() => $"{nameof(ApproverSource)} {Kind}";
@@ -59,11 +70,14 @@ public sealed record ApproverSource(
     /// <summary>Checks the fields match the kind. People are checked as candidates are: 1 to 256, valid and distinct.</summary>
     internal bool IsValid() => Kind switch
     {
+        _ when EntitlementId is not null && Kind != ApproverSourceKind.EntitlementOwner => false,
         ApproverSourceKind.NamedUsers => ApprovalRoute.CandidatesAreValid(People) && WorkgroupKey is null && ApplicationId is null && RoleTypeId is null,
         ApproverSourceKind.Workgroup => People is { Count: 0 } && IsWorkgroupKey(WorkgroupKey) && ApplicationId is null && RoleTypeId is null,
         ApproverSourceKind.ApplicationOwner => People is { Count: 0 } && WorkgroupKey is null && IsId(ApplicationId) && RoleTypeId is null,
         ApproverSourceKind.ApplicationRole => People is { Count: 0 } && WorkgroupKey is null && IsId(ApplicationId) && IsId(RoleTypeId),
-        ApproverSourceKind.Manager or ApproverSourceKind.ManagerOfManager or ApproverSourceKind.EntitlementOwner or ApproverSourceKind.Matrix =>
+        ApproverSourceKind.EntitlementOwner =>
+            People is { Count: 0 } && WorkgroupKey is null && ApplicationId is null && RoleTypeId is null && (EntitlementId is null || IsId(EntitlementId)),
+        ApproverSourceKind.Manager or ApproverSourceKind.ManagerOfManager or ApproverSourceKind.Matrix =>
             People is { Count: 0 } && WorkgroupKey is null && ApplicationId is null && RoleTypeId is null,
         _ => false,
     };

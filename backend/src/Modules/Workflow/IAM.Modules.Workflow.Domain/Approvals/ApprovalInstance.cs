@@ -899,7 +899,7 @@ public sealed class ApprovalInstance
             return false;
         }
 
-        var unbuilt = source.Kind is ApproverSourceKind.Manager or ApproverSourceKind.ManagerOfManager or ApproverSourceKind.EntitlementOwner or ApproverSourceKind.Matrix;
+        var unbuilt = source.IsUnbuilt;
         var shape = resolution.Outcome switch
         {
             ResolutionOutcome.Resolved => !unbuilt && ApprovalRoute.CandidatesAreValid(resolution.People) && !resolution.People.Any(_excluded.Contains),
@@ -927,12 +927,13 @@ public sealed class ApprovalInstance
             && (last.Source != ApproverSourceKind.NamedUsers || (resolution.Steps.Count == 1 && resolution.People.All(source.People.Contains)));
     }
 
-    /// <summary>The reference a resolver records for this source: the workgroup key, or the application and role type ids.</summary>
+    /// <summary>The reference a resolver records for this source: the workgroup key, the application and role type ids, or the entitlement id.</summary>
     private static string? ExpectedReference(ApproverSource source) => source.Kind switch
     {
         ApproverSourceKind.Workgroup => source.WorkgroupKey,
         ApproverSourceKind.ApplicationOwner => source.ApplicationId?.ToString("D"),
         ApproverSourceKind.ApplicationRole => $"{source.ApplicationId:D}:{source.RoleTypeId:D}",
+        ApproverSourceKind.EntitlementOwner => source.EntitlementId?.ToString("D"),
         _ => null,
     };
 

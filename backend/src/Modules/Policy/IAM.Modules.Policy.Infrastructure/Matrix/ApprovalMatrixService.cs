@@ -502,7 +502,7 @@ public sealed class ApprovalMatrixSelector(PolicyDbContext db, MatrixCompiler co
                 s.Mandatory, s.Independent, s.DeadlineHours, s.OnTimeout.ToString(), [.. s.Fields.Select(f => f.ToString())])).ToList()
             : [];
         return new MatrixSelection(
-            result.Outcome.ToString(), active.Id, active.VersionNumber, active.ContentHash, active.CompiledHash, result.MatchedRuleId, route, result.Evidence.ToCanonicalJson());
+            result.Outcome.ToString(), active.Id, active.VersionNumber, active.ContentHash, active.CompiledHash, result.MatchedRuleId, route, result.Evidence.ToCanonicalJson(), active.EditedBy);
     }
 
     private static MatrixSelection Hold(MatrixVersion active) =>

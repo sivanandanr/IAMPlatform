@@ -40,7 +40,8 @@ public sealed class AccountParityTests(ParityDatabase db)
     [Fact]
     public async Task TheMigrationAppliesOnce()
     {
-        db.AccountFirstRunApplied.ShouldHaveSingleItem().ShouldEndWith("_Accounts");
+        db.AccountFirstRunApplied[0].ShouldEndWith("_Accounts");
+        db.AccountFirstRunApplied.Count.ShouldBe(IsSqlServer ? 2 : 1, "SQL Server has the hyphen fix (DL-091)");
         db.AccountSecondRunPending.ShouldBeEmpty();
         var tables = IsSqlServer
             ? "SELECT STRING_AGG(TABLE_NAME, ',') FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'account'"
@@ -90,6 +91,16 @@ public sealed class AccountParityTests(ParityDatabase db)
         (await AuditCountAsync(proposed.Id, AccountAuditActions.LinkProposed, "Succeeded")).ShouldBe(1);
         (await AuditCountAsync(proposed.Id, AccountAuditActions.LinkApproved, "Succeeded")).ShouldBe(1);
         (await AuditCountAsync(proposed.Id, AccountAuditActions.LinkRefused, "Denied")).ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task NamesWithHyphensDotsAndUnderscoresAreAccepted()
+    {
+        var app = Guid.CreateVersion7();
+        var name = $"ana-lim_x.{Guid.NewGuid().ToString("N")[..6]}";
+        var linked = await ApproveAsync((await ProposeAsync(app, "Primary", name, "hy-" + name)).Id);
+        await using var scope = Service(Admin);
+        (await scope.Service.FindAccountAsync(linked.AccountId!.Value, Ct)).ShouldNotBeNull().Name.ShouldBe(name);
     }
 
     [Fact]

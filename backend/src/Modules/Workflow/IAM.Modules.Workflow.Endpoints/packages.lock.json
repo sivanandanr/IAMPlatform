@@ -70,6 +70,12 @@
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
         }
       },
+      "iam.modules.request.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
       "iam.modules.workflow.application": {
         "type": "Project",
         "dependencies": {
@@ -101,6 +107,7 @@
           "IAM.BuildingBlocks.Security": "[1.0.0, )",
           "IAM.Modules.Administration.Contracts": "[1.0.0, )",
           "IAM.Modules.Audit.Contracts": "[1.0.0, )",
+          "IAM.Modules.Request.Contracts": "[1.0.0, )",
           "IAM.Modules.Workflow.Application": "[1.0.0, )",
           "IAM.Modules.Workflow.Contracts": "[1.0.0, )",
           "IAM.Modules.Workflow.Domain": "[1.0.0, )"
