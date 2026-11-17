@@ -459,6 +459,41 @@
           "IAM.Modules.Organization.Domain": "[1.0.0, )"
         }
       },
+      "iam.modules.policy.application": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.Modules.Identity.Contracts": "[1.0.0, )",
+          "IAM.Modules.Policy.Contracts": "[1.0.0, )",
+          "IAM.Modules.Policy.Domain": "[1.0.0, )"
+        }
+      },
+      "iam.modules.policy.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.policy.domain": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )"
+        }
+      },
+      "iam.modules.policy.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
+          "IAM.Modules.Audit.Contracts": "[1.0.0, )",
+          "IAM.Modules.Identity.Contracts": "[1.0.0, )",
+          "IAM.Modules.Policy.Application": "[1.0.0, )",
+          "IAM.Modules.Policy.Contracts": "[1.0.0, )",
+          "IAM.Modules.Policy.Domain": "[1.0.0, )"
+        }
+      },
       "iam.modules.workflow.application": {
         "type": "Project",
         "dependencies": {
@@ -506,6 +541,7 @@
           "IAM.Modules.Identity.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Notification.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Organization.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Policy.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Workflow.Infrastructure": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
@@ -521,6 +557,7 @@
           "IAM.Modules.Identity.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Notification.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Organization.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Policy.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Workflow.Infrastructure": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore.SqlServer": "[10.0.14, )"
         }

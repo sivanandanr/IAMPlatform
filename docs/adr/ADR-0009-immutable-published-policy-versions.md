@@ -1,5 +1,5 @@
 # ADR-0009: Immutable published policy versions with maker-checker
-Status: Proposed | Date: 2026-11-07 | Decision owners: Security Architect, IAM Domain / Workflow lead, Business policy owners (named approvers TBD)
+Status: Proposed; the approval matrix is built on it (stage 8 slice 3, DL-090) | Date: 2026-11-07 | Decision owners: Security Architect, IAM Domain / Workflow lead, Business policy owners (named approvers TBD)
 
 Source: Blueprint v1.0 §1 (ADR 009); Spec v3.2 DEC-003, IAM-FR-003, IAM-WF-007, -008, -019, FR-POL-101/103; CLAUDE.md rule 4. Drafted by Claude Code (S1-01); not approved.
 
@@ -12,6 +12,9 @@ Sensitive provisioning policy, approval matrix, workflow and authorization-affec
 
 ## Decision and rationale
 Option 1. Checker ≠ maker, enforced server-side (identity comparison, not UI). Published versions carry content hash; evaluation evidence references version + hash. Pre-publication validation rejects ambiguous equal-precedence rules (FR-POL-102). Simulation before publication is required by IAM-WF-008 (P0) / IAM-FR-001G; bulk impact analysis is IAM-WF-021 (P1) — scope for Phase 0 needs confirmation (DL-014).
+
+## The stored approval matrix (stage 8 slice 3, DL-090)
+One enterprise matrix per deployment, schema `policy`. A version is a canonical JSON document of rules, each a typed condition (ADR-0004) and the route it selects: ordered stages with an approver source (entitlement owner, application owner, application role, workgroup), quorum, mandatory and independent flags, a deadline, a timeout action that is never approve, and Decision or Action kind (Action stages list the name fields they may fill). Every route has a Decision stage. A draft is compiled on every save against the published catalog and the built-in fact attributes; possible same-priority overlaps block proposal and approval. Each version stores its content hash and the rules engine's compiled hash (attribute versions included); a second person who neither proposed nor wrote it activates it, and approval recompiles it so an attribute changed since is refused. The selector (`IApprovalMatrix`) recompiles the active version and holds if it no longer gives the approved hash; every outcome but a match is a hold. Database triggers refuse activation without an approved request naming the exact content and compiled hash, by its author, and any change to active versions or decided requests. HTTP: `GET /api/policy/matrix`, `GET /api/policy/matrix/facts`, `PUT /api/policy/matrix/draft`, `POST /api/policy/matrix/change-requests`, `GET|POST /api/policy/matrix-change-requests/{id}[/approve|reject|withdraw]`.
 
 ## Security and privacy impact
 Prevents single-actor policy changes; audit captures maker, checker, before/after.

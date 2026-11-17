@@ -330,6 +330,7 @@ internal sealed class ApiParityHost : IDisposable
             builder.UseSetting("ConnectionStrings:organization", db.OrganizationAppConnectionString);
             builder.UseSetting("ConnectionStrings:workflow", db.WorkflowAppConnectionString);
             builder.UseSetting("ConnectionStrings:account", db.AccountAppConnectionString);
+            builder.UseSetting("ConnectionStrings:policy", db.PolicyAppConnectionString);
             builder.UseSetting(IamRateLimits.AdministrationWritesPerMinuteKey, writesPerMinute.ToString(CultureInfo.InvariantCulture));
             builder.ConfigureTestServices(services =>
                 services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>

@@ -34,4 +34,7 @@ public static class AccessActions
     public const string AccountsRead = "account.accounts.read";
     public const string AccountsManage = "account.accounts.manage";
     public const string AccountsApprove = "account.accounts.approve";
+    public const string MatrixRead = "policy.matrix.read";
+    public const string MatrixManage = "policy.matrix.manage";
+    public const string MatrixApprove = "policy.matrix.approve";
 }
