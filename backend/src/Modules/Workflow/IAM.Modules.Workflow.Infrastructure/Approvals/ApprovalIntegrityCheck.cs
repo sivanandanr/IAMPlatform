@@ -19,7 +19,7 @@ public sealed class ApprovalIntegrityCheck(WorkflowDbContext db, IAuditTrail tra
     /// <summary>The most audit events one approval may have before the check refuses it (actions, refusals and damage).</summary>
     public const int MaxAuditEvents = 5_000;
 
-    private const int Attempts = 3;
+    private const int Attempts = 4;
 
     private static readonly Dictionary<string, ApprovalActionKind> ActionCodes =
         Enum.GetValues<ApprovalActionKind>().ToDictionary(WorkflowAuditActions.For, k => k, StringComparer.Ordinal);
@@ -38,6 +38,9 @@ public sealed class ApprovalIntegrityCheck(WorkflowDbContext db, IAuditTrail tra
             {
                 return report;
             }
+
+            // A busy approval gets a moment between checks (DL-097): 100, 300 then 900 ms.
+            await Task.Delay(TimeSpan.FromMilliseconds(100 * Math.Pow(3, attempt - 1)), cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -160,7 +163,11 @@ public sealed class ApprovalIntegrityCheck(WorkflowDbContext db, IAuditTrail tra
                 binding.PolicyHash,
                 binding.MatchedRuleId,
                 binding.PolicyMaker.Value,
-                [.. loaded.Stages.Select(Approved)]));
+                [.. loaded.Stages.Select(Approved)]),
+            loaded.Instance.History
+                .Where(e => e is { Kind: ApprovalEventKind.ActionCompleted, StageId: not null })
+                .GroupBy(e => e.StageId!.Value)
+                .ToDictionary(g => g.Key, g => g.Min(e => e.AtUtc)));
     }
 
     private static ApprovedStage Approved(StageDefinition s) => new(

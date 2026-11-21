@@ -12,7 +12,7 @@ namespace IAM.Modules.Request.Infrastructure.Items;
 /// </summary>
 public sealed class RequestItemSource(RequestDbContext db) : IRequestItemSource
 {
-    public async Task<ProvisionableItem?> FindAsync(Guid itemId, CancellationToken cancellationToken)
+    public async Task<ProvisionableItem?> FindAsync(Guid itemId, IReadOnlyDictionary<Guid, DateTimeOffset>? namesGivenBy, CancellationToken cancellationToken)
     {
         var item = await db.Items.AsNoTracking().SingleOrDefaultAsync(i => i.Id == itemId, cancellationToken).ConfigureAwait(false);
         if (item is null)
@@ -20,12 +20,15 @@ public sealed class RequestItemSource(RequestDbContext db) : IRequestItemSource
             return null;
         }
 
-        var given = await db.AccountNames.AsNoTracking()
+        var names = await db.AccountNames.AsNoTracking()
             .Where(n => n.ItemId == itemId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var given = names
+            .Where(n => namesGivenBy is null || (namesGivenBy.TryGetValue(n.StageId, out var closed) && n.SetAtUtc <= closed))
             .OrderByDescending(n => n.SetAtUtc).ThenByDescending(n => n.Id)
             .Select(n => n.Name)
-            .FirstOrDefaultAsync(cancellationToken)
-            .ConfigureAwait(false);
+            .FirstOrDefault();
         return new ProvisionableItem(
             item.Id,
             item.Requester,

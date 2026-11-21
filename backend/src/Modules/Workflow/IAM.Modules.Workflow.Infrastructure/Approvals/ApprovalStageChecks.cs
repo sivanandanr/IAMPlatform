@@ -1,3 +1,4 @@
+using IAM.Modules.Workflow.Application.Approvals;
 using IAM.Modules.Workflow.Contracts;
 
 namespace IAM.Modules.Workflow.Infrastructure.Approvals;
@@ -16,9 +17,20 @@ public sealed class ApprovalStageChecks(ApprovalWorkflowService workflow) : IApp
             return false;
         }
 
-        var instance = await workflow.FindAsync(instanceId, cancellationToken).ConfigureAwait(false);
+        ApprovalInstanceView? instance;
+        try
+        {
+            instance = await workflow.FindAsync(instanceId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is ApprovalConflictException or ApprovalInstanceDamagedException)
+        {
+            // Changing under us, or damaged: not a stage anyone can act on now (DL-097).
+            return false;
+        }
+
+        // The workflow offers an Action task while the approval is in progress, or held once it is authorised (DL-097).
         var stage = instance?.Stages.FirstOrDefault(s => s.StageId == stageId);
-        return instance?.State == "InProgress"
+        return (instance?.State == "InProgress" || instance is { State: "Held", ProvisioningAuthorized: true })
             && stage is { State: "Active", Kind: "Action" }
             && stage.Candidates.Contains(person, StringComparer.Ordinal);
     }

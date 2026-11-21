@@ -50,7 +50,8 @@ public sealed class ProvisioningDecider(
         }
 
         var actions = report.Actions;
-        if (await items.FindAsync(itemId, cancellationToken).ConfigureAwait(false) is not { } item
+        // Names count only as given on their Action level before it was completed (DL-097).
+        if (await items.FindAsync(itemId, report.CompletedActions ?? new Dictionary<Guid, DateTimeOffset>(), cancellationToken).ConfigureAwait(false) is not { } item
             || await items.FindSubmittedAsync(itemId, cancellationToken).ConfigureAwait(false) is not { } frozen)
         {
             return new(ProvisioningItem.Block(itemId, actions, BlockReason.ItemMissing, null, null, now), []);

@@ -54,9 +54,18 @@ public sealed class ProvisioningRunner(
         foreach (var id in due)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (await RunItemAsync(id, cancellationToken).ConfigureAwait(false))
+            try
             {
-                claimed++;
+                if (await RunItemAsync(id, cancellationToken).ConfigureAwait(false))
+                {
+                    claimed++;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                // One item's failure doesn't stop the batch (DL-097). It stays running until its lease runs out; taking it over
+                // counts as an attempt, so it fails as RunnerError rather than being retried for ever.
+                db.ChangeTracker.Clear();
             }
         }
 
@@ -74,6 +83,7 @@ public sealed class ProvisioningRunner(
             return false;
         }
 
+        var takeover = item.State == ProvisioningState.Running;
         item.Claim(now, settings.Lease);
         try
         {
@@ -87,6 +97,14 @@ public sealed class ProvisioningRunner(
 
         // Everything this run audits carries the request's correlation id (DL-094).
         using var trace = MessageCorrelation.StartFor(item.CorrelationId, "iam.provisioning.run");
+
+        // A run that keeps stopping without finishing (an error the runner can't handle) fails for a person (DL-097).
+        if (takeover && item.Attempts >= settings.MaxAttempts)
+        {
+            item.Fail("RunnerError", Now());
+            await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, null, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
         var operations = await db.Operations.Where(o => o.ItemId == itemId).OrderBy(o => o.Step).ToListAsync(cancellationToken).ConfigureAwait(false);
         if (targets.Find(item.ConnectorKey ?? string.Empty) is not { } target)
         {
@@ -126,7 +144,19 @@ public sealed class ProvisioningRunner(
             var creates = operation.Action == ProvisioningPlanner.AccountCreate;
             var interrupted = operation.State == ProvisioningState.Running;
             operation.Start();
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+            // The lease is renewed with each step, under the item's row version: if another runner took the item over, this
+            // run stops here rather than run the step a second time (DL-097).
+            item.Renew(Now(), settings.Lease);
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                db.ChangeTracker.Clear();
+                return true;
+            }
 
             // A step its runner was in the middle of may already be done: the target is read before it runs again. Not for a
             // create: an object being there doesn't prove this operation made it (DL-096), so the create runs again under its
@@ -272,12 +302,14 @@ public sealed class ProvisioningRunner(
         o.RelatedId,
         JsonSerializer.Deserialize<Dictionary<string, string?>>(o.Attributes) ?? []);
 
-    /// <summary>Runs a step; a call that breaks off (other than for shutdown) has an unknown outcome.</summary>
-    private static async Task<StepResult> RunAsync(IProvisioningTarget target, TargetStep step, CancellationToken cancellationToken)
+    /// <summary>Runs a step within the step time limit; a call that breaks off or runs out of time (not shutdown) has an unknown outcome.</summary>
+    private async Task<StepResult> RunAsync(IProvisioningTarget target, TargetStep step, CancellationToken cancellationToken)
     {
         try
         {
-            return await target.RunAsync(step, cancellationToken).ConfigureAwait(false);
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            limit.CancelAfter(settings.StepTimeout);
+            return await target.RunAsync(step, limit.Token).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
@@ -285,12 +317,14 @@ public sealed class ProvisioningRunner(
         }
     }
 
-    /// <summary>Reads the target; a read that fails proves nothing, so it counts as not matching.</summary>
-    private static async Task<bool> VerifyAsync(IProvisioningTarget target, TargetStep step, CancellationToken cancellationToken)
+    /// <summary>Reads the target within the step time limit; a read that fails or runs out of time proves nothing, so it counts as not matching.</summary>
+    private async Task<bool> VerifyAsync(IProvisioningTarget target, TargetStep step, CancellationToken cancellationToken)
     {
         try
         {
-            return await target.VerifyAsync(step, cancellationToken).ConfigureAwait(false);
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            limit.CancelAfter(settings.StepTimeout);
+            return await target.VerifyAsync(step, limit.Token).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
