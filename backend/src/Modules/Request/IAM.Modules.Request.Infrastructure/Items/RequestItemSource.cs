@@ -1,3 +1,5 @@
+using System.Text.Json;
+using IAM.BuildingBlocks.Messaging;
 using IAM.Modules.Request.Contracts;
 using IAM.Modules.Request.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -35,5 +37,20 @@ public sealed class RequestItemSource(RequestDbContext db) : IRequestItemSource
             item.AccountId,
             item.NewAccountType,
             given ?? item.NewAccountName);
+    }
+
+    public async Task<RequestItemSubmitted?> FindSubmittedAsync(Guid itemId, CancellationToken cancellationToken)
+    {
+        var item = await db.Items.AsNoTracking().SingleOrDefaultAsync(i => i.Id == itemId, cancellationToken).ConfigureAwait(false);
+        if (item is null)
+        {
+            return null;
+        }
+
+        var stages = JsonSerializer.Deserialize<List<SubmittedStage>>(item.Route, MessageEnvelopes.Json)
+            ?? throw new InvalidDataException("A frozen item's route doesn't read.");
+        return new RequestItemSubmitted(
+            item.Id, item.Requester, item.Beneficiary, item.ApplicationId, item.EntitlementId, item.MatrixVersionId, item.MatrixContentHash,
+            item.MatchedRuleId, item.PolicyMaker, stages);
     }
 }

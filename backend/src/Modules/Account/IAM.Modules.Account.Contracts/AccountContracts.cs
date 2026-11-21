@@ -59,4 +59,14 @@ public interface IAccountProvisioning
 {
     /// <summary>The recorded account's id; <see cref="AccountNotRecordedException"/> if it can't be recorded as given.</summary>
     Task<Guid> RecordCreatedAsync(CreatedAccount account, string correlationId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Why the account couldn't be recorded now (the same rules as <see cref="RecordCreatedAsync"/>: a valid account, its name
+    /// and target id free, one live Primary), or null if it could. Records nothing (DL-096): provisioning asks before it
+    /// changes the target, so the rules rarely refuse after the account exists there.
+    /// </summary>
+    Task<string?> CheckCreatableAsync(CreatedAccount account, CancellationToken cancellationToken);
+
+    /// <summary>The account already recorded for a provisioning item, or null (DL-096).</summary>
+    Task<Guid?> FindRecordedAsync(Guid provisioningItemId, CancellationToken cancellationToken);
 }

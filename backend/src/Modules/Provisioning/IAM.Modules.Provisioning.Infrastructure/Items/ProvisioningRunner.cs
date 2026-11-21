@@ -21,6 +21,13 @@ namespace IAM.Modules.Provisioning.Infrastructure.Items;
 /// attempts run out; a rejection, a mismatch after the last step or an account the Account module won't record fails it for
 /// a person. Only after every step is done and the target matches is a new account recorded and the item succeeded. Each
 /// change is audited in its own transaction. Steps run under their fixed operation ids, so nothing is changed twice.
+/// <para>
+/// Since DL-096, before each run the approval and the plan are decided again from the verified approval and the frozen item
+/// (<see cref="ProvisioningDecider"/>), and the stored steps must be exactly that plan: what the runner does never rests on its
+/// own tables alone, and an approval, entitlement or account that changed since planning stops the run. A create is done
+/// only when this operation made the object; an object that was already there is never taken over. If a new account can't
+/// be recorded after its steps ran, its entitlement is removed and it is disabled before the item fails.
+/// </para>
 /// </summary>
 public sealed class ProvisioningRunner(
     ProvisioningDbContext db,
@@ -28,6 +35,7 @@ public sealed class ProvisioningRunner(
     TimeProvider clock,
     IProvisioningTargets targets,
     IAccountProvisioning accounts,
+    ProvisioningDecider decider,
     ProvisioningRunnerSettings settings)
 {
     /// <summary>Runs up to one batch of due items; returns how many it claimed.</summary>
@@ -87,22 +95,56 @@ public sealed class ProvisioningRunner(
             return true;
         }
 
-        foreach (var operation in operations.Where(o => o.State != ProvisioningState.Succeeded))
+        // A new account recorded by a run that stopped before finishing the item: it is done (DL-096).
+        if (item.NewAccountType is not null && await accounts.FindRecordedAsync(item.Id, cancellationToken).ConfigureAwait(false) is { } already)
+        {
+            item.Succeed(already, Now());
+            await SaveAuditedAsync(item, ProvisioningAuditActions.Succeeded, AuditOutcome.Succeeded, null, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        // Decided again from the verified approval and the frozen item; the stored steps must be exactly that plan (DL-096).
+        var plan = operations.Where(o => o.Step <= ProvisioningPlanner.MaxPlanSteps).ToList();
+        var fresh = await decider.DecideAsync(item.Id, item.ApprovalActions ?? 1, closed: true, Now(), cancellationToken).ConfigureAwait(false);
+        var stop = fresh switch
+        {
+            null => "NoLongerAuthorized",
+            { Item.State: ProvisioningState.Blocked } => ProvisioningItem.ProblemCode(fresh.Item.IntegrityProblem ?? fresh.Item.Problem, "Recheck"),
+            _ when !ProvisioningPlanner.SamePlan(fresh.Operations, plan) => "PlanMismatch",
+            _ => null,
+        };
+        if (stop is not null)
+        {
+            item.Fail(stop, Now());
+            await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, null, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        foreach (var operation in plan.Where(o => o.State != ProvisioningState.Succeeded))
         {
             var step = Step(operation);
+            var creates = operation.Action == ProvisioningPlanner.AccountCreate;
             var interrupted = operation.State == ProvisioningState.Running;
             operation.Start();
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
-            // A step its runner was in the middle of may already be done: the target is read before it runs again.
-            var result = interrupted && await VerifyAsync(target, step, cancellationToken).ConfigureAwait(false)
+            // A step its runner was in the middle of may already be done: the target is read before it runs again. Not for a
+            // create: an object being there doesn't prove this operation made it (DL-096), so the create runs again under its
+            // operation id and the connector's ledger answers.
+            var result = interrupted && !creates && await VerifyAsync(target, step, cancellationToken).ConfigureAwait(false)
                 ? new StepResult(StepStatus.Done, "AlreadyInState")
                 : await RunAsync(target, step, cancellationToken).ConfigureAwait(false);
             if (result.Status == StepStatus.Unknown)
             {
-                result = await VerifyAsync(target, step, cancellationToken).ConfigureAwait(false)
+                result = !creates && await VerifyAsync(target, step, cancellationToken).ConfigureAwait(false)
                     ? new StepResult(StepStatus.Done, result.Code)
                     : new StepResult(StepStatus.Retry, result.Code ?? "Unknown");
+            }
+
+            // An account that was already there is someone's: never taken over (DL-083a, DL-096).
+            if (creates && result is { Status: StepStatus.Done, Code: "AlreadyInState" })
+            {
+                result = new StepResult(StepStatus.Rejected, "TargetExists");
             }
 
             now = Now();
@@ -129,7 +171,7 @@ public sealed class ProvisioningRunner(
         }
 
         // Every step is done: the target must now match the whole plan before anything is recorded.
-        foreach (var operation in operations)
+        foreach (var operation in plan)
         {
             if (!await VerifyAsync(target, Step(operation), cancellationToken).ConfigureAwait(false))
             {
@@ -145,13 +187,15 @@ public sealed class ProvisioningRunner(
             try
             {
                 recorded = await accounts.RecordCreatedAsync(
-                    new CreatedAccount(item.Id, item.ApplicationId!.Value, item.NewAccountType, item.AccountName!, operations[0].TargetId, item.Beneficiary!),
+                    new CreatedAccount(item.Id, item.ApplicationId!.Value, item.NewAccountType, item.AccountName!, plan[0].TargetId, item.Beneficiary!),
                     item.CorrelationId ?? MessageCorrelation.Current(),
                     cancellationToken).ConfigureAwait(false);
             }
             catch (AccountNotRecordedException refused)
             {
-                item.Fail("AccountNotRecorded", Now());
+                // The access exists on the target but can't be recorded: take it away before a person looks at it (DL-096).
+                var undone = await UndoAsync(item, target, plan, operations, cancellationToken).ConfigureAwait(false);
+                item.Fail(undone ? "AccountNotRecorded" : "UndoFailed", Now());
                 await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, null, cancellationToken, refused.Code).ConfigureAwait(false);
                 return true;
             }
@@ -160,6 +204,63 @@ public sealed class ProvisioningRunner(
         item.Succeed(recorded, Now());
         await SaveAuditedAsync(item, ProvisioningAuditActions.Succeeded, AuditOutcome.Succeeded, null, cancellationToken).ConfigureAwait(false);
         return true;
+    }
+
+    /// <summary>
+    /// Removes the entitlement and disables the new account (steps 11 and 12, fixed operation ids), each audited, then reads the
+    /// target to confirm. Undo steps already stored must be exactly the expected ones, or nothing is run. True if undone.
+    /// </summary>
+    private async Task<bool> UndoAsync(ProvisioningItem item, IProvisioningTarget target, List<ProvisioningOperation> plan, List<ProvisioningOperation> operations, CancellationToken cancellationToken)
+    {
+        var expected = ProvisioningPlanner.UndoNewAccount(item.Id, plan);
+        var stored = operations.Where(o => o.Step > ProvisioningPlanner.MaxPlanSteps).OrderBy(o => o.Step).ToList();
+        if (stored.Count == 0)
+        {
+            db.Operations.AddRange(expected);
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            stored = [.. expected];
+        }
+        else if (!stored.Select(Key).SequenceEqual(expected.Select(Key), StringComparer.Ordinal))
+        {
+            return false;
+        }
+
+        var undone = true;
+        foreach (var operation in stored.Where(o => o.State != ProvisioningState.Succeeded))
+        {
+            if (operation.State == ProvisioningState.Failed)
+            {
+                undone = false;
+                continue;
+            }
+
+            var step = Step(operation);
+            operation.Start();
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            var result = await RunAsync(target, step, cancellationToken).ConfigureAwait(false);
+            var done = result.Status == StepStatus.Done
+                || (result.Status == StepStatus.Unknown && await VerifyAsync(target, step, cancellationToken).ConfigureAwait(false));
+            if (done)
+            {
+                operation.Complete(result.Code, Now());
+            }
+            else
+            {
+                operation.Fail(result.Code, Now());
+                undone = false;
+            }
+
+            await SaveAuditedAsync(item, ProvisioningAuditActions.StepUndone, done ? AuditOutcome.Succeeded : AuditOutcome.Failed, operation, cancellationToken, result.Code).ConfigureAwait(false);
+        }
+
+        foreach (var operation in stored)
+        {
+            undone &= await VerifyAsync(target, Step(operation), cancellationToken).ConfigureAwait(false);
+        }
+
+        return undone;
+
+        static string Key(ProvisioningOperation o) => string.Join('|', o.Step, o.Id, o.Action, o.TargetId, o.RelatedId ?? "-");
     }
 
     private static TargetStep Step(ProvisioningOperation o) => new(

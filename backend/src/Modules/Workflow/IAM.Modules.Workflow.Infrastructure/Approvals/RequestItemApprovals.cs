@@ -8,10 +8,12 @@ namespace IAM.Modules.Workflow.Infrastructure.Approvals;
 
 /// <summary>
 /// Starts the approval of a submitted request item (DL-091), from the route the matrix selected when the item was frozen. The
-/// instance id is the item id, so a message delivered twice starts one approval: the second finds it and is a duplicate.
-/// A route or binding the workflow refuses is a message it can never process (dead-lettered, and its refusal audited).
+/// route, people and matrix evidence are read from the frozen item through the Request module (DL-096), never taken from the
+/// message: a message that names no frozen item, or says anything other than what was frozen, is refused, so whoever can
+/// send to the queue can't choose approvers. The instance id is the item id, so a message delivered twice starts one
+/// approval. A route or binding the workflow refuses is a message it can never process (dead-lettered, and audited).
 /// </summary>
-public sealed class RequestItemApprovals(IApprovalWorkflow workflow) : IMessageHandler
+public sealed class RequestItemApprovals(IApprovalWorkflow workflow, IRequestItemSource items) : IMessageHandler
 {
     public string ConsumerName => "workflow.request_items";
 
@@ -21,7 +23,14 @@ public sealed class RequestItemApprovals(IApprovalWorkflow workflow) : IMessageH
 
     public async Task<MessageOutcome> HandleAsync(MessageEnvelope envelope, CancellationToken cancellationToken)
     {
-        var item = MessageEnvelopes.Read<RequestItemSubmitted>(envelope);
+        var message = MessageEnvelopes.Read<RequestItemSubmitted>(envelope);
+        var item = await items.FindSubmittedAsync(message.ItemId, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidMessageException("A submitted event must name a frozen request item.");
+        if (!Same(message, item))
+        {
+            throw new InvalidMessageException("A submitted event must say exactly what the frozen item says.");
+        }
+
         var (binding, route) = Build(item);
         try
         {
@@ -36,6 +45,17 @@ public sealed class RequestItemApprovals(IApprovalWorkflow workflow) : IMessageH
         {
             throw new InvalidMessageException("The workflow refused the item's route or binding.", ex);
         }
+    }
+
+    /// <summary>Whether a message says what the frozen item says, field by field and stage by stage.</summary>
+    public static bool Same(RequestItemSubmitted message, RequestItemSubmitted frozen)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        ArgumentNullException.ThrowIfNull(frozen);
+        return string.Equals(
+            System.Text.Json.JsonSerializer.Serialize(message, MessageEnvelopes.Json),
+            System.Text.Json.JsonSerializer.Serialize(frozen, MessageEnvelopes.Json),
+            StringComparison.Ordinal);
     }
 
     /// <summary>The binding and route the item names, or <see cref="InvalidMessageException"/> for anything malformed.</summary>

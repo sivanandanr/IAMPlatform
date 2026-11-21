@@ -88,7 +88,7 @@ cd backend && IAM_PARITY_PROVIDER=PostgreSql dotnet test --project tests/IAM.Per
 - New migrations: add one for **each** provider with `dotnet ef migrations add` (see `backend/README.md`), review both, and keep `IdentityMigrationsMatchTheModel`-style tests green. Recovery from a bad migration is restore/PITR plus a compensating forward migration (DL-020); there are no down migrations.
 
 ## 3c. Workflow worker (DL-074)
-`IAM.Workers.Workflow` applies approval deadlines in the background. It needs `IAM_DB_PROVIDER` and the `workflow`, `catalog` and `organization` connection strings (user secrets, as for the API), and optionally `Workflow:Timeouts:IntervalSeconds` (5 to 3600, default 60) and `Workflow:Timeouts:BatchSize` (1 to 500, default 50):
+`IAM.Workers.Workflow` applies approval deadlines in the background. It needs `IAM_DB_PROVIDER` and the `workflow`, `catalog`, `organization` and (since DL-096, to read frozen request items) `request` connection strings (user secrets, as for the API), and optionally `Workflow:Timeouts:IntervalSeconds` (5 to 3600, default 60) and `Workflow:Timeouts:BatchSize` (1 to 500, default 50):
 ```bash
 dotnet user-secrets set "ConnectionStrings:workflow" "<connection string for the iam_app_workflow login>" --project backend/src/Workers/IAM.Workers.Workflow
 ```

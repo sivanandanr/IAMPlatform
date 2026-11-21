@@ -4,6 +4,7 @@ using IAM.BuildingBlocks.Security;
 using IAM.Modules.Audit.Infrastructure;
 using IAM.Modules.Catalog.Infrastructure;
 using IAM.Modules.Organization.Infrastructure;
+using IAM.Modules.Request.Infrastructure;
 using IAM.Modules.Workflow.Contracts;
 using IAM.Modules.Workflow.Infrastructure;
 using IAM.Modules.Workflow.Infrastructure.Approvals;
@@ -22,7 +23,7 @@ namespace IAM.Workers.Workflow;
 /// uses (<c>workflow</c>, <c>catalog</c>, <c>organization</c>), the timeout settings, the broker (<c>Messaging:RabbitMq</c>,
 /// the workflow module's own broker user) and the outbox relay settings (<c>Workflow:Outbox</c>), all checked before it
 /// runs. Besides timeouts it sends the workflow outbox to the broker (DL-077) and starts approvals of submitted request items
-/// (<c>Workflow:Consumer</c>, DL-091). It
+/// (<c>Workflow:Consumer</c>, DL-091), reading each frozen item with the request login (<c>request</c>, DL-096). It
 /// writes as the fixed system actor <c>system:workflow-timeouts</c>, and every permission check says no: applying timeouts
 /// needs none, and nothing in the worker can escalate or cancel.
 /// </summary>
@@ -73,7 +74,9 @@ public static class WorkflowWorkerHost
         services.AddSingleton<OutboxRelay<WorkflowDbContext>>();
         services.AddHostedService<OutboxRelayWorker<WorkflowDbContext>>();
 
-        // Submitted request items start their approvals here (DL-091), with the workflow's own broker user.
+        // Submitted request items start their approvals here (DL-091), with the workflow's own broker user, from the frozen
+        // item read with the request login (DL-096), never from the message's own copy of the route.
+        services.AddRequestItemSource();
         services.AddSingleton(ConsumerSettings.From(configuration, ConsumerSection));
         services.TryAddScoped<RequestItemApprovals>();
         services.AddHostedService<RabbitMqConsumer<RequestItemApprovals>>();

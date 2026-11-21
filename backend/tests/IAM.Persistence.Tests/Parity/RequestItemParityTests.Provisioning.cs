@@ -148,8 +148,11 @@ public sealed partial class RequestItemParityTests
 
         // A message that claims more than the log holds.
         var ahead = await ApprovedAsync(world, new SubmitItem(world.Beneficiary, world.Standard, world.Primary, null, null, null));
+        // ... is only noted (DL-096): it may be early or forged, and the genuine event still plans the item.
         (await HandleAsync(world, Authorized(ahead, 99))).ShouldBe(MessageOutcome.Processed);
-        (await PlannedAsync(ahead)).Item.IntegrityProblem.ShouldBe("MessageAhead");
+        (await FindPlannedAsync(ahead)).ShouldBeNull();
+        (await HandleAsync(world, await WorkflowEnvelopeAsync(ahead, ApprovalAuthorized.MessageType))).ShouldBe(MessageOutcome.Processed);
+        (await PlannedAsync(ahead)).Item.State.ShouldBe(ProvisioningState.Planned);
 
         // A verified approval that hasn't authorised anything: the "authorisation" isn't one.
         RequestItemView started;
@@ -160,7 +163,7 @@ public sealed partial class RequestItemParityTests
 
         await StartAsync(started.Id);
         (await HandleAsync(world, Authorized(started.Id, 1))).ShouldBe(MessageOutcome.Processed);
-        (await PlannedAsync(started.Id)).Item.Problem.ShouldBe("NotAuthorized");
+        (await FindPlannedAsync(started.Id)).ShouldBeNull("an approval that authorised nothing blocks nothing either");
 
         // A forged second audit record of an action: the stores disagree.
         // (One waiting item per person and entitlement: each case below has its own world.)
@@ -183,11 +186,13 @@ public sealed partial class RequestItemParityTests
         (await HandleAsync(third, await WorkflowEnvelopeAsync(forged, ApprovalAuthorized.MessageType))).ShouldBe(MessageOutcome.Processed);
         (await PlannedAsync(forged)).Item.IntegrityProblem.ShouldBe("DoesNotReplay");
 
-        foreach (var id in new[] { unknown, ahead, started.Id, duplicated, forged })
+        foreach (var id in new[] { unknown, duplicated, forged })
         {
             (await AuditCountAsync(id.ToString(), ProvisioningAuditActions.Planned, "Succeeded")).ShouldBe(0, "nothing planned");
             (await AuditCountAsync(id.ToString(), ProvisioningAuditActions.Blocked, "Denied")).ShouldBe(1);
         }
+
+        (await AuditCountAsync(started.Id.ToString(), ProvisioningAuditActions.Blocked, "Denied")).ShouldBe(0);
     }
 
     [Fact]
@@ -330,7 +335,7 @@ public sealed partial class RequestItemParityTests
         var (workflow, context) = Workflow();
         await using (context)
         {
-            (await new RequestItemApprovals(workflow).HandleAsync(await OutboxEnvelopeAsync(itemId), Ct)).ShouldBe(MessageOutcome.Processed);
+            (await Starter(workflow).HandleAsync(await OutboxEnvelopeAsync(itemId), Ct)).ShouldBe(MessageOutcome.Processed);
         }
     }
 
@@ -418,24 +423,37 @@ public sealed partial class RequestItemParityTests
     {
         const string actor = "system:provisioning";
         var context = TestSupport.CreateProvisioning(db.Provider, db.ProvisioningAppConnectionString, new AuditingSaveChangesInterceptor(TimeProvider.System, new FixedActor(actor)));
+        var writer = new AuditWriter(TestSupport.ProviderFor(db.Provider), TimeProvider.System, new FixedActor(actor),
+            new AuditActionCatalog(ProvisioningAuditActions.All.Select(a => new AuditActionRegistration(a))));
+        var (decider, contexts) = Decider(bindings);
+        var handler = new AuthorizedApprovals(context, TestSupport.ProviderFor(db.Provider), TimeProvider.System, writer, decider);
+        return new ProvisioningScope(handler, [context, .. contexts]);
+    }
+
+    /// <summary>The decider with each module's own login (DL-096), and the contexts to dispose.</summary>
+    private (ProvisioningDecider Decider, IAsyncDisposable[] Contexts) Decider(IEnumerable<ConnectorBinding> bindings, TimeProvider? clock = null)
+    {
         var workflow = TestSupport.CreateWorkflow(db.Provider, db.WorkflowAppConnectionString);
         var audit = TestSupport.CreateAudit(db.Provider, db.AuditAppConnectionString);
         var request = TestSupport.CreateRequest(db.Provider, db.RequestAppConnectionString);
         var catalog = TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString);
         var accounts = TestSupport.CreateAccount(db.Provider, db.AccountAppConnectionString);
-        var writer = new AuditWriter(TestSupport.ProviderFor(db.Provider), TimeProvider.System, new FixedActor(actor),
-            new AuditActionCatalog(ProvisioningAuditActions.All.Select(a => new AuditActionRegistration(a))));
-        var handler = new AuthorizedApprovals(
-            context,
-            TestSupport.ProviderFor(db.Provider),
-            TimeProvider.System,
-            writer,
+        var decider = new ProvisioningDecider(
             new ApprovalIntegrityCheck(workflow, new AuditTrail(audit)),
             new RequestItemSource(request),
             new EntitlementDirectory(catalog),
             new AccountDirectory(accounts),
+            AccountRecorder(accounts, clock),
             new ConnectorBindings(bindings));
-        return new ProvisioningScope(handler, context, workflow, audit, request, catalog, accounts);
+        return (decider, [workflow, audit, request, catalog, accounts]);
+    }
+
+    /// <summary>The workflow consumer, reading frozen items with the request login (DL-096). Its context is disposed with the test.</summary>
+    private RequestItemApprovals Starter(ApprovalWorkflowService workflow)
+    {
+        var request = TestSupport.CreateRequest(db.Provider, db.RequestAppConnectionString);
+        _disposables.Add(request);
+        return new RequestItemApprovals(workflow, new RequestItemSource(request));
     }
 
     private string P(string table) => IsSqlServer ? $"[provisioning].[{table}]" : $"provisioning.{IamModelConventions.ToSnakeCase(table)}";

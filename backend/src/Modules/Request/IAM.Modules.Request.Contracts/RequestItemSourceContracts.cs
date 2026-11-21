@@ -25,4 +25,11 @@ public interface IRequestItemSource
 {
     /// <summary>The frozen item, or null if there is none.</summary>
     Task<ProvisionableItem?> FindAsync(Guid itemId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// What the item was submitted for approval with, rebuilt from the frozen item (DL-096): the people, the matrix evidence
+    /// and the route. Workflow starts an approval only from this, never from a message's own copy; provisioning compares the
+    /// approval it replays with it. Null if there is no such item.
+    /// </summary>
+    Task<RequestItemSubmitted?> FindSubmittedAsync(Guid itemId, CancellationToken cancellationToken);
 }

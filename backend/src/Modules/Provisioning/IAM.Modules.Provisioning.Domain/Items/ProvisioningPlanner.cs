@@ -48,6 +48,11 @@ public static partial class ProvisioningPlanner
     public const string AccountCreate = "account.create";
     public const string AccountEnable = "account.enable";
     public const string EntitlementAdd = "account.entitlement.add";
+    public const string EntitlementRemove = "account.entitlement.remove";
+    public const string AccountDisable = "account.disable";
+
+    /// <summary>Steps above this undo a run (DL-096); a plan never has more.</summary>
+    public const int MaxPlanSteps = 10;
     public const string AccountObject = "account";
     public const string EntitlementObject = "entitlement";
     public const string ContainerObject = "container";
@@ -65,7 +70,7 @@ public static partial class ProvisioningPlanner
         }
 
         var item = ProvisioningItem.Plan(itemId, approvalActions, details, binding.ConnectorKey, now);
-        var account = $"CN={details.AccountName},{binding.AccountContainer}";
+        var account = NewAccountTarget(details.AccountName, binding);
         var attributes = JsonSerializer.Serialize(new Dictionary<string, string> { ["sAMAccountName"] = details.AccountName });
         return new ProvisioningPlan(item,
         [
@@ -73,6 +78,13 @@ public static partial class ProvisioningPlanner
             ProvisioningOperation.Planned(itemId, 2, EntitlementAdd, AccountObject, account, EntitlementObject, technicalName, "{}"),
             ProvisioningOperation.Planned(itemId, 3, AccountEnable, AccountObject, account, null, null, "{}"),
         ]);
+    }
+
+    /// <summary>Where a new account goes: a CN in the application's account container.</summary>
+    public static string NewAccountTarget(string accountName, ConnectorBinding binding)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        return $"CN={accountName},{binding.AccountContainer}";
     }
 
     /// <summary>Plans access on an existing account, identified on the target by <paramref name="accountTargetId"/>.</summary>
@@ -89,6 +101,33 @@ public static partial class ProvisioningPlanner
 
         var item = ProvisioningItem.Plan(itemId, approvalActions, details, binding.ConnectorKey, now);
         return new ProvisioningPlan(item, [ProvisioningOperation.Planned(itemId, 1, EntitlementAdd, AccountObject, accountTargetId, EntitlementObject, technicalName, "{}")]);
+    }
+
+    /// <summary>
+    /// Undoes a new account's access when it can't be recorded after its steps ran (DL-096): the entitlement is removed, then
+    /// the account is disabled, under fixed operation ids (steps 11 and 12) like any other step. The account itself stays, for
+    /// a person to look at; nothing is deleted.
+    /// </summary>
+    public static IReadOnlyList<ProvisioningOperation> UndoNewAccount(Guid itemId, IReadOnlyList<ProvisioningOperation> plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        var create = plan.SingleOrDefault(o => o.Action == AccountCreate) ?? throw new ArgumentException("Only a new account's plan is undone.", nameof(plan));
+        var add = plan.Single(o => o.Action == EntitlementAdd);
+        return
+        [
+            ProvisioningOperation.Planned(itemId, MaxPlanSteps + 1, EntitlementRemove, AccountObject, create.TargetId, EntitlementObject, add.RelatedId, "{}"),
+            ProvisioningOperation.Planned(itemId, MaxPlanSteps + 2, AccountDisable, AccountObject, create.TargetId, null, null, "{}"),
+        ];
+    }
+
+    /// <summary>Whether two plans are the same steps: ids, actions, objects and attributes (DL-096). Undo steps don't count.</summary>
+    public static bool SamePlan(IEnumerable<ProvisioningOperation> a, IEnumerable<ProvisioningOperation> b)
+    {
+        static string Key(ProvisioningOperation o) =>
+            string.Join('\u001f', o.Step, o.Id, o.Action, o.TargetType, o.TargetId, o.RelatedType ?? "-", o.RelatedId ?? "-", o.Attributes);
+        var left = a.Where(o => o.Step <= MaxPlanSteps).OrderBy(o => o.Step).Select(Key).ToList();
+        var right = b.Where(o => o.Step <= MaxPlanSteps).OrderBy(o => o.Step).Select(Key).ToList();
+        return left.Count > 0 && left.SequenceEqual(right, StringComparer.Ordinal);
     }
 
     /// <summary>The account name rule (DL-089, DL-092), so a name can sit in a DN without escaping.</summary>

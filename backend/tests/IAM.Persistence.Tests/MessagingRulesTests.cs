@@ -101,7 +101,8 @@ public sealed class MessagingRulesTests
             if (type == typeof(AuthorizedApprovals))
             {
                 takes.ShouldBe(gated);
-                type.GetConstructors().ShouldHaveSingleItem().GetParameters().Select(p => p.ParameterType).ShouldContain(typeof(IApprovalIntegrity));
+                type.GetConstructors().ShouldHaveSingleItem().GetParameters().Select(p => p.ParameterType).ShouldContain(typeof(ProvisioningDecider));
+                typeof(ProvisioningDecider).GetConstructors().ShouldHaveSingleItem().GetParameters().Select(p => p.ParameterType).ShouldContain(typeof(IApprovalIntegrity));
                 continue;
             }
 
