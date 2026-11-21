@@ -143,6 +143,10 @@ public sealed class ProvisioningItem
         (State == ProvisioningState.Planned && (NextAttemptAtUtc is null || NextAttemptAtUtc <= now))
         || (State == ProvisioningState.Running && LeaseUntilUtc < now);
 
+    /// <summary>
+    /// Takes the item for a run. Taking over a run whose lease ran out counts as an attempt (DL-097): a run that keeps stopping
+    /// without finishing ends like any other repeated failure, instead of being retried for ever.
+    /// </summary>
     public void Claim(DateTimeOffset now, TimeSpan lease)
     {
         if (!CanClaim(now) || lease <= TimeSpan.Zero)
@@ -150,7 +154,19 @@ public sealed class ProvisioningItem
             throw new InvalidOperationException("The item can't be claimed now.");
         }
 
+        if (State == ProvisioningState.Running)
+        {
+            Attempts++;
+        }
+
         State = ProvisioningState.Running;
+        LeaseUntilUtc = now + lease;
+    }
+
+    /// <summary>Extends the running item's lease before its next step (DL-097), so a long run isn't taken over mid-way.</summary>
+    public void Renew(DateTimeOffset now, TimeSpan lease)
+    {
+        RequireRunning();
         LeaseUntilUtc = now + lease;
     }
 

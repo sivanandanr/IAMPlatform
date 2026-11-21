@@ -23,8 +23,12 @@ public sealed record ProvisionableItem(
 /// <summary>Read-only view of frozen request items for provisioning (ADR-0001: no cross-module table access).</summary>
 public interface IRequestItemSource
 {
-    /// <summary>The frozen item, or null if there is none.</summary>
-    Task<ProvisionableItem?> FindAsync(Guid itemId, CancellationToken cancellationToken);
+    /// <summary>
+    /// The frozen item, or null if there is none. With <paramref name="namesGivenBy"/> (an Action level's id and when it was
+    /// completed, DL-097), only names given on a completed level, no later than it was completed, count: a name that committed
+    /// as the level closed is never the one provisioned.
+    /// </summary>
+    Task<ProvisionableItem?> FindAsync(Guid itemId, IReadOnlyDictionary<Guid, DateTimeOffset>? namesGivenBy, CancellationToken cancellationToken);
 
     /// <summary>
     /// What the item was submitted for approval with, rebuilt from the frozen item (DL-096): the people, the matrix evidence

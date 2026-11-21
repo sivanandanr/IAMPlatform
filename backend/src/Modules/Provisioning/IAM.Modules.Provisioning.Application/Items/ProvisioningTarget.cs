@@ -54,13 +54,16 @@ public interface IProvisioningTargets
 /// <summary>The runner's settings (DL-094), all bounded.</summary>
 public sealed record ProvisioningRunnerSettings
 {
-    public ProvisioningRunnerSettings(int? intervalSeconds = null, int? batchSize = null, int? leaseSeconds = null, int? maxAttempts = null, int? retryDelaySeconds = null)
+    public ProvisioningRunnerSettings(int? intervalSeconds = null, int? batchSize = null, int? leaseSeconds = null, int? maxAttempts = null, int? retryDelaySeconds = null, int? stepTimeoutSeconds = null)
     {
         Interval = TimeSpan.FromSeconds(Bounded(intervalSeconds ?? 10, 1, 3600, nameof(intervalSeconds)));
         BatchSize = Bounded(batchSize ?? 20, 1, 500, nameof(batchSize));
         Lease = TimeSpan.FromSeconds(Bounded(leaseSeconds ?? 300, 30, 3600, nameof(leaseSeconds)));
         MaxAttempts = Bounded(maxAttempts ?? 5, 1, 50, nameof(maxAttempts));
         RetryDelay = TimeSpan.FromSeconds(Bounded(retryDelaySeconds ?? 30, 1, 3600, nameof(retryDelaySeconds)));
+
+        // A call to the target never outlasts half the lease, so the lease is renewed before another runner may take over.
+        StepTimeout = TimeSpan.FromSeconds(Bounded(stepTimeoutSeconds ?? Math.Min(60, (int)Lease.TotalSeconds / 2), 1, (int)Lease.TotalSeconds / 2, nameof(stepTimeoutSeconds)));
     }
 
     public const string Section = "Provisioning:Runner";
@@ -73,6 +76,9 @@ public sealed record ProvisioningRunnerSettings
 
     /// <summary>Temporary failures allowed before the item fails for a person to look at.</summary>
     public int MaxAttempts { get; }
+
+    /// <summary>The longest one call to the target may take; a call that takes longer has an unknown outcome (DL-097).</summary>
+    public TimeSpan StepTimeout { get; }
 
     /// <summary>The first wait after a temporary failure; it doubles each time, up to an hour.</summary>
     public TimeSpan RetryDelay { get; }

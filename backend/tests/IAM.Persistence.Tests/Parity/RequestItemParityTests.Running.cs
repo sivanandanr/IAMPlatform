@@ -222,7 +222,7 @@ public sealed partial class RequestItemParityTests
         return item;
     }
 
-    private async Task<bool> RunAsync(Guid item, IProvisioningTarget? target, TimeProvider? clock = null, int maxAttempts = 5, CancellationToken? cancellationToken = null)
+    private async Task<bool> RunAsync(Guid item, IProvisioningTarget? target, TimeProvider? clock = null, int maxAttempts = 5, CancellationToken? cancellationToken = null, int? stepTimeoutSeconds = null, IProvisioningTargets? targets = null)
     {
         const string actor = "system:provisioning";
         clock ??= TimeProvider.System;
@@ -239,10 +239,10 @@ public sealed partial class RequestItemParityTests
                 context,
                 writer,
                 clock,
-                new Targets(target),
+                targets ?? new Targets(target),
                 AccountRecorder(accounts, clock),
                 decider,
-                new ProvisioningRunnerSettings(batchSize: 10, leaseSeconds: 60, maxAttempts: maxAttempts, retryDelaySeconds: 30));
+                new ProvisioningRunnerSettings(batchSize: 10, leaseSeconds: 60, maxAttempts: maxAttempts, retryDelaySeconds: 30, stepTimeoutSeconds: stepTimeoutSeconds));
             return await runner.RunItemAsync(item, cancellationToken ?? Ct);
         }
         finally
@@ -276,14 +276,22 @@ public sealed partial class RequestItemParityTests
 
         public Action? OnRun { get; init; }
 
-        public Task<StepResult> RunAsync(TargetStep operation, CancellationToken cancellationToken)
+        /// <summary>How long each call takes, honouring the runner's time limit.</summary>
+        public TimeSpan Delay { get; init; }
+
+        public async Task<StepResult> RunAsync(TargetStep operation, CancellationToken cancellationToken)
         {
             var status = script[Math.Min(Interlocked.Increment(ref _runs) - 1, script.Length - 1)];
             OnRun?.Invoke();
             cancellationToken.ThrowIfCancellationRequested();
+            if (Delay > TimeSpan.Zero)
+            {
+                await Task.Delay(Delay, cancellationToken);
+            }
+
             return status == StepStatus.Unknown
                 ? throw new TimeoutException("The call broke off.")
-                : Task.FromResult(new StepResult(status, status.ToString()));
+                : new StepResult(status, status.ToString());
         }
 
         public Task<bool> VerifyAsync(TargetStep operation, CancellationToken cancellationToken) => Task.FromResult(Matches);

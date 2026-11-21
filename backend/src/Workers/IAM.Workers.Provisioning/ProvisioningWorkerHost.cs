@@ -81,7 +81,7 @@ public static class ProvisioningWorkerHost
         var runner = configuration.GetSection(ProvisioningRunnerSettings.Section);
         services.AddProvisioningRunner(new ProvisioningRunnerSettings(
             runner.GetValue<int?>("IntervalSeconds"), runner.GetValue<int?>("BatchSize"), runner.GetValue<int?>("LeaseSeconds"),
-            runner.GetValue<int?>("MaxAttempts"), runner.GetValue<int?>("RetryDelaySeconds")));
+            runner.GetValue<int?>("MaxAttempts"), runner.GetValue<int?>("RetryDelaySeconds"), runner.GetValue<int?>("StepTimeoutSeconds")));
         var baseDn = configuration[MockBaseDnSetting] ?? MockActiveDirectoryConnector.DefaultBaseDn;
         services.AddSingleton(sp => new MockActiveDirectoryConnector(ConnectorSettings.Default, sp.GetRequiredService<IOperationLedger>(), baseDn, sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<IProvisioningTargets>(sp => new ConnectorTargets(new Dictionary<string, IProvisioningTarget>(StringComparer.Ordinal)
