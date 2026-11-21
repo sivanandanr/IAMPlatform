@@ -20,6 +20,8 @@ public static class AccountInfrastructure
         services.TryAddScoped<IAccountAdministration, AccountAdministrationService>();
         services.TryAddScoped<IAccountDirectory, AccountDirectory>();
         services.TryAddScoped<IAccountNaming, AccountNaming>();
+        services.TryAddScoped<IAccountProvisioning, AccountProvisioningService>();
+        services.AddSingleton(new AuditActionRegistration(AccountProvisioningService.Created));
         foreach (var action in AccountAuditActions.All)
         {
             services.AddSingleton(new AuditActionRegistration(action));

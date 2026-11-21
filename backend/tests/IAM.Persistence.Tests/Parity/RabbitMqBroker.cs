@@ -32,6 +32,12 @@ public sealed class RabbitMqBroker : IAsyncLifetime
     /// <summary>The notification module's own broker user (permissions.json).</summary>
     public RabbitMqSettings Notification { get; private set; } = null!;
 
+    /// <summary>The request module's own broker user (permissions.json).</summary>
+    public RabbitMqSettings Request { get; private set; } = null!;
+
+    /// <summary>The provisioning module's own broker user (permissions.json).</summary>
+    public RabbitMqSettings Provisioning { get; private set; } = null!;
+
     public async ValueTask InitializeAsync()
     {
         _container = new RabbitMqBuilder(Image).WithUsername(Admin).WithPassword(_password).Build();
@@ -63,6 +69,8 @@ public sealed class RabbitMqBroker : IAsyncLifetime
 
         Workflow = users["iam-workflow"];
         Notification = users["iam-notification"];
+        Request = users["iam-request"];
+        Provisioning = users["iam-provisioning"];
     }
 
     /// <summary>Applies the definitions file again, restoring anything a test deleted.</summary>

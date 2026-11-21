@@ -1365,6 +1365,8 @@
         "type": "Project",
         "dependencies": {
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
           "IAM.Modules.Provisioning.Application": "[1.0.0, )",
           "IAM.Modules.Provisioning.Contracts": "[1.0.0, )",
           "IAM.Modules.Provisioning.Infrastructure": "[1.0.0, )"
@@ -1376,7 +1378,9 @@
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
           "IAM.BuildingBlocks.Messaging": "[1.0.0, )",
           "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
           "IAM.Modules.Account.Contracts": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
           "IAM.Modules.Audit.Contracts": "[1.0.0, )",
           "IAM.Modules.Catalog.Contracts": "[1.0.0, )",
           "IAM.Modules.Provisioning.Application": "[1.0.0, )",
@@ -1548,6 +1552,7 @@
           "IAM.BuildingBlocks.Messaging.RabbitMq": "[1.0.0, )",
           "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
           "IAM.BuildingBlocks.Security": "[1.0.0, )",
+          "IAM.Connectors.ActiveDirectory.Mock": "[1.0.0, )",
           "IAM.Connectors.Sdk": "[1.0.0, )",
           "IAM.Modules.Account.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Audit.Infrastructure": "[1.0.0, )",

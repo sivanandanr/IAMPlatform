@@ -42,8 +42,42 @@ public sealed class Account
     /// <summary>The approved link request that recorded a linked account.</summary>
     public Guid? LinkRequestId { get; private set; }
 
+    /// <summary>The provisioning item that created an account IAM created (DL-094).</summary>
+    public Guid? ProvisioningItemId { get; private set; }
+
     /// <summary>Whether the target has confirmed the details; a person's word alone never does.</summary>
     public bool Verified { get; private set; }
+
+    /// <summary>
+    /// Records an account provisioning created, once the target confirmed it (DL-094): active and verified, from the
+    /// provisioning item that created it. The values are checked as a link's are.
+    /// </summary>
+    public static Account FromProvisioning(Guid provisioningItemId, Guid applicationId, AccountType type, string name, string targetId, string owner)
+    {
+        if (provisioningItemId == Guid.Empty || applicationId == Guid.Empty)
+        {
+            throw new AccountRejectedException("ProvisioningItemId", "is required");
+        }
+
+        AccountRules.ValidateType(type);
+        AccountRules.ValidateName(name);
+        AccountRules.ValidateTargetId(targetId);
+        AccountRules.ValidateOwner(owner);
+        return new Account
+        {
+            Id = Guid.CreateVersion7(),
+            ApplicationId = applicationId,
+            Type = type,
+            Name = name,
+            NameKey = AccountRules.NameKey(name),
+            TargetId = targetId,
+            Owner = owner,
+            Status = AccountStatus.Active,
+            Origin = AccountOrigin.Created,
+            ProvisioningItemId = provisioningItemId,
+            Verified = true,
+        };
+    }
 
     /// <summary>Records an existing account exactly as an approved link request names it. Only the request calls this.</summary>
     internal static Account FromLink(AccountLinkRequest request) => new()

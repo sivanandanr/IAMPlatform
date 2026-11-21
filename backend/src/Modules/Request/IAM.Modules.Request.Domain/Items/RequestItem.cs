@@ -191,6 +191,9 @@ public sealed partial class RequestItem
 
     public DateTimeOffset SubmittedAtUtc { get; private set; }
 
+    /// <summary>The trace id the item was submitted under, carried to every later step (DL-094); null for older items.</summary>
+    public string? CorrelationId { get; private set; }
+
     /// <summary>Freezes an item from values the service has already checked against the catalog, the accounts and the matrix.</summary>
     public static RequestItem Freeze(
         Guid id,
@@ -209,9 +212,10 @@ public sealed partial class RequestItem
         string policyMaker,
         string evidence,
         string route,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        string? correlationId = null)
     {
-        var valid = id != Guid.Empty && applicationId != Guid.Empty && entitlementId != Guid.Empty && entitlementVersionId != Guid.Empty
+        var valid = (correlationId is null || IsTraceId(correlationId)) && id != Guid.Empty && applicationId != Guid.Empty && entitlementId != Guid.Empty && entitlementVersionId != Guid.Empty
             && matrixVersionId != Guid.Empty && matchedRuleId != Guid.Empty
             && SecondPersonText.IsPerson(requester) && SecondPersonText.IsPerson(beneficiary) && SecondPersonText.IsPerson(policyMaker)
             && IsHash(entitlementContentHash) && IsHash(matrixContentHash)
@@ -245,8 +249,12 @@ public sealed partial class RequestItem
             Evidence = evidence,
             Route = route,
             SubmittedAtUtc = now,
+            CorrelationId = correlationId,
         };
     }
+
+    private static bool IsTraceId(string value) =>
+        value is { Length: 32 } && value.All(char.IsAsciiHexDigitLower) && value.Any(c => c != '0');
 
     /// <summary>
     /// "Access for" (spec v3.2 §6.4): no expiry gives none and takes none; fixed days gives the entitlement's; requester chooses

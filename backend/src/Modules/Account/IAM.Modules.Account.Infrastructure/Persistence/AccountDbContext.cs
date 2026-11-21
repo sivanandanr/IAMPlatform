@@ -42,6 +42,7 @@ public sealed class AccountDbContext(DbContextOptions<AccountDbContext> options)
         account.Property(x => x.Origin).HasConversion<string>().IsRequired().IsCode(16);
         account.HasOne<AccountLinkRequestRow>().WithMany().HasForeignKey(x => x.LinkRequestId).OnDelete(DeleteBehavior.Restrict);
         account.HasIndex(x => new { x.ApplicationId, x.Owner });
+        account.HasIndex(x => x.ProvisioningItemId).IsUnique();
 
         // One Primary per person, unique live names and target ids: filtered unique indexes, hand-written in the migrations.
         var link = modelBuilder.Entity<AccountLinkRequestRow>();

@@ -28,6 +28,8 @@ Option 1. Messages carry correlation ID, causation ID, idempotency key, schema v
 
 **Provisioning consumer (DL-093).** `IAM.Workers.Provisioning` is the first consumer of `authorized` and `closed`, on `iam.provisioning.approvals` with the `iam-provisioning` user. Before acting it checks the approval's action log against the audit store (`IApprovalIntegrity`, R-037), and it plans only for a verified approval that authorises provisioning with no Action level still open; either event plans an item once, keyed by the item id. A test allows no other consumer of these events.
 
+**One correlation id (DL-094).** A consumer handles each message under a trace whose id is the envelope's correlation id (a W3C trace id). The request item, the approval instance and the provisioning item store the id they started under, so work that happens later (an approver's call, the runner) audits and sends with it, and the caller's own trace is recorded as the cause.
+
 ## Security and privacy impact
 Payloads contain no tokens, secrets or full HR records (schema assertion). Unknown schema version / oversized / malformed messages go to DLQ unprocessed. Broker users per vhost; no `guest`.
 

@@ -34,3 +34,29 @@ public interface IAccountNaming
 {
     Task<ProposedAccountName> ProposeAsync(Guid applicationId, string accountType, IReadOnlyDictionary<string, string?> attributes, CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// An account provisioning created and the target confirmed (DL-094): who it belongs to, its type and name, and the target's own
+/// identifier. The provisioning item that created it identifies it, so recording it again changes nothing.
+/// </summary>
+public sealed record CreatedAccount(Guid ProvisioningItemId, Guid ApplicationId, string Type, string Name, string TargetId, string Owner)
+{
+    /// <summary>The ids only: logging this object must not expose a person or a login.</summary>
+    public override string ToString() => $"{nameof(CreatedAccount)} {ProvisioningItemId}";
+}
+
+/// <summary>Why recording a created account was refused: codes only (DL-094).</summary>
+public sealed class AccountNotRecordedException(string code) : Exception($"The created account was not recorded: {code}.")
+{
+    public string Code { get; } = code;
+}
+
+/// <summary>
+/// Records accounts that provisioning created (DL-094). Called only after the target confirmed the account, so it is recorded
+/// active and verified; no second person, because the approved request authorised it. The same item records once.
+/// </summary>
+public interface IAccountProvisioning
+{
+    /// <summary>The recorded account's id; <see cref="AccountNotRecordedException"/> if it can't be recorded as given.</summary>
+    Task<Guid> RecordCreatedAsync(CreatedAccount account, string correlationId, CancellationToken cancellationToken);
+}

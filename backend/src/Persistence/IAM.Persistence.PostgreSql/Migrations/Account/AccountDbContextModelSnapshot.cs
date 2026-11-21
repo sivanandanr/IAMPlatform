@@ -91,6 +91,10 @@ namespace IAM.Persistence.PostgreSql.Migrations.Account
                         .UseCollation("C")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<Guid?>("ProvisioningItemId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("provisioning_item_id");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -126,6 +130,10 @@ namespace IAM.Persistence.PostgreSql.Migrations.Account
 
                     b.HasIndex("LinkRequestId")
                         .HasDatabaseName("ix_account_link_request_id");
+
+                    b.HasIndex("ProvisioningItemId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_account_provisioning_item_id");
 
                     b.HasIndex("ApplicationId", "Owner")
                         .HasDatabaseName("ix_account_application_id_owner");
