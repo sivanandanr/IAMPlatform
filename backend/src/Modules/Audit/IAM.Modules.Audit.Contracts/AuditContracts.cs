@@ -120,3 +120,41 @@ public sealed class AuditRecordRejectedException : Exception
 
     public string? Field { get; }
 }
+
+/// <summary>
+/// One stored audit event as a reader sees it (DL-093): its action, outcome, payload fields and whether its stored row hash
+/// still matches its columns. Read with the audit module's own login (<c>iam_audit_reader</c>), never a module's.
+/// </summary>
+public sealed record AuditTrailEntry(Guid Id, long Seq, string Action, string Outcome, IReadOnlyDictionary<string, string?> Payload, bool Intact)
+{
+    /// <summary>The id and action only: a payload can name people.</summary>
+    public override string ToString() => $"{nameof(AuditTrailEntry)} {Id} {Action}";
+}
+
+/// <summary>
+/// Reads the audit trail of one target (DL-093). The rows come from the audit store through the audit login, which a module's
+/// login cannot impersonate, so a module can check its own log against what was audited when it acted.
+/// </summary>
+public interface IAuditTrail
+{
+    /// <summary>The target's events in order of arrival, at most <paramref name="max"/>; throws if there are more.</summary>
+    Task<IReadOnlyList<AuditTrailEntry>> ForTargetAsync(string targetType, string targetId, int max, CancellationToken cancellationToken);
+}
+
+/// <summary>The target has more audit events than the caller allowed for: nothing is returned, so nothing is checked partly.</summary>
+public sealed class AuditTrailTooLongException : Exception
+{
+    public AuditTrailTooLongException()
+    {
+    }
+
+    public AuditTrailTooLongException(string message)
+        : base(message)
+    {
+    }
+
+    public AuditTrailTooLongException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
+}

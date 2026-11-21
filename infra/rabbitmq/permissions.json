@@ -29,6 +29,15 @@
       "topics": [
         { "exchange": "iam.request", "write": "^request\\.item\\.[a-z_]+$", "read": "^$" }
       ]
+    },
+    {
+      "user": "iam-provisioning",
+      "configure": "^$",
+      "write": "^iam\\.provisioning\\.approvals\\.retry$",
+      "read": "^iam\\.provisioning\\.approvals$",
+      "topics": [
+        { "exchange": "iam.workflow", "write": "^$", "read": "^$" }
+      ]
     }
   ]
 }

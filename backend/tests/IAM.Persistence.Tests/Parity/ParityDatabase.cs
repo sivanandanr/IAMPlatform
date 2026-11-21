@@ -11,6 +11,7 @@ using IAM.Modules.Identity.Infrastructure.Persistence;
 using IAM.Modules.Notification.Infrastructure.Persistence;
 using IAM.Modules.Organization.Infrastructure.Persistence;
 using IAM.Modules.Policy.Infrastructure.Persistence;
+using IAM.Modules.Provisioning.Infrastructure.Persistence;
 using IAM.Modules.Request.Infrastructure.Persistence;
 using IAM.Modules.Workflow.Infrastructure.Persistence;
 using IAM.Persistence.Tests.Probe;
@@ -50,6 +51,7 @@ public sealed class ParityDatabase : IAsyncLifetime
     public const string AccountAppLogin = "iam_app_account";
     public const string PolicyAppLogin = "iam_app_policy";
     public const string RequestAppLogin = "iam_app_request";
+    public const string ProvisioningAppLogin = "iam_app_provisioning";
 
     private const string SqlServerImage = "mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718";
     private const string PostgreSqlImage = "postgres:17.11-alpine3.24@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac";
@@ -67,6 +69,7 @@ public sealed class ParityDatabase : IAsyncLifetime
     private readonly string _accountAppPassword = NewPassword();
     private readonly string _policyAppPassword = NewPassword();
     private readonly string _requestAppPassword = NewPassword();
+    private readonly string _provisioningAppPassword = NewPassword();
     private IDatabaseContainer? _container;
     private string _adminConnectionString = string.Empty;
 
@@ -122,9 +125,15 @@ public sealed class ParityDatabase : IAsyncLifetime
 
     public string RequestAppConnectionString => WithLogin(RequestAppLogin, _requestAppPassword);
 
+    public string ProvisioningAppConnectionString => WithLogin(ProvisioningAppLogin, _provisioningAppPassword);
+
     public IReadOnlyList<string> RequestFirstRunApplied { get; private set; } = [];
 
     public IReadOnlyList<string> RequestSecondRunPending { get; private set; } = [];
+
+    public IReadOnlyList<string> ProvisioningFirstRunApplied { get; private set; } = [];
+
+    public IReadOnlyList<string> ProvisioningSecondRunPending { get; private set; } = [];
 
     public IReadOnlyList<string> CatalogSecondRunPending { get; private set; } = [];
 
@@ -184,10 +193,11 @@ public sealed class ParityDatabase : IAsyncLifetime
         await BootstrapAsync(AccountDbContext.SchemaName, AccountAppLogin, _accountAppPassword, ct);
         await BootstrapAsync(PolicyDbContext.SchemaName, PolicyAppLogin, _policyAppPassword, ct);
         await BootstrapAsync(RequestDbContext.SchemaName, RequestAppLogin, _requestAppPassword, ct);
+        await BootstrapAsync(ProvisioningDbContext.SchemaName, ProvisioningAppLogin, _provisioningAppPassword, ct);
 
         // Every module runtime login may append audit events in its own transaction; only the audit login may read
         // them (ADR-0018). Roles must exist before the audit migration grants to them.
-        foreach (var login in new[] { IdentityAppLogin, ProbeAppLogin, AuditAppLogin, AdministrationAppLogin, CatalogAppLogin, OrganizationAppLogin, WorkflowAppLogin, AccountAppLogin, PolicyAppLogin, RequestAppLogin })
+        foreach (var login in new[] { IdentityAppLogin, ProbeAppLogin, AuditAppLogin, AdministrationAppLogin, CatalogAppLogin, OrganizationAppLogin, WorkflowAppLogin, AccountAppLogin, PolicyAppLogin, RequestAppLogin, ProvisioningAppLogin })
         {
             await GrantAuditRoleAsync(login, AuditDbContext.WriterRole, ct);
         }
@@ -310,6 +320,19 @@ public sealed class ParityDatabase : IAsyncLifetime
         {
             RequestSecondRunPending = (await request.Database.GetPendingMigrationsAsync(ct)).ToList();
             await request.Database.MigrateAsync(ct);
+        }
+
+        await using (var provisioning = TestSupport.CreateProvisioning(Provider, MigratorConnectionString))
+        {
+            var pending = (await provisioning.Database.GetPendingMigrationsAsync(ct)).ToList();
+            await provisioning.Database.MigrateAsync(ct);
+            ProvisioningFirstRunApplied = pending;
+        }
+
+        await using (var provisioning = TestSupport.CreateProvisioning(Provider, MigratorConnectionString))
+        {
+            ProvisioningSecondRunPending = (await provisioning.Database.GetPendingMigrationsAsync(ct)).ToList();
+            await provisioning.Database.MigrateAsync(ct);
         }
 
         await using (var notification = TestSupport.CreateNotification(Provider, MigratorConnectionString))
