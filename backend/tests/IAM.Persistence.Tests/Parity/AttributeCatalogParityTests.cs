@@ -566,6 +566,54 @@ public sealed class AttributeCatalogParityTests(ParityDatabase db)
         found.ConcurrencyVersion.ShouldBe(registered.ConcurrencyVersion);
     }
 
+    /// <summary>
+    /// DL-095: retiring is the only change to a published version, and it cannot carry a change to MaxLength (NULL to a value
+    /// or back) or a display name with a trailing space. SQL Server compared these in a way that let them through; PostgreSQL
+    /// compares the row with IS NOT DISTINCT FROM. Both refuse, as the app login and as the schema owner.
+    /// </summary>
+    [Fact]
+    public async Task RetiringCannotCarryANullOrPaddingChange()
+    {
+        var coded = await RegisterAsync(NewKey("nullsafe_code"));
+        await PublishAsync(coded.DefinitionId);
+        AttributeDraftView numeric;
+        await using (var scope = Service())
+        {
+            numeric = await scope.Service.RegisterAsync(
+                new RegisterAttributeRequest(NewKey("nullsafe_int"), new AttributeDraftRequest("Grade level", "Integer", "Beneficiary", "successfactors", "Internal", "None", 1440, null, ["Equals"])),
+                Ct);
+        }
+
+        await PublishAsync(numeric.DefinitionId);
+        (await MaxLengthAsync(coded.VersionId)).ShouldBe(8);
+        (await MaxLengthAsync(numeric.VersionId)).ShouldBeNull();
+
+        var retire = $"{Col("State")} = 'Retired'";
+        var padded = IsSqlServer ? $"{Col("DisplayName")} + ' '" : $"{Col("DisplayName")} || ' '";
+        foreach (var login in new[] { db.IdentityAppConnectionString, db.MigratorConnectionString })
+        {
+            foreach (var (version, set) in new[]
+            {
+                (numeric.VersionId, $"{retire}, {Col("MaxLength")} = 8"),
+                (coded.VersionId, $"{retire}, {Col("MaxLength")} = NULL"),
+                (coded.VersionId, $"{retire}, {Col("DisplayName")} = {padded}"),
+            })
+            {
+                var sql = $"UPDATE {Versions} SET {set} WHERE {Col("Id")} = '{version}'";
+                (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(login, sql, Ct), sql)).Message.ShouldMatch("(?i)immutable", sql);
+            }
+        }
+
+        (await MaxLengthAsync(coded.VersionId)).ShouldBe(8);
+        (await MaxLengthAsync(numeric.VersionId)).ShouldBeNull();
+
+        // Control: retiring with nothing else changed is still allowed, both with and without a MaxLength.
+        foreach (var version in new[] { coded.VersionId, numeric.VersionId })
+        {
+            await db.ExecuteAsync(db.IdentityAppConnectionString, $"UPDATE {Versions} SET {retire} WHERE {Col("Id")} = '{version}'", Ct);
+        }
+    }
+
     // ---- Helpers ------------------------------------------------------------------------------------------------
 
     private string Versions => IsSqlServer ? "[identity].[AttributeDefinitionVersion]" : "identity.attribute_definition_version";
@@ -588,6 +636,11 @@ public sealed class AttributeCatalogParityTests(ParityDatabase db)
         var values = string.Join(", ", new[] { $"'{Guid.CreateVersion7()}'", versionNumber.ToString(CultureInfo.InvariantCulture), $"'{state}'" }.Concat(copied.Select(Col)));
         return $"INSERT INTO {Versions} ({columns}) SELECT {values} FROM {Versions} WHERE {Col("Id")} = '{sourceVersionId}'";
     }
+
+    private async Task<int?> MaxLengthAsync(Guid versionId) =>
+        await db.ScalarAsync(db.IdentityAppConnectionString, $"SELECT {Col("MaxLength")} FROM {Versions} WHERE {Col("Id")} = '{versionId}'", Ct) is int value
+            ? value
+            : null;
 
     private string CopyOperatorSql(Guid versionId, string op)
     {
