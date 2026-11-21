@@ -69,6 +69,9 @@ public sealed class ApprovalWorkflowService(
     /// <summary>Bounds on the inbox: at most 100 a page and 1,000 pages, so a request can't ask the database for everything.</summary>
     public const int MaxTaskPageSize = 100;
 
+    /// <summary>The correlation id of the instance this call acts on (DL-094): set when it is started or loaded.</summary>
+    private string? _correlation;
+
     public const int MaxTaskPage = 1_000;
 
     public async Task<ApprovalInstanceView> StartAsync(ApprovalBinding binding, ApprovalRoute route, CancellationToken cancellationToken)
@@ -106,6 +109,7 @@ public sealed class ApprovalWorkflowService(
                 EngineVersion = 0,
                 ActionCount = 0,
                 ProvisioningAuthorized = false,
+                CorrelationId = _correlation = MessageCorrelation.Current(),
             },
             instance,
             route.Stages,
@@ -343,6 +347,7 @@ public sealed class ApprovalWorkflowService(
     /// </summary>
     private async Task<Loaded> ReplayAsync(ApprovalInstanceRow row, IDbContextTransaction? open, CancellationToken cancellationToken)
     {
+        _correlation = row.CorrelationId;
         var actions = await db.Actions.AsNoTracking().Where(a => a.InstanceId == row.Id).OrderBy(a => a.Sequence).ToListAsync(cancellationToken).ConfigureAwait(false);
         var history = await db.History.AsNoTracking().Where(h => h.InstanceId == row.Id).OrderBy(h => h.EventVersion).ToListAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -676,7 +681,10 @@ public sealed class ApprovalWorkflowService(
         TargetId = targetId?.ToString(),
         Outcome = outcome,
         OccurredAtUtc = Now(),
-        CorrelationId = Activity.Current?.TraceId.ToHexString() ?? Guid.NewGuid().ToString("N"),
+
+        // The instance's own correlation (the request's), with this call's trace as the cause when they differ (DL-094).
+        CorrelationId = _correlation ?? MessageCorrelation.Current(),
+        CausationId = _correlation is { } stored && stored != MessageCorrelation.Current() ? MessageCorrelation.Current() : null,
         Reason = reason,
         Payload = payload,
     };
@@ -692,7 +700,7 @@ public sealed class ApprovalWorkflowService(
         var instance = loaded.Instance;
         var id = instance.Binding.InstanceId;
         var item = instance.Binding.RequestItemId;
-        var correlation = Activity.Current?.TraceId.ToHexString() ?? Guid.NewGuid().ToString("N");
+        var correlation = loaded.Row.CorrelationId ?? MessageCorrelation.Current();
         var causation = string.Create(CultureInfo.InvariantCulture, $"workflow.action:{id:N}:{lastSequence}");
 
         MessageEnvelope Envelope<T>(T message, string? key = null)

@@ -268,6 +268,14 @@ namespace IAM.Persistence.PostgreSql.Migrations.Request
                         .UseCollation("C")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(32)
+                        .HasColumnType("character(32)")
+                        .HasColumnName("correlation_id")
+                        .IsFixedLength()
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasPrecision(6)
                         .HasColumnType("timestamp(6) with time zone")
@@ -400,6 +408,8 @@ namespace IAM.Persistence.PostgreSql.Migrations.Request
                             t.HasTrigger("tr_request_item_frozen");
 
                             t.HasCheckConstraint("ck_request_item_beneficiary_code", "\"beneficiary\" <> '' AND \"beneficiary\" = btrim(\"beneficiary\")");
+
+                            t.HasCheckConstraint("ck_request_item_correlation_id_code", "\"correlation_id\" <> '' AND \"correlation_id\" = btrim(\"correlation_id\")");
 
                             t.HasCheckConstraint("ck_request_item_entitlement_content_hash_code", "\"entitlement_content_hash\" <> '' AND \"entitlement_content_hash\" = btrim(\"entitlement_content_hash\")");
 

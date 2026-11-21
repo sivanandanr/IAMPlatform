@@ -66,6 +66,7 @@ public sealed class RequestItemService(
         var now = UtcMicrosecondConverter.TruncateToMicroseconds(clock.GetUtcNow());
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         RequestItem frozen;
+        string correlation;
         RequestItemSubmitted submitted;
         try
         {
@@ -106,10 +107,11 @@ public sealed class RequestItemService(
                 throw new RequestRefusedException(RequestRefusal.NoAccountName);
             }
 
+            correlation = MessageCorrelation.Current();
             frozen = RequestItem.Freeze(
                 itemId, requester, item.Beneficiary, entitlement.ApplicationId, entitlement.EntitlementId, entitlement.VersionId, entitlement.ContentHash,
                 item.AccountId, newAccount, duration, versionId, selection.ContentHash, ruleId, selection.PolicyMaker!, selection.EvidenceJson,
-                JsonSerializer.Serialize(stages, MessageEnvelopes.Json), now);
+                JsonSerializer.Serialize(stages, MessageEnvelopes.Json), now, correlation);
             submitted = new RequestItemSubmitted(
                 itemId, requester, item.Beneficiary, entitlement.ApplicationId, entitlement.EntitlementId, versionId, selection.ContentHash, ruleId, selection.PolicyMaker!, stages);
         }
@@ -120,7 +122,6 @@ public sealed class RequestItemService(
         }
 
         db.Items.Add(frozen);
-        var correlation = Activity.Current?.TraceId.ToHexString() ?? Guid.NewGuid().ToString("N");
         db.Outbox.Add(OutboxMessageRow.From(MessageEnvelopes.Create(submitted, RequestEvents.Source, correlation, null, $"request.item.submitted:{frozen.Id:D}", now)));
         try
         {
@@ -232,7 +233,8 @@ public sealed class RequestItemService(
                 TargetId = item.Id.ToString(),
                 Outcome = AuditOutcome.Succeeded,
                 OccurredAtUtc = now,
-                CorrelationId = Activity.Current?.TraceId.ToHexString() ?? Guid.NewGuid().ToString("N"),
+                CorrelationId = item.CorrelationId ?? MessageCorrelation.Current(),
+                CausationId = item.CorrelationId is null ? null : MessageCorrelation.Current(),
                 Payload =
                 [
                     Field("stageId", stageId.ToString()),

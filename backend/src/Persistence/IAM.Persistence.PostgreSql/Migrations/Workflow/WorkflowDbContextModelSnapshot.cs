@@ -303,6 +303,14 @@ namespace IAM.Persistence.PostgreSql.Migrations.Workflow
                         .UseCollation("C")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(32)
+                        .HasColumnType("character(32)")
+                        .HasColumnName("correlation_id")
+                        .IsFixedLength()
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasPrecision(6)
                         .HasColumnType("timestamp(6) with time zone")
@@ -377,6 +385,8 @@ namespace IAM.Persistence.PostgreSql.Migrations.Workflow
                             t.HasTrigger("tr_approval_instance_guarded");
 
                             t.HasCheckConstraint("ck_approval_instance_beneficiary_code", "\"beneficiary\" <> '' AND \"beneficiary\" = btrim(\"beneficiary\")");
+
+                            t.HasCheckConstraint("ck_approval_instance_correlation_id_code", "\"correlation_id\" <> '' AND \"correlation_id\" = btrim(\"correlation_id\")");
 
                             t.HasCheckConstraint("ck_approval_instance_requester_code", "\"requester\" <> '' AND \"requester\" = btrim(\"requester\")");
 
