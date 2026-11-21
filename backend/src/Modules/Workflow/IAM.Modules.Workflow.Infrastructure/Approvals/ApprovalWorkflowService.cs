@@ -347,46 +347,7 @@ public sealed class ApprovalWorkflowService(
         var history = await db.History.AsNoTracking().Where(h => h.InstanceId == row.Id).OrderBy(h => h.EventVersion).ToListAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (actions.Count == 0 || actions.Count != row.ActionCount || actions.Select((a, i) => a.Sequence != i + 1).Any(gap => gap))
-            {
-                throw new InvalidDataException("The action log is incomplete.");
-            }
-
-            var logged = actions.Select(a => new LoggedAction(Enum.Parse<ApprovalActionKind>(a.Kind), a.Payload, a.AtUtc, a.Actor)).ToList();
-            var instance = ApprovalActionLog.Start(logged[0]);
-            if (instance.Version != actions[0].VersionAfter)
-            {
-                throw new InvalidDataException("The action log does not replay.");
-            }
-
-            for (var i = 1; i < logged.Count; i++)
-            {
-                ApprovalActionLog.Apply(instance, logged[i]);
-                if (instance.Version != actions[i].VersionAfter)
-                {
-                    throw new InvalidDataException("The action log does not replay.");
-                }
-            }
-
-            if (!SameHistory(instance.History, history)
-                || row.State != instance.State.ToString()
-                || row.EngineVersion != instance.Version
-                || row.ProvisioningAuthorized != instance.ProvisioningAuthorized
-                || row.Id != instance.Binding.InstanceId
-                || row.RequestItemId != instance.Binding.RequestItemId
-                || row.Requester != instance.Binding.Requester.Value
-                || row.Beneficiary != instance.Binding.Beneficiary.Value)
-            {
-                throw new InvalidDataException("The stored history or summary does not match the replay.");
-            }
-
-            var loaded = new Loaded(row, instance, ApprovalActionLog.StagesOf(logged[0]), history.Count);
-            if (row.NextDeadlineUtc != NextDeadline(loaded))
-            {
-                throw new InvalidDataException("The stored next deadline does not match the replay.");
-            }
-
-            return loaded;
+            return Rebuild(row, actions, history);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -407,6 +368,55 @@ public sealed class ApprovalWorkflowService(
             await RecordDamageAsync(row.Id, open, cancellationToken).ConfigureAwait(false);
             throw new ApprovalInstanceDamagedException("The approval instance's stored record does not replay; it is refused.", ex);
         }
+    }
+
+    /// <summary>
+    /// Rebuilds an instance from its stored action log and checks the log, history and summary agree (DL-072). Throws
+    /// <see cref="InvalidDataException"/> (or the engine's own refusal) for anything that doesn't replay. Reads nothing and
+    /// records nothing: the caller decides whether a failure is damage or a conflict. Also used by the integrity check (DL-093).
+    /// </summary>
+    internal static Loaded Rebuild(ApprovalInstanceRow row, List<ApprovalActionRow> actions, List<ApprovalHistoryRow> history)
+    {
+        if (actions.Count == 0 || actions.Count != row.ActionCount || actions.Select((a, i) => a.Sequence != i + 1).Any(gap => gap))
+        {
+            throw new InvalidDataException("The action log is incomplete.");
+        }
+
+        var logged = actions.Select(a => new LoggedAction(Enum.Parse<ApprovalActionKind>(a.Kind), a.Payload, a.AtUtc, a.Actor)).ToList();
+        var instance = ApprovalActionLog.Start(logged[0]);
+        if (instance.Version != actions[0].VersionAfter)
+        {
+            throw new InvalidDataException("The action log does not replay.");
+        }
+
+        for (var i = 1; i < logged.Count; i++)
+        {
+            ApprovalActionLog.Apply(instance, logged[i]);
+            if (instance.Version != actions[i].VersionAfter)
+            {
+                throw new InvalidDataException("The action log does not replay.");
+            }
+        }
+
+        if (!SameHistory(instance.History, history)
+            || row.State != instance.State.ToString()
+            || row.EngineVersion != instance.Version
+            || row.ProvisioningAuthorized != instance.ProvisioningAuthorized
+            || row.Id != instance.Binding.InstanceId
+            || row.RequestItemId != instance.Binding.RequestItemId
+            || row.Requester != instance.Binding.Requester.Value
+            || row.Beneficiary != instance.Binding.Beneficiary.Value)
+        {
+            throw new InvalidDataException("The stored history or summary does not match the replay.");
+        }
+
+        var loaded = new Loaded(row, instance, ApprovalActionLog.StagesOf(logged[0]), history.Count);
+        if (row.NextDeadlineUtc != NextDeadline(loaded))
+        {
+            throw new InvalidDataException("The stored next deadline does not match the replay.");
+        }
+
+        return loaded;
     }
 
     /// <summary>
@@ -731,5 +741,5 @@ public sealed class ApprovalWorkflowService(
     }
 
     /// <summary>A loaded instance: its summary row, the replayed engine, its route, and how much history was stored.</summary>
-    private sealed record Loaded(ApprovalInstanceRow Row, ApprovalInstance Instance, IReadOnlyList<StageDefinition> Stages, int StoredHistory);
+    internal sealed record Loaded(ApprovalInstanceRow Row, ApprovalInstance Instance, IReadOnlyList<StageDefinition> Stages, int StoredHistory);
 }

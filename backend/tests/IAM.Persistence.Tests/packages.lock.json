@@ -865,6 +865,15 @@
       "iam.buildingblocks.security": {
         "type": "Project"
       },
+      "iam.connectors.activedirectory.mock": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.Connectors.Sdk": "[1.0.0, )"
+        }
+      },
+      "iam.connectors.sdk": {
+        "type": "Project"
+      },
       "iam.modules.account.application": {
         "type": "Project",
         "dependencies": {
@@ -1365,9 +1374,16 @@
         "type": "Project",
         "dependencies": {
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
+          "IAM.BuildingBlocks.Messaging": "[1.0.0, )",
+          "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.Modules.Account.Contracts": "[1.0.0, )",
+          "IAM.Modules.Audit.Contracts": "[1.0.0, )",
+          "IAM.Modules.Catalog.Contracts": "[1.0.0, )",
           "IAM.Modules.Provisioning.Application": "[1.0.0, )",
           "IAM.Modules.Provisioning.Contracts": "[1.0.0, )",
-          "IAM.Modules.Provisioning.Domain": "[1.0.0, )"
+          "IAM.Modules.Provisioning.Domain": "[1.0.0, )",
+          "IAM.Modules.Request.Contracts": "[1.0.0, )",
+          "IAM.Modules.Workflow.Contracts": "[1.0.0, )"
         }
       },
       "iam.modules.request.application": {
@@ -1482,6 +1498,7 @@
           "IAM.Modules.Notification.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Organization.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Policy.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Provisioning.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Request.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Workflow.Infrastructure": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
@@ -1499,6 +1516,7 @@
           "IAM.Modules.Notification.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Organization.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Policy.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Provisioning.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Request.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Workflow.Infrastructure": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore.SqlServer": "[10.0.14, )"
@@ -1520,6 +1538,26 @@
           "IAM.BuildingBlocks.Messaging.RabbitMq": "[1.0.0, )",
           "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
           "IAM.Modules.Notification.Infrastructure": "[1.0.0, )",
+          "IAM.Persistence.PostgreSql": "[1.0.0, )",
+          "IAM.Persistence.SqlServer": "[1.0.0, )"
+        }
+      },
+      "iam.workers.provisioning": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.BuildingBlocks.Messaging.RabbitMq": "[1.0.0, )",
+          "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
+          "IAM.Connectors.Sdk": "[1.0.0, )",
+          "IAM.Modules.Account.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Audit.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Catalog.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Provisioning.Application": "[1.0.0, )",
+          "IAM.Modules.Provisioning.Domain": "[1.0.0, )",
+          "IAM.Modules.Provisioning.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Request.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Workflow.Contracts": "[1.0.0, )",
+          "IAM.Modules.Workflow.Infrastructure": "[1.0.0, )",
           "IAM.Persistence.PostgreSql": "[1.0.0, )",
           "IAM.Persistence.SqlServer": "[1.0.0, )"
         }

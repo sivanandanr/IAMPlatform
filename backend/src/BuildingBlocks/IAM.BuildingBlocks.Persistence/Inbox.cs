@@ -1,5 +1,6 @@
 using IAM.BuildingBlocks.Messaging;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace IAM.BuildingBlocks.Persistence;
 
@@ -50,6 +51,8 @@ public static class InboxModel
     /// entities. A message already there (by id, or by its source's idempotency key), or recorded by a concurrent delivery
     /// first, is <see cref="MessageOutcome.Duplicate"/> and changes nothing. Any other unique-key clash is the effects' own
     /// and is thrown, so the message is retried rather than acknowledged with its effects lost (DL-079).
+    /// <paramref name="afterSave"/>, when given, runs after the effects are saved and before the commit, on the same
+    /// transaction (for example the audit record of the effects, DL-093); if it throws, nothing is kept and the message is retried.
     /// </summary>
     public static async Task<MessageOutcome> ReceiveOnceAsync(
         this DbContext db,
@@ -58,7 +61,8 @@ public static class InboxModel
         MessageEnvelope envelope,
         DateTimeOffset now,
         Action effects,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<IDbContextTransaction, CancellationToken, Task>? afterSave = null)
     {
         ArgumentNullException.ThrowIfNull(db);
         ArgumentNullException.ThrowIfNull(provider);
@@ -100,6 +104,11 @@ public static class InboxModel
             }
 
             throw;
+        }
+
+        if (afterSave is not null)
+        {
+            await afterSave(tx, cancellationToken).ConfigureAwait(false);
         }
 
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);

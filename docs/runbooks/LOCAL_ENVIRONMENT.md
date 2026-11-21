@@ -145,6 +145,18 @@ docker compose exec rabbitmq rabbitmqctl set_topic_permissions -p iam iam-reques
 ```
 `IAM.Workers.Request` sends the request module's outbox: it needs `IAM_DB_PROVIDER`, `ConnectionStrings:request`, the broker settings with the `iam-request` user, and optionally `Request:Outbox:*` as for the workflow relay. It writes as `system:request-relay` and reads no other schema.
 
+The provisioning module (DL-093) has its own user, which consumes approvals' `authorized` and `closed` events:
+```bash
+docker compose exec rabbitmq rabbitmqctl add_user iam-provisioning '<password>'
+```
+```bash
+docker compose exec rabbitmq rabbitmqctl set_permissions -p iam iam-provisioning '^$' '^iam\.provisioning\.approvals\.retry$' '^iam\.provisioning\.approvals$'
+```
+```bash
+docker compose exec rabbitmq rabbitmqctl set_topic_permissions -p iam iam-provisioning iam.workflow '^$' '^$'
+```
+`IAM.Workers.Provisioning` checks each approval against the audit store and plans connector operations (it runs none yet). It needs `IAM_DB_PROVIDER`; `ConnectionStrings:provisioning` (the `iam_app_provisioning` login, bootstrapped like the other modules and granted `iam_audit_writer`); `ConnectionStrings:workflow`, `request`, `catalog` and `account` (those modules' own logins, read only here); `ConnectionStrings:audit` (the audit login, `iam_audit_reader` only); the broker settings with the `iam-provisioning` user; optionally `Provisioning:Consumer:*` as for the notification worker; and the reviewed allowlist `Provisioning:Connectors:N:ApplicationId`, `ConnectorKey` (only `mock-ad`, never production-ready) and `AccountContainer` (an OU path such as `OU=Users,DC=example,DC=test`). An application not in the list is blocked as manual work. It writes as `system:provisioning`. Blocked items (`State = 'Blocked'`, `Problem` the reason) are in `provisioning.ProvisioningItem` and audited as `provisioning.item.blocked`; there is no screen or API for them yet.
+
 Change topology only by changing `definitions.json` through review and importing it again; a queue's arguments can't change in place (the worker logs `BrokerPreconditionFailed` until the queue is recreated). Unprocessable messages are in `iam.notification.approval_tasks.dlq` (logged with id and type once validated); there is no replay tool yet. `iam.unrouted` keeps events no consumer takes for at most 7 days (100,000 messages, 100 MB, oldest dropped): it is not a source to replay from.
 
 ## 4. Stop / reset

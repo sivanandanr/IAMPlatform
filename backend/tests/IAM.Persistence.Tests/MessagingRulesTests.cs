@@ -3,7 +3,9 @@ using System.Text.Json;
 using IAM.BuildingBlocks.Messaging;
 using IAM.BuildingBlocks.Messaging.RabbitMq;
 using IAM.Modules.Notification.Infrastructure.Approvals;
+using IAM.Modules.Provisioning.Infrastructure.Items;
 using IAM.Modules.Workflow.Contracts;
+using IAM.Modules.Workflow.Infrastructure.Approvals;
 using IAM.Persistence.Tests.Parity;
 using Shouldly;
 
@@ -78,21 +80,32 @@ public sealed class MessagingRulesTests
     }
 
     [Fact]
-    public void NoConsumerTakesAuthorisationUntilTheAuditCheckExists()
+    public void OnlyTheProvisioningConsumerTakesAuthorisationAndItChecksTheAuditFirst()
     {
-        // R-037 release gate (DL-075, DL-079): acting on authorisation needs the audit-chain verifier first. When it
-        // exists, a consumer that uses it is allowed here and nowhere else.
+        // R-037 release gate (DL-075, DL-079, DL-093): acting on authorisation needs the audit check. Only the provisioning
+        // consumer takes these events, and only with the check among what it is built from.
         string[] gated = [ApprovalAuthorized.MessageType, ApprovalClosed.MessageType];
         var handlers = typeof(ApprovalTaskNotifications).Assembly.GetTypes()
+            .Concat(typeof(AuthorizedApprovals).Assembly.GetTypes())
+            .Concat(typeof(RequestItemApprovals).Assembly.GetTypes())
             .Concat(typeof(MessagingRulesTests).Assembly.GetTypes())
             .Where(t => typeof(IMessageHandler).IsAssignableFrom(t) && t is { IsClass: true, IsAbstract: false })
             .ToList();
         handlers.ShouldContain(typeof(ApprovalTaskNotifications));
+        handlers.ShouldContain(typeof(AuthorizedApprovals));
         foreach (var type in handlers)
         {
             var handler = (IMessageHandler)RuntimeHelpers.GetUninitializedObject(type);
             handler.MessageTypes.ShouldNotBeNull($"{type.Name} must declare its types without state");
-            handler.MessageTypes.Intersect(gated).ShouldBeEmpty($"{type.Name} takes an event that authorises provisioning");
+            var takes = handler.MessageTypes.Intersect(gated).ToList();
+            if (type == typeof(AuthorizedApprovals))
+            {
+                takes.ShouldBe(gated);
+                type.GetConstructors().ShouldHaveSingleItem().GetParameters().Select(p => p.ParameterType).ShouldContain(typeof(IApprovalIntegrity));
+                continue;
+            }
+
+            takes.ShouldBeEmpty($"{type.Name} takes an event that authorises provisioning");
         }
     }
 }

@@ -26,6 +26,8 @@ Option 1. Messages carry correlation ID, causation ID, idempotency key, schema v
 
 **Request items (DL-091).** The Request module is the second publisher: its outbox (same guards as Workflow's) is relayed by `IAM.Workers.Request` with its own login and broker user to `iam.request`; the Workflow worker consumes `request.item.submitted` and starts the approval with the item id as the instance id, which is what makes a redelivery harmless.
 
+**Provisioning consumer (DL-093).** `IAM.Workers.Provisioning` is the first consumer of `authorized` and `closed`, on `iam.provisioning.approvals` with the `iam-provisioning` user. Before acting it checks the approval's action log against the audit store (`IApprovalIntegrity`, R-037), and it plans only for a verified approval that authorises provisioning with no Action level still open; either event plans an item once, keyed by the item id. A test allows no other consumer of these events.
+
 ## Security and privacy impact
 Payloads contain no tokens, secrets or full HR records (schema assertion). Unknown schema version / oversized / malformed messages go to DLQ unprocessed. Broker users per vhost; no `guest`.
 

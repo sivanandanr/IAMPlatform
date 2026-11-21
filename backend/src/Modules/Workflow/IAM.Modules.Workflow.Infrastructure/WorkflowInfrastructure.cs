@@ -41,4 +41,16 @@ public static class WorkflowInfrastructure
 
         return services;
     }
+
+    /// <summary>
+    /// Registers only the R-037 integrity check (DL-093), for a host that acts on approvals without running them: it needs
+    /// <c>ConnectionStrings:workflow</c> to read the log and the audit trail (<c>AddAuditTrail</c>, the audit login).
+    /// </summary>
+    public static IServiceCollection AddApprovalIntegrity(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.AddIamDbContext<WorkflowDbContext>(WorkflowDbContext.SchemaName);
+        services.TryAddScoped<IApprovalIntegrity, ApprovalIntegrityCheck>();
+        return services;
+    }
 }

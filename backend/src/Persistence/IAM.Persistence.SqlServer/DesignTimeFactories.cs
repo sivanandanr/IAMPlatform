@@ -6,6 +6,7 @@ using IAM.Modules.Identity.Infrastructure.Persistence;
 using IAM.Modules.Notification.Infrastructure.Persistence;
 using IAM.Modules.Organization.Infrastructure.Persistence;
 using IAM.Modules.Policy.Infrastructure.Persistence;
+using IAM.Modules.Provisioning.Infrastructure.Persistence;
 using IAM.Modules.Request.Infrastructure.Persistence;
 using IAM.Modules.Workflow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -116,5 +117,15 @@ internal sealed class RequestDesignTimeFactory : IDesignTimeDbContextFactory<Req
         var options = new DbContextOptionsBuilder<RequestDbContext>();
         new SqlServerDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, RequestDbContext.SchemaName);
         return new RequestDbContext(options.Options);
+    }
+}
+
+internal sealed class ProvisioningDesignTimeFactory : IDesignTimeDbContextFactory<ProvisioningDbContext>
+{
+    public ProvisioningDbContext CreateDbContext(string[] args)
+    {
+        var options = new DbContextOptionsBuilder<ProvisioningDbContext>();
+        new SqlServerDatabaseProvider().Configure(options, IdentityDesignTimeFactory.PlaceholderConnectionString, ProvisioningDbContext.SchemaName);
+        return new ProvisioningDbContext(options.Options);
     }
 }

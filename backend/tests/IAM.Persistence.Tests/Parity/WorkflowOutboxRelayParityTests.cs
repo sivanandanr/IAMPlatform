@@ -61,7 +61,8 @@ public sealed class WorkflowOutboxRelayParityTests(ParityDatabase db, RabbitMqBr
     [Fact]
     public async Task AMessageNoQueueWantsIsKeptNotDropped()
     {
-        var ids = await WriteAsync(1);
+        // Started: no queue is bound to it (closed is now provisioning's, DL-093).
+        var ids = await WriteAsync(1, unwanted: true);
         await using var publisher = Publisher(broker.Workflow);
         await Relay(publisher).RunOnceAsync(Ct);
         (await RowsAsync(ids)).Single().DispatchedAtUtc.ShouldNotBeNull();
@@ -158,19 +159,18 @@ public sealed class WorkflowOutboxRelayParityTests(ParityDatabase db, RabbitMqBr
         row.DispatchedAtUtc.ShouldBeNull();
     }
 
-    /// <summary>Writes closed events dated years ago, so they come first in the relay's earliest-first batch.</summary>
-    private async Task<List<Guid>> WriteAsync(int count)
+    /// <summary>
+    /// Writes closed events (or, <paramref name="unwanted"/>, started events no queue takes) dated years ago, so they come first in
+    /// the relay's earliest-first batch.
+    /// </summary>
+    private async Task<List<Guid>> WriteAsync(int count, bool unwanted = false)
     {
         await using var context = Context();
         var at = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMilliseconds(System.Security.Cryptography.RandomNumberGenerator.GetInt32(1, 1_000_000));
         var rows = Enumerable.Range(0, count)
-            .Select(i => OutboxMessageRow.From(MessageEnvelopes.Create(
-                new ApprovalClosed(Guid.CreateVersion7(), Guid.CreateVersion7(), "Approved", true, 5),
-                WorkflowEvents.Source,
-                "relay-test",
-                null,
-                $"relay-test:{Guid.CreateVersion7():N}",
-                at.AddMilliseconds(i))))
+            .Select(i => OutboxMessageRow.From(unwanted
+                ? MessageEnvelopes.Create(new ApprovalStarted(Guid.CreateVersion7(), Guid.CreateVersion7(), "requester", "beneficiary", 1), WorkflowEvents.Source, "relay-test", null, $"relay-test:{Guid.CreateVersion7():N}", at.AddMilliseconds(i))
+                : MessageEnvelopes.Create(new ApprovalClosed(Guid.CreateVersion7(), Guid.CreateVersion7(), "Approved", true, 5), WorkflowEvents.Source, "relay-test", null, $"relay-test:{Guid.CreateVersion7():N}", at.AddMilliseconds(i))))
             .ToList();
         context.Outbox.AddRange(rows);
         await context.SaveChangesAsync(Ct);
