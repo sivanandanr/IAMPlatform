@@ -79,7 +79,7 @@ public sealed class AccessModel
         [
             new(IamAdministrator, "IAM Administrator", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.ChangesPropose]),
             new(IamManager, "IAM Manager", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.ChangesApprove, ActionCatalog.ApprovalsEscalate, ActionCatalog.InstancesCancel, ActionCatalog.InstancesRead]),
-            new(Auditor, "Auditor", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.AttributesRead, ActionCatalog.ApplicationsRead, ActionCatalog.WorkgroupsRead, ActionCatalog.InstancesRead, ActionCatalog.EntitlementsRead, ActionCatalog.AccountsRead, ActionCatalog.MatrixRead]),
+            new(Auditor, "Auditor", [ActionCatalog.RolesRead, ActionCatalog.ChangesRead, ActionCatalog.AttributesRead, ActionCatalog.ApplicationsRead, ActionCatalog.WorkgroupsRead, ActionCatalog.InstancesRead, ActionCatalog.EntitlementsRead, ActionCatalog.AccountsRead, ActionCatalog.MatrixRead, ActionCatalog.RequestItemsRead]),
             new(PolicyAuthor, "Policy author", [ActionCatalog.AttributesRead, ActionCatalog.AttributesManage, ActionCatalog.MatrixRead, ActionCatalog.MatrixManage]),
             new(PolicyChecker, "Policy checker", [ActionCatalog.AttributesRead, ActionCatalog.AttributesApprove, ActionCatalog.MatrixRead, ActionCatalog.MatrixApprove]),
             new(ApplicationAdministrator, "Application administrator", [ActionCatalog.ApplicationsRead, ActionCatalog.ApplicationsManage, ActionCatalog.WorkgroupsRead, ActionCatalog.WorkgroupsManage, ActionCatalog.EntitlementsRead, ActionCatalog.EntitlementsManage, ActionCatalog.AccountsRead, ActionCatalog.AccountsManage]),

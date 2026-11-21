@@ -37,4 +37,7 @@ public static class AccessActions
     public const string MatrixRead = "policy.matrix.read";
     public const string MatrixManage = "policy.matrix.manage";
     public const string MatrixApprove = "policy.matrix.approve";
+    public const string RequestItemsSubmit = "request.items.submit";
+    public const string RequestItemsForOthers = "request.items.request-for-others";
+    public const string RequestItemsRead = "request.items.read";
 }

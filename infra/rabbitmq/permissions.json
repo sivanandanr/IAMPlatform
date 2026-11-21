@@ -5,10 +5,11 @@
     {
       "user": "iam-workflow",
       "configure": "^$",
-      "write": "^iam\\.(workflow|unrouted)$",
-      "read": "^$",
+      "write": "^iam\\.(workflow|unrouted|workflow\\.request_items\\.retry)$",
+      "read": "^iam\\.workflow\\.request_items$",
       "topics": [
-        { "exchange": "iam.workflow", "write": "^workflow\\.approval\\.[a-z_]+$", "read": "^$" }
+        { "exchange": "iam.workflow", "write": "^workflow\\.approval\\.[a-z_]+$", "read": "^$" },
+        { "exchange": "iam.request", "write": "^$", "read": "^$" }
       ]
     },
     {
@@ -18,6 +19,15 @@
       "read": "^iam\\.notification\\.approval_tasks$",
       "topics": [
         { "exchange": "iam.workflow", "write": "^$", "read": "^$" }
+      ]
+    },
+    {
+      "user": "iam-request",
+      "configure": "^$",
+      "write": "^iam\\.(request|unrouted)$",
+      "read": "^$",
+      "topics": [
+        { "exchange": "iam.request", "write": "^request\\.item\\.[a-z_]+$", "read": "^$" }
       ]
     }
   ]

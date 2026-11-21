@@ -37,7 +37,8 @@ public sealed record MatrixSelection(
     string? CompiledHash,
     Guid? MatchedRuleId,
     IReadOnlyList<MatrixRouteStage> Route,
-    string? EvidenceJson)
+    string? EvidenceJson,
+    string? PolicyMaker = null)
 {
     public const string Matched = "Matched";
 

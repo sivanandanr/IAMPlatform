@@ -14,9 +14,9 @@ public sealed class ApproverSupplyTests
     private static readonly Guid App = F.Id(700);
     private static readonly Guid Role = F.Id(701);
 
-    private static ApprovalInstance Bound(params StageDefinition[] stages) => ApprovalInstance.Bind(F.Binding, ApprovalRoute.Create(stages), T0);
+    internal static ApprovalInstance Bound(params StageDefinition[] stages) => ApprovalInstance.Bind(F.Binding, ApprovalRoute.Create(stages), T0);
 
-    private static StageDefinition Level(Guid id, int sequence, ApproverSource source, QuorumMode quorum = QuorumMode.AnyOne, int? minimum = null, TimeoutAction onTimeout = TimeoutAction.Escalate) =>
+    internal static StageDefinition Level(Guid id, int sequence, ApproverSource source, QuorumMode quorum = QuorumMode.AnyOne, int? minimum = null, TimeoutAction onTimeout = TimeoutAction.Escalate) =>
         new(id, sequence, quorum, minimum, false, false, true, TimeSpan.FromHours(4), onTimeout, source);
 
     /// <summary>The reference a resolver records for these tests' sources (DL-071e).</summary>
@@ -267,8 +267,9 @@ public sealed class ApproverResolverTests
 
     private readonly FakeApplications _applications = new();
     private readonly FakeWorkgroups _workgroups = new();
+    private readonly FakeEntitlements _entitlements = new();
 
-    private ApproverResolver Resolver(string? fallback = null) => new(_applications, _workgroups, new ApproverResolutionSettings(fallback));
+    private ApproverResolver Resolver(string? fallback = null) => new(_applications, _workgroups, new ApproverResolutionSettings(fallback), _entitlements);
 
     private Task<ApproverResolution> Resolve(ApproverSource source) => Resolver().ResolveAsync(source, Excluded, TestContext.Current.CancellationToken);
 
@@ -473,6 +474,70 @@ public sealed class ApproverResolverTests
 
         public Task<ApplicationApprovers?> FindActiveAsync(Guid applicationId, CancellationToken cancellationToken) =>
             Task.FromResult(Items.GetValueOrDefault(applicationId));
+    }
+
+    [Fact]
+    public async Task AnEntitlementOwnerIsThePersonOrTheOwningGroupThenTheEscalationGroupNeverTheFallback()
+    {
+        var entitlement = F.Id(800);
+        Workgroup("iam_managers", F.E);
+        Workgroup("grp_escalation", F.D);
+        var source = ApproverSource.EntitlementOwner(entitlement);
+
+        _entitlements.Items[entitlement] = new EntitlementOwnership(entitlement, 4, Hash, "Person", F.A.Value, "grp_escalation");
+        var person = await Resolve(source);
+        person.Outcome.ShouldBe(ResolutionOutcome.Resolved);
+        person.People.ShouldBe([F.A]);
+        person.Steps.Single().ShouldBe(new ResolutionStep(ApproverSourceKind.EntitlementOwner, ResolutionStepResult.Found, entitlement.ToString("D"), 4, Hash, 1, 0));
+
+        Workgroup("grp_owners", F.B, F.Requester);
+        _entitlements.Items[entitlement] = new EntitlementOwnership(entitlement, 5, Hash, "Group", "grp_owners", "grp_escalation");
+        var group = await Resolve(source);
+        group.People.ShouldBe([F.B], "the owning group's members, less the excluded");
+        Sources(group).ShouldBe([ApproverSourceKind.EntitlementOwner]);
+
+        // The owner is the one getting access: the escalation workgroup, never the IAM fallback (DL-069d, DEC-002).
+        _entitlements.Items[entitlement] = new EntitlementOwnership(entitlement, 6, Hash, "Person", F.Beneficiary.Value, "grp_escalation");
+        var escalated = await Resolve(source);
+        escalated.People.ShouldBe([F.D]);
+        Sources(escalated).ShouldBe([ApproverSourceKind.EntitlementOwner, ApproverSourceKind.Workgroup]);
+        Results(escalated).ShouldBe([ResolutionStepResult.AllExcluded, ResolutionStepResult.Found]);
+
+        _entitlements.Items[entitlement] = new EntitlementOwnership(entitlement, 7, Hash, "Person", F.Beneficiary.Value, "grp_nobody");
+        var nobody = await Resolve(source);
+        nobody.Outcome.ShouldBe(ResolutionOutcome.NobodyAvailable);
+        Sources(nobody).ShouldNotContain(ApproverSourceKind.FallbackWorkgroup);
+
+        _entitlements.Items.Clear();
+        var missing = await Resolve(source);
+        missing.Outcome.ShouldBe(ResolutionOutcome.NobodyAvailable);
+        Results(missing).ShouldBe([ResolutionStepResult.NotFound]);
+
+        // The instance takes these resolutions for the level, and refuses one for another entitlement.
+        var instance = ApproverSupplyTests.Bound(ApproverSupplyTests.Level(F.S1, 1, source));
+        Should.NotThrow(() => instance.SupplyApprovers(F.S1, escalated, instance.Version, F.T0));
+        var other = ApproverSupplyTests.Bound(ApproverSupplyTests.Level(F.S1, 1, ApproverSource.EntitlementOwner(F.Id(801))));
+        F.Refusal(() => other.SupplyApprovers(F.S1, escalated, other.Version, F.T0)).ShouldBe(ApprovalRefusal.InvalidResolution);
+    }
+
+    [Fact]
+    public void AnEntitlementOwnerSourceNamesOnlyItsEntitlement()
+    {
+        Should.Throw<ApprovalRefusedException>(() => ApprovalRoute.Create([ApproverSupplyTests.Level(F.S1, 1, new ApproverSource(ApproverSourceKind.Workgroup, [], WorkgroupKey: "grp_x", EntitlementId: F.Id(1)))]));
+        Should.Throw<ApprovalRefusedException>(() => ApprovalRoute.Create([ApproverSupplyTests.Level(F.S1, 1, new ApproverSource(ApproverSourceKind.EntitlementOwner, [], ApplicationId: F.Id(2), EntitlementId: F.Id(1)))]));
+        ApproverSource.EntitlementOwner(F.Id(1)).IsUnbuilt.ShouldBeFalse();
+        ApproverSource.Unbuilt(ApproverSourceKind.EntitlementOwner).IsUnbuilt.ShouldBeTrue();
+    }
+
+    private sealed class FakeEntitlements : IEntitlementDirectory
+    {
+        public Dictionary<Guid, EntitlementOwnership> Items { get; } = [];
+
+        public Task<RequestableEntitlement?> FindRequestableAsync(Guid entitlementId, CancellationToken cancellationToken) => Task.FromResult<RequestableEntitlement?>(null);
+
+        public Task<EntitlementOwnership?> FindOwnershipAsync(Guid entitlementId, CancellationToken cancellationToken) => Task.FromResult(Items.GetValueOrDefault(entitlementId));
+
+        public Task<Guid?> FindRoleTypeIdAsync(string code, CancellationToken cancellationToken) => Task.FromResult<Guid?>(null);
     }
 
     private sealed class FakeWorkgroups : IWorkgroupDirectory

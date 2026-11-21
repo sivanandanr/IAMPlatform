@@ -39,6 +39,9 @@ public static class ActionCatalog
     public const string MatrixRead = "policy.matrix.read";
     public const string MatrixManage = "policy.matrix.manage";
     public const string MatrixApprove = "policy.matrix.approve";
+    public const string RequestItemsSubmit = "request.items.submit";
+    public const string RequestItemsForOthers = "request.items.request-for-others";
+    public const string RequestItemsRead = "request.items.read";
 
     public static IReadOnlyList<ActionDefinition> All { get; } = Array.AsReadOnly(
     [
@@ -72,6 +75,9 @@ public static class ActionCatalog
         new ActionDefinition(MatrixRead, "See the approval matrix, its drafts, change requests and built-in facts (DL-090)", Everyone: false),
         new ActionDefinition(MatrixManage, "Edit the approval matrix draft and propose it (DL-090)", Everyone: false),
         new ActionDefinition(MatrixApprove, "Approve or reject someone else's approval matrix change (DL-090)", Everyone: false),
+        new ActionDefinition(RequestItemsSubmit, "Request access for yourself, and see your own requests (DL-091)", Everyone: true),
+        new ActionDefinition(RequestItemsForOthers, "Request access for someone else (DL-091)", Everyone: false),
+        new ActionDefinition(RequestItemsRead, "See every request item (DL-091)", Everyone: false),
     ]);
 
     private static readonly Dictionary<string, ActionDefinition> ById = All.ToDictionary(a => a.Id, StringComparer.Ordinal);

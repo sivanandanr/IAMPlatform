@@ -403,10 +403,11 @@ public sealed class WorkflowWorkerHostTests
         Should.Throw<InvalidOperationException>(() => WorkflowWorkerHost.Build([], [.. Complete.Where(s => s.Key != "Messaging:RabbitMq:UserName"), new("Messaging:RabbitMq:UserName", "guest")]));
         Should.Throw<InvalidOperationException>(() => WorkflowWorkerHost.Build([], [.. Complete.Where(s => s.Key != "Messaging:RabbitMq:Host"), new("Messaging:RabbitMq:Host", "broker.internal")]));
         Should.Throw<ArgumentOutOfRangeException>(() => WorkflowWorkerHost.Build([], [.. Complete, new("Workflow:Outbox:MaxAttempts", "0")]));
+        Should.Throw<ArgumentOutOfRangeException>(() => WorkflowWorkerHost.Build([], [.. Complete, new("Workflow:Consumer:Prefetch", "0")]));
         using (var host = WorkflowWorkerHost.Build([], Complete))
         {
             host.Services.GetRequiredService<OutboxRelaySettings>().BatchSize.ShouldBe(100);
-            host.Services.GetServices<IHostedService>().Count().ShouldBe(2, "the timeout worker and the outbox relay");
+            host.Services.GetServices<IHostedService>().Count().ShouldBe(3, "the timeout worker, the outbox relay and the request item consumer (DL-091)");
         }
     }
 }

@@ -22,6 +22,7 @@ public static class CatalogInfrastructure
         services.TryAddScoped<IApplicationCatalogAdministration, ApplicationCatalogAdministrationService>();
         services.TryAddScoped<IApplicationApproverDirectory, ApplicationApproverDirectory>();
         services.TryAddScoped<IEntitlementCatalogAdministration, EntitlementCatalogAdministrationService>();
+        services.TryAddScoped<IEntitlementDirectory, EntitlementDirectory>();
         foreach (var action in CatalogAuditActions.All.Concat(EntitlementAuditActions.All))
         {
             services.AddSingleton(new AuditActionRegistration(action));

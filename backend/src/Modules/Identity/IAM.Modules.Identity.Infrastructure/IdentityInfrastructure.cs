@@ -17,6 +17,7 @@ public static class IdentityInfrastructure
         services.AddIamDbContext<IdentityDbContext>(IdentityDbContext.SchemaName);
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddScoped<IAttributeCatalog, AttributeCatalogReader>();
+        services.TryAddSingleton<IPersonAttributeSource, UnavailablePersonAttributeSource>();
         services.TryAddScoped<IAttributeCatalogAdministration, AttributeCatalogAdministrationService>();
         foreach (var action in AttributeAuditActions.All)
         {

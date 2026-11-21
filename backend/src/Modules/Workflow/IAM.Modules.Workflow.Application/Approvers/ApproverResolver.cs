@@ -41,7 +41,8 @@ public interface IApproverResolver
 /// workgroup. A required role with nobody active holds (DL-052, DL-071a); one whose holders are all excluded goes on. Manager, manager of manager, entitlement owner and matrix
 /// have no data yet and hold with no fallback (DL-069d). Only active catalog settings and active member lists are read.
 /// </summary>
-public sealed class ApproverResolver(IApplicationApproverDirectory applications, IWorkgroupDirectory workgroups, ApproverResolutionSettings settings) : IApproverResolver
+public sealed class ApproverResolver(IApplicationApproverDirectory applications, IWorkgroupDirectory workgroups, ApproverResolutionSettings settings, IEntitlementDirectory? entitlements = null)
+    : IApproverResolver
 {
     public async Task<ApproverResolution> ResolveAsync(ApproverSource source, IReadOnlySet<PersonId> excluded, CancellationToken cancellationToken)
     {
@@ -105,6 +106,38 @@ public sealed class ApproverResolver(IApplicationApproverDirectory applications,
                     break;
                 }
 
+            case ApproverSourceKind.EntitlementOwner when source.EntitlementId is { } entitlementId && entitlements is not null:
+                {
+                    // DL-091: the owner, then the entitlement's escalation workgroup (DEC-002). Never the IAM fallback (DL-069d).
+                    var ownership = await entitlements.FindOwnershipAsync(entitlementId, cancellationToken).ConfigureAwait(false);
+                    var reference = entitlementId.ToString("D");
+                    if (ownership is null)
+                    {
+                        steps.Add(NotFound(ApproverSourceKind.EntitlementOwner, reference));
+                        return new ApproverResolution(ResolutionOutcome.NobodyAvailable, [], steps);
+                    }
+
+                    (ResolutionStep ownerStep, IReadOnlyList<PersonId> owners) = ownership.OwnerKind switch
+                    {
+                        "Person" when PersonId.TryCreate(ownership.OwnerId, out var person) =>
+                            Step(ApproverSourceKind.EntitlementOwner, reference, ownership.VersionNumber, ownership.ContentHash, [person], excluded),
+                        "Group" => await OwnerGroupStepAsync(ownership, reference, excluded, cancellationToken).ConfigureAwait(false),
+                        _ => (NotFound(ApproverSourceKind.EntitlementOwner, reference), []),
+                    };
+                    steps.Add(ownerStep);
+                    if (ownerStep.Result == ResolutionStepResult.Found)
+                    {
+                        return Resolved(owners, steps);
+                    }
+
+                    if (Take(steps, await WorkgroupStepAsync(ApproverSourceKind.Workgroup, ownership.EscalationWorkgroup, excluded, cancellationToken).ConfigureAwait(false)) is { } escalation)
+                    {
+                        return Resolved(escalation, steps);
+                    }
+
+                    return new ApproverResolution(ResolutionOutcome.NobodyAvailable, [], steps);
+                }
+
             default:
                 // No data yet: hold, and never stand IAM managers in for a line manager or an entitlement owner (DL-069d).
                 steps.Add(new ResolutionStep(source.Kind, ResolutionStepResult.Unavailable, null, null, null, 0, 0));
@@ -119,6 +152,14 @@ public sealed class ApproverResolver(IApplicationApproverDirectory applications,
         }
 
         return new ApproverResolution(ResolutionOutcome.NobodyAvailable, [], steps);
+    }
+
+    /// <summary>An owning workgroup's active members, as the owner step (with the entitlement's version and hash).</summary>
+    private async Task<(ResolutionStep, IReadOnlyList<PersonId>)> OwnerGroupStepAsync(EntitlementOwnership ownership, string reference, IReadOnlySet<PersonId> excluded, CancellationToken cancellationToken)
+    {
+        var (groupStep, members) = await WorkgroupStepAsync(ApproverSourceKind.Workgroup, ownership.OwnerId, excluded, cancellationToken).ConfigureAwait(false);
+        return (groupStep with { Source = ApproverSourceKind.EntitlementOwner, Reference = reference, Version = ownership.VersionNumber, Hash = ownership.ContentHash },
+            groupStep.Result == ResolutionStepResult.Found ? members : []);
     }
 
     private static ApproverResolution Resolved(IReadOnlyList<PersonId> people, List<ResolutionStep> steps) =>

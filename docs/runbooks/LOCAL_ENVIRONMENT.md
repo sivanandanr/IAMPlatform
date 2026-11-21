@@ -68,7 +68,7 @@ dotnet run --project backend/src/Host/IAM.Bff --launch-profile "IAM.Bff (local)"
 Sign in as `dev.requester` (password `IAM_DEV_USER_PASSWORD`). After login, `https://localhost:5001/api/identity/me` returns your subject id via the proxy. Sessions are in memory: restarting the BFF signs everyone out (R-022). Realm changes (for example the `iam-api` audience mapper) need `docker compose up -d --force-recreate keycloak`.
 
 ## 3b. Database provider, connection strings and parity tests (S1-06)
-- `IAM.Api` needs `IAM_DB_PROVIDER` (`SqlServer` or `PostgreSql`, exact; no default) and one connection string per module schema, `ConnectionStrings:<schema>` (today `identity`, `configuration` for the Administration module's access control (P0-013), `catalog` for the application catalog (DL-066), `organization` for workgroups (DL-068), `workflow` for stored approvals (DL-072), `account` for accounts and naming rules (DL-089), and `policy` for the approval matrix (DL-090)). It refuses to start otherwise. To set the first administrator and manager locally, see `ACCESS_CONTROL_BOOTSTRAP.md`. The local launch profile sets `IAM_DB_PROVIDER=PostgreSql`; put the connection string in user secrets, never in appsettings:
+- `IAM.Api` needs `IAM_DB_PROVIDER` (`SqlServer` or `PostgreSql`, exact; no default) and one connection string per module schema, `ConnectionStrings:<schema>` (today `identity`, `configuration` for the Administration module's access control (P0-013), `catalog` for the application catalog (DL-066), `organization` for workgroups (DL-068), `workflow` for stored approvals (DL-072), `account` for accounts and naming rules (DL-089), `policy` for the approval matrix (DL-090), and `request` for request items (DL-091)). It refuses to start otherwise. To set the first administrator and manager locally, see `ACCESS_CONTROL_BOOTSTRAP.md`. The local launch profile sets `IAM_DB_PROVIDER=PostgreSql`; put the connection string in user secrets, never in appsettings:
 ```bash
 dotnet user-secrets set "ConnectionStrings:identity" "<connection string for the iam_app_identity login>" --project backend/src/Host/IAM.Api
 dotnet user-secrets set "ConnectionStrings:configuration" "<connection string for the iam_app_administration login>" --project backend/src/Host/IAM.Api
@@ -77,6 +77,7 @@ dotnet user-secrets set "ConnectionStrings:organization" "<connection string for
 dotnet user-secrets set "ConnectionStrings:workflow" "<connection string for the iam_app_workflow login>" --project backend/src/Host/IAM.Api
 dotnet user-secrets set "ConnectionStrings:account" "<connection string for the iam_app_account login>" --project backend/src/Host/IAM.Api
 dotnet user-secrets set "ConnectionStrings:policy" "<connection string for the iam_app_policy login>" --project backend/src/Host/IAM.Api
+dotnet user-secrets set "ConnectionStrings:request" "<connection string for the iam_app_request login>" --project backend/src/Host/IAM.Api
 ```
 - Application logins are least-privilege per module and are **not** `sa` / `iam_owner`. Create them with the bootstrap script for your engine (run as administrator, inputs bound as parameters): `infra/db/sqlserver/bootstrap-module.sql` or `infra/db/postgresql/bootstrap-module.sql`. For the audit module (S1-07) run `bootstrap-module.sql` for schema `audit`, then `grant-audit-role.sql` with role `iam_audit_writer` once for every module runtime login (including the audit login) and with `iam_audit_reader` for the audit login, before the audit migration — the migration fails if either role is missing. PostgreSQL 16 or later is required. Migrations run as `iam_migrator`; the API never runs migrations. There are no tables to query yet (S1-08 adds the first ones), so a local database for the API is optional until then.
 - Parity tests start their own throwaway containers from the same pinned images (Docker required) and never touch the compose databases:
@@ -96,7 +97,7 @@ IAM_DB_PROVIDER=PostgreSql dotnet run --project backend/src/Workers/IAM.Workers.
 ```
 Since DL-077 it also sends the workflow outbox to RabbitMQ, so it needs the broker too: `Messaging:RabbitMq:Host`, `VirtualHost`, `UserName` and `Password` (user secrets; locally the workflow module's own broker user from §3d, vhost `iam`, never `guest`), and `Messaging:RabbitMq:UseTls=false` only because the broker is on this machine. `Workflow:Outbox:*` tunes the relay (interval, batch, attempts, publish timeout, lease). Apply the broker topology and users from §3d first: the worker creates nothing on the broker. Messages nobody consumes wait in `iam.unrouted` for at most 7 days; a message whose send failed `MaxAttempts` times, or whose stored content breaks the envelope rules, is parked (logged at Error with its id and type) until the setting is raised.
 
-It writes as `system:workflow-timeouts`. A damaged instance is skipped until restart, and so is any instance that fails 3 passes in a row (logged at Error with the instance id only); look damaged ones up in the audit trail (`workflow.approval.damaged`, written once per instance) or `workflow.ApprovalDamage`. It is not in compose yet.
+Since DL-091 it also starts the approvals of submitted request items from the `iam.workflow.request_items` queue (`Workflow:Consumer:*` as for the notification consumer), so its broker user needs the read and retry permissions below. It writes as `system:workflow-timeouts`. A damaged instance is skipped until restart, and so is any instance that fails 3 passes in a row (logged at Error with the instance id only); look damaged ones up in the audit trail (`workflow.approval.damaged`, written once per instance) or `workflow.ApprovalDamage`. It is not in compose yet.
 
 ## 3d. Notification worker, broker topology and users (DL-078, DL-079)
 `IAM.Workers.Notification` turns workflow `task_opened` events into pending notifications (nothing is sent yet). It needs `IAM_DB_PROVIDER`, `ConnectionStrings:notification` (the `iam_app_notification` login, bootstrapped like the other modules), the broker settings as for the workflow worker but with the notification module's own broker user, and optionally `Notification:Consumer:Prefetch` (1 to 100, default 10), `DeliveryLimit` (1 to 15, default 5) and `ReconnectDelaySeconds` (1 to 60, default 5).
@@ -126,6 +127,24 @@ docker compose exec rabbitmq rabbitmqctl set_permissions -p iam iam-notification
 ```bash
 docker compose exec rabbitmq rabbitmqctl set_topic_permissions -p iam iam-notification iam.workflow '^$' '^$'
 ```
+The workflow user (DL-091) also consumes submitted request items, and the request module has its own user for its relay:
+```bash
+docker compose exec rabbitmq rabbitmqctl set_permissions -p iam iam-workflow '^$' '^iam\.(workflow|unrouted|workflow\.request_items\.retry)$' '^iam\.workflow\.request_items$'
+```
+```bash
+docker compose exec rabbitmq rabbitmqctl set_topic_permissions -p iam iam-workflow iam.request '^$' '^$'
+```
+```bash
+docker compose exec rabbitmq rabbitmqctl add_user iam-request '<password>'
+```
+```bash
+docker compose exec rabbitmq rabbitmqctl set_permissions -p iam iam-request '^$' '^iam\.(request|unrouted)$' '^$'
+```
+```bash
+docker compose exec rabbitmq rabbitmqctl set_topic_permissions -p iam iam-request iam.request '^request\.item\.[a-z_]+$' '^$'
+```
+`IAM.Workers.Request` sends the request module's outbox: it needs `IAM_DB_PROVIDER`, `ConnectionStrings:request`, the broker settings with the `iam-request` user, and optionally `Request:Outbox:*` as for the workflow relay. It writes as `system:request-relay` and reads no other schema.
+
 Change topology only by changing `definitions.json` through review and importing it again; a queue's arguments can't change in place (the worker logs `BrokerPreconditionFailed` until the queue is recreated). Unprocessable messages are in `iam.notification.approval_tasks.dlq` (logged with id and type once validated); there is no replay tool yet. `iam.unrouted` keeps events no consumer takes for at most 7 days (100,000 messages, 100 MB, oldest dropped): it is not a source to replay from.
 
 ## 4. Stop / reset
