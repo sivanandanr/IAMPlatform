@@ -23,6 +23,7 @@ public static class ProvisioningInfrastructure
         AddCore(services);
         services.TryAddSingleton(new ConnectorBindings(bindings));
         services.TryAddScoped<IProvisioningLedger, ProvisioningLedgerStore>();
+        services.TryAddScoped<ProvisioningDecider>();
         services.TryAddScoped<AuthorizedApprovals>();
         return services;
     }
@@ -34,6 +35,7 @@ public static class ProvisioningInfrastructure
         ArgumentNullException.ThrowIfNull(settings);
         AddCore(services);
         services.TryAddSingleton(settings);
+        services.TryAddScoped<ProvisioningDecider>();
         services.TryAddScoped<ProvisioningRunner>();
         return services;
     }

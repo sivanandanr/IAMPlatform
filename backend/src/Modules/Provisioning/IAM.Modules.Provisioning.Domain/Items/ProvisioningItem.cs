@@ -45,6 +45,9 @@ public enum BlockReason
 
     /// <summary>No connector serves the application: the work is manual.</summary>
     ManualWork = 9,
+
+    /// <summary>The new account's target id is taken, or the person already has a live Primary account (DL-096).</summary>
+    AccountTaken = 10,
 }
 
 /// <summary>The account and entitlement a planned item acts on (DL-093). For a new account, the account fields are its name.</summary>

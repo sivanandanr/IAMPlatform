@@ -195,7 +195,7 @@ public sealed partial class RequestItemParityTests
     {
         var services = new ServiceCollection();
         services.AddScoped(_ => new WorkflowHolder(Workflow()));
-        services.AddScoped(sp => new RequestItemApprovals(sp.GetRequiredService<WorkflowHolder>().Service));
+        services.AddScoped(sp => Starter(sp.GetRequiredService<WorkflowHolder>().Service));
         return services.BuildServiceProvider();
     }
 

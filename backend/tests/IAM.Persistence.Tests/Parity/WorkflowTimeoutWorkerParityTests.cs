@@ -151,6 +151,7 @@ public sealed class WorkflowTimeoutWorkerParityTests(ParityDatabase db)
         new("ConnectionStrings:workflow", db.WorkflowAppConnectionString),
         new("ConnectionStrings:catalog", db.CatalogAppConnectionString),
         new("ConnectionStrings:organization", db.OrganizationAppConnectionString),
+        new("ConnectionStrings:request", db.RequestAppConnectionString),
         new("Workflow:Timeouts:BatchSize", batchSize.ToString(CultureInfo.InvariantCulture)),
         new("Messaging:RabbitMq:Host", "localhost"),
         new("Messaging:RabbitMq:VirtualHost", "iam"),
@@ -368,6 +369,7 @@ public sealed class WorkflowWorkerHostTests
         new("ConnectionStrings:workflow", "Host=localhost;Database=iam;Username=u;Password=p"),
         new("ConnectionStrings:catalog", "Host=localhost;Database=iam;Username=u;Password=p"),
         new("ConnectionStrings:organization", "Host=localhost;Database=iam;Username=u;Password=p"),
+        new("ConnectionStrings:request", "Host=localhost;Database=iam;Username=u;Password=p"),
         new("Messaging:RabbitMq:Host", "localhost"),
         new("Messaging:RabbitMq:VirtualHost", "iam"),
         new("Messaging:RabbitMq:UserName", "iam-workflow"),
@@ -384,7 +386,7 @@ public sealed class WorkflowWorkerHostTests
         }
 
         Should.Throw<Exception>(() => WorkflowWorkerHost.Build([], Complete.Where(s => s.Key != "IAM_DB_PROVIDER")));
-        foreach (var schema in new[] { "workflow", "catalog", "organization" })
+        foreach (var schema in new[] { "workflow", "catalog", "organization", "request" })
         {
             Should.Throw<InvalidOperationException>(() => WorkflowWorkerHost.Build([], Complete.Where(s => s.Key != $"ConnectionStrings:{schema}")), schema)
                 .Message.ShouldContain(schema);

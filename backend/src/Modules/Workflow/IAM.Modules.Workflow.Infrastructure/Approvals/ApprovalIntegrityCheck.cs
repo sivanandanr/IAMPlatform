@@ -154,8 +154,30 @@ public sealed class ApprovalIntegrityCheck(WorkflowDbContext db, IAuditTrail tra
             loaded.Instance.ProvisioningAuthorized,
             loaded.Instance.Stages.Any(s => s.Kind == StageKind.Action
                 && s.State is StageState.Pending or StageState.Active or StageState.AwaitingApprovers or StageState.Held),
-            actions.Count);
+            actions.Count,
+            new ApprovedRoute(
+                binding.PolicyVersionId,
+                binding.PolicyHash,
+                binding.MatchedRuleId,
+                binding.PolicyMaker.Value,
+                [.. loaded.Stages.Select(Approved)]));
     }
+
+    private static ApprovedStage Approved(StageDefinition s) => new(
+        s.StageId,
+        s.Sequence,
+        s.Kind.ToString(),
+        s.Approvers.Kind.ToString(),
+        s.Approvers.WorkgroupKey,
+        s.Approvers.ApplicationId,
+        s.Approvers.RoleTypeId,
+        s.Approvers.EntitlementId,
+        s.Quorum.ToString(),
+        s.MinimumApprovals,
+        s.Mandatory,
+        s.Independent,
+        (int)s.Deadline.TotalHours,
+        s.OnTimeout.ToString());
 
     private async Task<bool> MovedAsync(ApprovalInstanceRow read, CancellationToken cancellationToken)
     {

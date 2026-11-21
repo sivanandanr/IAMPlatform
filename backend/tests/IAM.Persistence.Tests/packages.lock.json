@@ -1587,6 +1587,7 @@
           "IAM.Modules.Audit.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Catalog.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Organization.Infrastructure": "[1.0.0, )",
+          "IAM.Modules.Request.Infrastructure": "[1.0.0, )",
           "IAM.Modules.Workflow.Application": "[1.0.0, )",
           "IAM.Modules.Workflow.Infrastructure": "[1.0.0, )",
           "IAM.Persistence.PostgreSql": "[1.0.0, )",

@@ -230,14 +230,28 @@ public sealed partial class RequestItemParityTests
         await using var accounts = TestSupport.CreateAccount(db.Provider, db.AccountAppConnectionString, new AuditingSaveChangesInterceptor(clock, new FixedActor(actor)));
         var writer = new AuditWriter(TestSupport.ProviderFor(db.Provider), clock, new FixedActor(actor),
             new AuditActionCatalog(ProvisioningAuditActions.All.Select(a => new AuditActionRegistration(a))));
-        var runner = new ProvisioningRunner(
-            context,
-            writer,
-            clock,
-            new Targets(target),
-            AccountRecorder(accounts, clock),
-            new ProvisioningRunnerSettings(batchSize: 10, leaseSeconds: 60, maxAttempts: maxAttempts, retryDelaySeconds: 30));
-        return await runner.RunItemAsync(item, cancellationToken ?? Ct);
+        // The runner decides again before it runs (DL-096), with the binding the item was planned with.
+        var application = (await context.Items.AsNoTracking().SingleAsync(i => i.Id == item, Ct)).ApplicationId ?? Guid.CreateVersion7();
+        var (decider, contexts) = Decider([ConnectorBinding.Create(application, "mock-ad", AccountContainer)], clock);
+        try
+        {
+            var runner = new ProvisioningRunner(
+                context,
+                writer,
+                clock,
+                new Targets(target),
+                AccountRecorder(accounts, clock),
+                decider,
+                new ProvisioningRunnerSettings(batchSize: 10, leaseSeconds: 60, maxAttempts: maxAttempts, retryDelaySeconds: 30));
+            return await runner.RunItemAsync(item, cancellationToken ?? Ct);
+        }
+        finally
+        {
+            foreach (var c in contexts)
+            {
+                await c.DisposeAsync();
+            }
+        }
     }
 
     private AccountProvisioningService AccountRecorder(Modules.Account.Infrastructure.Persistence.AccountDbContext accounts, TimeProvider? clock = null) =>

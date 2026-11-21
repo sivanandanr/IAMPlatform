@@ -22,44 +22,42 @@ public sealed class AccountProvisioningService(AccountDbContext db, IAuditWriter
     public const string Created = "account.account.created";
     public const string Target = "account.account";
 
+    public async Task<string?> CheckCreatableAsync(CreatedAccount account, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(account);
+        try
+        {
+            var created = Build(account);
+            return await db.Accounts.AsNoTracking().AnyAsync(a => a.ProvisioningItemId == account.ProvisioningItemId, cancellationToken).ConfigureAwait(false)
+                ? "ItemRecorded"
+                : await RefusalAsync(created, cancellationToken).ConfigureAwait(false);
+        }
+        catch (AccountNotRecordedException refused)
+        {
+            return refused.Code;
+        }
+    }
+
+    public async Task<Guid?> FindRecordedAsync(Guid provisioningItemId, CancellationToken cancellationToken) =>
+        await db.Accounts.AsNoTracking()
+            .Where(a => a.ProvisioningItemId == provisioningItemId)
+            .Select(a => (Guid?)a.Id)
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
     public async Task<Guid> RecordCreatedAsync(CreatedAccount account, string correlationId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(account);
         ArgumentException.ThrowIfNullOrEmpty(correlationId);
-        if (!Enum.GetNames<AccountType>().Contains(account.Type, StringComparer.Ordinal))
-        {
-            throw new AccountNotRecordedException("InvalidType");
-        }
-
-        AccountEntity created;
-        try
-        {
-            created = AccountEntity.FromProvisioning(account.ProvisioningItemId, account.ApplicationId, Enum.Parse<AccountType>(account.Type), account.Name, account.TargetId, account.Owner);
-        }
-        catch (AccountRejectedException)
-        {
-            throw new AccountNotRecordedException("InvalidAccount");
-        }
-
+        var created = Build(account);
         if (await db.Accounts.AsNoTracking().SingleOrDefaultAsync(a => a.ProvisioningItemId == account.ProvisioningItemId, cancellationToken).ConfigureAwait(false) is { } existing)
         {
             return Same(existing, created) ? existing.Id : throw new AccountNotRecordedException("ItemRecordedDifferently");
         }
 
-        var live = db.Accounts.AsNoTracking().Where(a => a.ApplicationId == created.ApplicationId && a.Status != AccountStatus.Closed);
-        if (await live.AnyAsync(a => a.NameKey == created.NameKey, cancellationToken).ConfigureAwait(false))
+        if (await RefusalAsync(created, cancellationToken).ConfigureAwait(false) is { } refusal)
         {
-            throw new AccountNotRecordedException("NameInUse");
-        }
-
-        if (await live.AnyAsync(a => a.TargetId == created.TargetId, cancellationToken).ConfigureAwait(false))
-        {
-            throw new AccountNotRecordedException("TargetInUse");
-        }
-
-        if (created.Type == AccountType.Primary && await live.AnyAsync(a => a.Owner == created.Owner && a.Type == AccountType.Primary, cancellationToken).ConfigureAwait(false))
-        {
-            throw new AccountNotRecordedException("PrimaryExists");
+            throw new AccountNotRecordedException(refusal);
         }
 
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
@@ -107,6 +105,42 @@ public sealed class AccountProvisioningService(AccountDbContext db, IAuditWriter
             cancellationToken).ConfigureAwait(false);
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
         return created.Id;
+    }
+
+    private static AccountEntity Build(CreatedAccount account)
+    {
+        if (!Enum.GetNames<AccountType>().Contains(account.Type, StringComparer.Ordinal))
+        {
+            throw new AccountNotRecordedException("InvalidType");
+        }
+
+        try
+        {
+            return AccountEntity.FromProvisioning(account.ProvisioningItemId, account.ApplicationId, Enum.Parse<AccountType>(account.Type), account.Name, account.TargetId, account.Owner);
+        }
+        catch (AccountRejectedException)
+        {
+            throw new AccountNotRecordedException("InvalidAccount");
+        }
+    }
+
+    /// <summary>The account rules a new account must meet among the application's live accounts, as a code, or null.</summary>
+    private async Task<string?> RefusalAsync(AccountEntity created, CancellationToken cancellationToken)
+    {
+        var live = db.Accounts.AsNoTracking().Where(a => a.ApplicationId == created.ApplicationId && a.Status != AccountStatus.Closed);
+        if (await live.AnyAsync(a => a.NameKey == created.NameKey, cancellationToken).ConfigureAwait(false))
+        {
+            return "NameInUse";
+        }
+
+        if (await live.AnyAsync(a => a.TargetId == created.TargetId, cancellationToken).ConfigureAwait(false))
+        {
+            return "TargetInUse";
+        }
+
+        return created.Type == AccountType.Primary && await live.AnyAsync(a => a.Owner == created.Owner && a.Type == AccountType.Primary, cancellationToken).ConfigureAwait(false)
+            ? "PrimaryExists"
+            : null;
     }
 
     private static bool Same(AccountEntity a, AccountEntity b) =>

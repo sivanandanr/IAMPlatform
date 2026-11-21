@@ -37,8 +37,18 @@ namespace IAM.Persistence.Tests.Parity;
 /// </summary>
 [Collection(ParityDatabaseGroup.Name)]
 [Trait("Category", "DatabaseParity")]
-public sealed partial class RequestItemParityTests(ParityDatabase db, RabbitMqBroker broker) : IClassFixture<RabbitMqBroker>
+public sealed partial class RequestItemParityTests(ParityDatabase db, RabbitMqBroker broker) : IClassFixture<RabbitMqBroker>, IAsyncDisposable
 {
+    private readonly List<IAsyncDisposable> _disposables = [];
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var disposable in _disposables)
+        {
+            await disposable.DisposeAsync();
+        }
+    }
+
     private const string Admin = "req-admin";
     private const string Checker = "req-checker";
     private const string Helper = "req-helper";
@@ -79,7 +89,7 @@ public sealed partial class RequestItemParityTests(ParityDatabase db, RabbitMqBr
         var (workflowService, workflowContext) = Workflow();
         await using (workflowContext)
         {
-            var consumer = new RequestItemApprovals(workflowService);
+            var consumer = Starter(workflowService);
             (await consumer.HandleAsync(envelope, Ct)).ShouldBe(MessageOutcome.Processed);
             (await consumer.HandleAsync(envelope, Ct)).ShouldBe(MessageOutcome.Duplicate);
             var started = (await workflowService.FindAsync(item.Id, Ct)).ShouldNotBeNull();
@@ -186,7 +196,7 @@ public sealed partial class RequestItemParityTests(ParityDatabase db, RabbitMqBr
         var (workflow, workflowContext) = Workflow();
         await using (workflowContext)
         {
-            (await new RequestItemApprovals(workflow).HandleAsync(await OutboxEnvelopeAsync(item.Id), Ct)).ShouldBe(MessageOutcome.Processed);
+            (await Starter(workflow).HandleAsync(await OutboxEnvelopeAsync(item.Id), Ct)).ShouldBe(MessageOutcome.Processed);
         }
 
         await Refused(world.Beneficiary, nameStage, "adm.ben", RequestRefusal.NotOnStage);
@@ -253,7 +263,7 @@ public sealed partial class RequestItemParityTests(ParityDatabase db, RabbitMqBr
         var (workflow, workflowContext) = Workflow();
         await using (workflowContext)
         {
-            (await new RequestItemApprovals(workflow).HandleAsync(await OutboxEnvelopeAsync(item.Id), Ct)).ShouldBe(MessageOutcome.Processed);
+            (await Starter(workflow).HandleAsync(await OutboxEnvelopeAsync(item.Id), Ct)).ShouldBe(MessageOutcome.Processed);
             var held = (await workflow.FindAsync(item.Id, Ct)).ShouldNotBeNull();
             held.State.ShouldBe("Held");
             held.Stages.Single(s => s.StageId == nameStage).State.ShouldBe("Active");
@@ -279,7 +289,7 @@ public sealed partial class RequestItemParityTests(ParityDatabase db, RabbitMqBr
         var (workflow, workflowContext) = Workflow();
         await using (workflowContext)
         {
-            await new RequestItemApprovals(workflow).HandleAsync(await OutboxEnvelopeAsync(item.Id), Ct);
+            await Starter(workflow).HandleAsync(await OutboxEnvelopeAsync(item.Id), Ct);
         }
 
         await using var named = Service(world.EntitlementOwner, route);

@@ -19,6 +19,26 @@ public enum ApprovalIntegrityStatus
     Changing = 5,
 }
 
+/// <summary>One stage of the route an approval was bound to, as replayed (DL-096). Enum-like fields carry their stable names.</summary>
+public sealed record ApprovedStage(
+    Guid StageId,
+    int Sequence,
+    string Kind,
+    string Source,
+    string? WorkgroupKey,
+    Guid? ApplicationId,
+    Guid? RoleTypeId,
+    Guid? EntitlementId,
+    string Quorum,
+    int? MinimumApprovals,
+    bool Mandatory,
+    bool Independent,
+    int DeadlineHours,
+    string OnTimeout);
+
+/// <summary>The matrix evidence and route an approval was bound to, as replayed (DL-096).</summary>
+public sealed record ApprovedRoute(Guid MatrixVersionId, string MatrixContentHash, Guid MatchedRuleId, string PolicyMaker, IReadOnlyList<ApprovedStage> Stages);
+
 /// <summary>
 /// The outcome of checking one approval (DL-093). <see cref="Problem"/> is a code, never data. The people, the
 /// authorisation and <see cref="ActionsOpen"/> (an Action level that isn't finished yet, so provisioning must wait) are the
@@ -33,7 +53,8 @@ public sealed record ApprovalIntegrityReport(
     string? Beneficiary,
     bool ProvisioningAuthorized,
     bool ActionsOpen,
-    int Actions)
+    int Actions,
+    ApprovedRoute? Route = null)
 {
     public static ApprovalIntegrityReport Failed(Guid instanceId, ApprovalIntegrityStatus status, string problem) =>
         new(instanceId, status, problem, Guid.Empty, null, null, ProvisioningAuthorized: false, ActionsOpen: false, Actions: 0);

@@ -33,15 +33,16 @@ public static class ProvisioningAuditActions
     public const string StepRetry = "provisioning.item.step_retry";
     public const string Failed = "provisioning.item.failed";
     public const string Succeeded = "provisioning.item.succeeded";
+    public const string StepUndone = "provisioning.item.step_undone";
     public const string ReadAction = AccessActions.ProvisioningItemsRead;
 
-    public static IReadOnlyList<string> All { get; } = [Planned, Blocked, StepDone, StepRetry, Failed, Succeeded];
+    public static IReadOnlyList<string> All { get; } = [Planned, Blocked, StepDone, StepRetry, Failed, Succeeded, StepUndone];
 }
 
 /// <summary>
-/// Acts on an approval's authorisation (DL-093). Before anything else it checks the approval against the audit store (R-037
-/// release gate): only a verified approval that authorises provisioning, for the item it names, is planned, and only once
-/// no Action level is still open (a level that names the account comes after the decisions, DL-092). The <c>authorized</c>
+/// Acts on an approval's authorisation (DL-093, DL-096). What the item becomes is the <see cref="ProvisioningDecider"/>'s:
+/// only a verified approval that authorises provisioning, for the item and route it was frozen with, is planned, and only
+/// once no Action level is still open (a level that names the account comes after the decisions, DL-092). The <c>authorized</c>
 /// event arrives when the decisions are done; if an Action level is still open, it waits for <c>closed</c>. Then it reads
 /// the frozen item and checks again what may have changed since it was approved: the entitlement version, the existing
 /// account, the new account's name and whether a connector serves the application. Anything that fails is blocked with a
@@ -53,11 +54,7 @@ public sealed class AuthorizedApprovals(
     IIamDatabaseProvider provider,
     TimeProvider clock,
     IAuditWriter audit,
-    IApprovalIntegrity integrity,
-    IRequestItemSource items,
-    IEntitlementDirectory entitlements,
-    IAccountDirectory accounts,
-    ConnectorBindings bindings) : IMessageHandler
+    ProvisioningDecider decider) : IMessageHandler
 {
     public string ConsumerName => "provisioning.approvals";
 
@@ -84,10 +81,11 @@ public sealed class AuthorizedApprovals(
         }
 
         var now = UtcMicrosecondConverter.TruncateToMicroseconds(clock.GetUtcNow());
-        var decision = await DecideAsync(itemId, sequence, closed, now, cancellationToken).ConfigureAwait(false);
+        var decision = await decider.DecideAsync(itemId, sequence, closed, now, cancellationToken).ConfigureAwait(false);
         if (decision is null)
         {
-            // Nothing to plan yet (an Action level is open) or ever (closed without authorisation): the message is only noted.
+            // Nothing to plan yet (an Action level is open, or the event is early or forged) or ever (closed without
+            // authorisation): the message is only noted, and blocks nothing (DL-096).
             return await db.ReceiveOnceAsync(provider, ConsumerName, envelope, now, () => { }, cancellationToken).ConfigureAwait(false);
         }
 
@@ -112,102 +110,6 @@ public sealed class AuthorizedApprovals(
 
     private static (Guid Item, Guid Instance, int Sequence, bool Closed) Read(ApprovalClosed m) => (m.RequestItemId, m.InstanceId, 1, true);
 
-    /// <summary>The plan or block for the item, or null when there is nothing to do now.</summary>
-    private async Task<ProvisioningPlan?> DecideAsync(Guid itemId, int sequence, bool closed, DateTimeOffset now, CancellationToken cancellationToken)
-    {
-        // R-037: the log, replayed, must match the audit store before the authorisation means anything.
-        var report = await integrity.CheckAsync(itemId, cancellationToken).ConfigureAwait(false);
-        switch (report.Status)
-        {
-            case ApprovalIntegrityStatus.Verified:
-                break;
-            case ApprovalIntegrityStatus.Changing:
-                // The approval is still being written: try again later rather than block on a moving target.
-                throw new InvalidOperationException("The approval changed while it was checked; retry.");
-            default:
-                return new(ProvisioningItem.Block(itemId, null, BlockReason.Integrity, report.Problem ?? report.Status.ToString(), null, now), []);
-        }
-
-        // The message can say no more than the verified log does.
-        if (report.RequestItemId != itemId || report.Actions < sequence)
-        {
-            return new(ProvisioningItem.Block(itemId, null, BlockReason.Integrity, "MessageAhead", null, now), []);
-        }
-
-        var actions = report.Actions;
-        ProvisioningPlan Blocked(BlockReason reason, ItemDetails? details = null) =>
-            new(ProvisioningItem.Block(itemId, actions, reason, null, details, now), []);
-
-        if (!report.ProvisioningAuthorized)
-        {
-            // An approval that closed without authorising anything is no one's problem; an authorisation that isn't one is.
-            return closed ? null : Blocked(BlockReason.NotAuthorized);
-        }
-
-        if (report.ActionsOpen)
-        {
-            return null;
-        }
-
-        if (await items.FindAsync(itemId, cancellationToken).ConfigureAwait(false) is not { } item)
-        {
-            return Blocked(BlockReason.ItemMissing);
-        }
-
-        var details = new ItemDetails(item.Beneficiary, item.ApplicationId, item.EntitlementId, item.EntitlementVersionId, item.AccountId, item.NewAccountType, item.AccountName);
-        if (item.ItemId != itemId
-            || !string.Equals(item.Beneficiary, report.Beneficiary, StringComparison.Ordinal)
-            || !string.Equals(item.Requester, report.Requester, StringComparison.Ordinal))
-        {
-            return Blocked(BlockReason.ItemMismatch, details);
-        }
-
-        // Only the version that was requested and approved, still active, under the same application.
-        var entitlement = await entitlements.FindRequestableAsync(item.EntitlementId, cancellationToken).ConfigureAwait(false);
-        if (entitlement is null || entitlement.VersionId != item.EntitlementVersionId || entitlement.ApplicationId != item.ApplicationId
-            || !string.Equals(entitlement.ContentHash, item.EntitlementContentHash, StringComparison.Ordinal))
-        {
-            return Blocked(BlockReason.EntitlementChanged, details);
-        }
-
-        string? accountTarget = null;
-        if (item.AccountId is { } accountId)
-        {
-            var account = await accounts.FindAsync(accountId, cancellationToken).ConfigureAwait(false);
-            // As when it was requested (DL-091): active, the beneficiary's, a type the entitlement allows, and linked on the target.
-            if (account is null || account.ApplicationId != item.ApplicationId || account.Status != "Active"
-                || !string.Equals(account.Owner, item.Beneficiary, StringComparison.Ordinal)
-                || !entitlement.AllowedAccountTypes.Contains(account.Type, StringComparer.Ordinal)
-                || string.IsNullOrEmpty(account.TargetId))
-            {
-                return Blocked(BlockReason.AccountChanged, details);
-            }
-
-            accountTarget = account.TargetId;
-        }
-        else
-        {
-            if (item.AccountName is null)
-            {
-                return Blocked(BlockReason.NoAccountName, details);
-            }
-
-            if (await accounts.IsNameInUseAsync(item.ApplicationId, item.AccountName, cancellationToken).ConfigureAwait(false))
-            {
-                return Blocked(BlockReason.NameInUse, details);
-            }
-        }
-
-        if (bindings.For(item.ApplicationId) is not { } binding)
-        {
-            return Blocked(BlockReason.ManualWork, details);
-        }
-
-        return accountTarget is null
-            ? ProvisioningPlanner.ForNewAccount(itemId, actions, details, entitlement.TechnicalName, binding, now)
-            : ProvisioningPlanner.ForExistingAccount(itemId, actions, details, accountTarget, entitlement.TechnicalName, binding, now);
-    }
-
     private async Task AuditAsync(IDbContextTransaction tx, ProvisioningPlan decision, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var item = decision.Item;
@@ -222,7 +124,7 @@ public sealed class AuthorizedApprovals(
                 Outcome = blocked ? AuditOutcome.Denied : AuditOutcome.Succeeded,
                 Reason = blocked ? item.Problem : null,
                 OccurredAtUtc = now,
-                CorrelationId = Activity.Current?.TraceId.ToHexString() ?? Guid.NewGuid().ToString("N"),
+                CorrelationId = item.CorrelationId ?? MessageCorrelation.Current(),
                 Payload =
                 [
                     Field("approvalActions", item.ApprovalActions?.ToString(CultureInfo.InvariantCulture) ?? "untrusted"),
