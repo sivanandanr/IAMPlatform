@@ -215,6 +215,9 @@ public sealed partial class RequestItemParityTests
                 Item($"{C("ConnectorKey")} = 'other'", planned),
                 Item($"{C("EntitlementId")} = '{Guid.NewGuid()}'", planned),
                 Item($"{C("State")} = 'Succeeded'", planned),
+                Item($"{C("CorrelationId")} = 'ffffffffffffffffffffffffffffffff'", planned),
+                Item($"{C("Attempts")} = -1", planned),
+                Item($"{C("RecordedAccountId")} = '{Guid.NewGuid()}'", planned),
                 Item($"{C("State")} = 'Planned', {C("Problem")} = NULL, {C("ConnectorKey")} = 'mock-ad'", blocked),
                 Op($"{C("TargetId")} = 'CN=mallory'"),
                 Op($"{C("RelatedId")} = 'CN=Domain Admins'"),
@@ -232,10 +235,14 @@ public sealed partial class RequestItemParityTests
         }
 
         // Forward only: Planned to Running, back to Planned for a retry, Running to Succeeded; never back from Succeeded.
-        foreach (var state in new[] { "Running", "Planned", "Running", "Succeeded" })
+        foreach (var state in new[] { "Running", "Planned", "Running" })
         {
             await db.ExecuteAsync(db.ProvisioningAppConnectionString, Item($"{C("State")} = '{state}'", planned), Ct);
         }
+
+        // Succeeded only with its finishing time (DL-094).
+        await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(db.ProvisioningAppConnectionString, Item($"{C("State")} = 'Succeeded'", planned), Ct));
+        await db.ExecuteAsync(db.ProvisioningAppConnectionString, Item($"{C("State")} = 'Succeeded', {C("FinishedAtUtc")} = {(IsSqlServer ? "SYSUTCDATETIME()" : "now()")}", planned), Ct);
 
         await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(db.ProvisioningAppConnectionString, Item($"{C("State")} = 'Running'", planned), Ct));
         await db.ExecuteAsync(db.ProvisioningAppConnectionString, Op($"{C("State")} = 'Running'"), Ct);
@@ -435,9 +442,17 @@ public sealed partial class RequestItemParityTests
 
     private string C(string column) => Col(column);
 
-    private sealed class ProvisioningScope(AuthorizedApprovals handler, params IAsyncDisposable[] contexts) : IAsyncDisposable
+    private sealed class ProvisioningScope(AuthorizedApprovals handler, params IAsyncDisposable[] contexts) : IAsyncDisposable, IDisposable
     {
         public AuthorizedApprovals Handler => handler;
+
+        public void Dispose()
+        {
+            foreach (var context in contexts.OfType<IDisposable>())
+            {
+                context.Dispose();
+            }
+        }
 
         public async ValueTask DisposeAsync()
         {

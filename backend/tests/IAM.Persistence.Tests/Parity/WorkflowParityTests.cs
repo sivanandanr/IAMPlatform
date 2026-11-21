@@ -47,7 +47,8 @@ public sealed class WorkflowParityTests(ParityDatabase db)
     [Fact]
     public async Task TheMigrationAppliesOnce()
     {
-        db.WorkflowFirstRunApplied.Count.ShouldBe(IsSqlServer ? 5 : 4, "SQL Server alone needed the outbox guard fix (DL-079)");
+        db.WorkflowFirstRunApplied.Count.ShouldBe(IsSqlServer ? 6 : 5, "SQL Server alone needed the outbox guard fix (DL-079)");
+        db.WorkflowFirstRunApplied[^1].ShouldEndWith("_WorkflowCorrelation");
         db.WorkflowFirstRunApplied[0].ShouldEndWith("_WorkflowStorage");
         db.WorkflowFirstRunApplied[1].ShouldEndWith("_WorkflowTasks");
         db.WorkflowFirstRunApplied[2].ShouldEndWith("_WorkflowReviewFixes");

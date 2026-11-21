@@ -37,6 +37,7 @@ public sealed class ProvisioningDbContext(DbContextOptions<ProvisioningDbContext
         item.Property(x => x.NewAccountType).IsCode(16);
         item.Property(x => x.AccountName).IsCode(256);
         item.Property(x => x.ConnectorKey).IsCode(32);
+        item.Property(x => x.CorrelationId).IsCode(32).IsFixedLength();
         item.HasIndex(x => new { x.State, x.ReceivedAtUtc });
 
         var operation = modelBuilder.Entity<ProvisioningOperation>();
@@ -50,6 +51,7 @@ public sealed class ProvisioningDbContext(DbContextOptions<ProvisioningDbContext
         operation.Property(x => x.RelatedId).HasMaxLength(1024);
         operation.Property(x => x.Attributes).IsRequired().HasMaxLength(4000);
         operation.Property(x => x.State).HasConversion<string>().IsRequired().IsCode(16);
+        operation.Property(x => x.ResultCode).IsCode(32);
         operation.HasOne<ProvisioningItem>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
         operation.HasIndex(x => new { x.ItemId, x.Step }).IsUnique();
 

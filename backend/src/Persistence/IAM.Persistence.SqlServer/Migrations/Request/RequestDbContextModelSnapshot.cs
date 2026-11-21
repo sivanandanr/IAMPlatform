@@ -233,6 +233,13 @@ namespace IAM.Persistence.SqlServer.Migrations.Request
                         .UseCollation("Latin1_General_100_BIN2")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(32)
+                        .HasColumnType("nchar(32)")
+                        .IsFixedLength()
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasPrecision(6)
                         .HasColumnType("datetimeoffset(6)");
@@ -342,6 +349,8 @@ namespace IAM.Persistence.SqlServer.Migrations.Request
                             t.HasTrigger("TR_RequestItem_Frozen");
 
                             t.HasCheckConstraint("CK_RequestItem_Beneficiary_Code", "DATALENGTH([Beneficiary]) > 0 AND DATALENGTH([Beneficiary]) = DATALENGTH(LTRIM(RTRIM([Beneficiary])))");
+
+                            t.HasCheckConstraint("CK_RequestItem_CorrelationId_Code", "DATALENGTH([CorrelationId]) > 0 AND DATALENGTH([CorrelationId]) = DATALENGTH(LTRIM(RTRIM([CorrelationId])))");
 
                             t.HasCheckConstraint("CK_RequestItem_EntitlementContentHash_Code", "DATALENGTH([EntitlementContentHash]) > 0 AND DATALENGTH([EntitlementContentHash]) = DATALENGTH(LTRIM(RTRIM([EntitlementContentHash])))");
 

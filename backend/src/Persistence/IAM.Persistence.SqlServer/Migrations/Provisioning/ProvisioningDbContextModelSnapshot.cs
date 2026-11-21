@@ -150,6 +150,9 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                     b.Property<int?>("ApprovalActions")
                         .HasColumnType("int");
 
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
                     b.Property<string>("Beneficiary")
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)")
@@ -159,6 +162,13 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                     b.Property<string>("ConnectorKey")
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(32)
+                        .HasColumnType("nchar(32)")
+                        .IsFixedLength()
                         .UseCollation("Latin1_General_100_BIN2")
                         .HasAnnotation("Iam:Code", true);
 
@@ -177,11 +187,19 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                     b.Property<Guid?>("EntitlementVersionId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<DateTimeOffset?>("FinishedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
                     b.Property<string>("IntegrityProblem")
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)")
                         .UseCollation("Latin1_General_100_BIN2")
                         .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset?>("LeaseUntilUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
 
                     b.Property<DateTimeOffset>("ModifiedAtUtc")
                         .HasPrecision(6)
@@ -198,6 +216,10 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                         .UseCollation("Latin1_General_100_BIN2")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<DateTimeOffset?>("NextAttemptAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
                     b.Property<string>("Problem")
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)")
@@ -207,6 +229,9 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                     b.Property<DateTimeOffset>("ReceivedAtUtc")
                         .HasPrecision(6)
                         .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<Guid?>("RecordedAccountId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("State")
                         .IsRequired()
@@ -232,6 +257,8 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                             t.HasCheckConstraint("CK_ProvisioningItem_Beneficiary_Code", "DATALENGTH([Beneficiary]) > 0 AND DATALENGTH([Beneficiary]) = DATALENGTH(LTRIM(RTRIM([Beneficiary])))");
 
                             t.HasCheckConstraint("CK_ProvisioningItem_ConnectorKey_Code", "DATALENGTH([ConnectorKey]) > 0 AND DATALENGTH([ConnectorKey]) = DATALENGTH(LTRIM(RTRIM([ConnectorKey])))");
+
+                            t.HasCheckConstraint("CK_ProvisioningItem_CorrelationId_Code", "DATALENGTH([CorrelationId]) > 0 AND DATALENGTH([CorrelationId]) = DATALENGTH(LTRIM(RTRIM([CorrelationId])))");
 
                             t.HasCheckConstraint("CK_ProvisioningItem_IntegrityProblem_Code", "DATALENGTH([IntegrityProblem]) > 0 AND DATALENGTH([IntegrityProblem]) = DATALENGTH(LTRIM(RTRIM([IntegrityProblem])))");
 
@@ -262,6 +289,10 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
 
+                    b.Property<DateTimeOffset?>("CompletedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasPrecision(6)
                         .HasColumnType("datetimeoffset(6)");
@@ -288,6 +319,12 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                         .HasColumnType("nvarchar(1024)");
 
                     b.Property<string>("RelatedType")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("ResultCode")
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)")
                         .UseCollation("Latin1_General_100_BIN2")
@@ -331,6 +368,8 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                             t.HasCheckConstraint("CK_ProvisioningOperation_Action_Code", "DATALENGTH([Action]) > 0 AND DATALENGTH([Action]) = DATALENGTH(LTRIM(RTRIM([Action])))");
 
                             t.HasCheckConstraint("CK_ProvisioningOperation_RelatedType_Code", "DATALENGTH([RelatedType]) > 0 AND DATALENGTH([RelatedType]) = DATALENGTH(LTRIM(RTRIM([RelatedType])))");
+
+                            t.HasCheckConstraint("CK_ProvisioningOperation_ResultCode_Code", "DATALENGTH([ResultCode]) > 0 AND DATALENGTH([ResultCode]) = DATALENGTH(LTRIM(RTRIM([ResultCode])))");
 
                             t.HasCheckConstraint("CK_ProvisioningOperation_State_Code", "DATALENGTH([State]) > 0 AND DATALENGTH([State]) = DATALENGTH(LTRIM(RTRIM([State])))");
 

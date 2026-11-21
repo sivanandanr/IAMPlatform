@@ -1,0 +1,247 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Text.Json;
+using IAM.BuildingBlocks.Messaging;
+using IAM.BuildingBlocks.Persistence;
+using IAM.Modules.Account.Contracts;
+using IAM.Modules.Audit.Contracts;
+using IAM.Modules.Provisioning.Application.Items;
+using IAM.Modules.Provisioning.Domain.Items;
+using IAM.Modules.Provisioning.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+
+namespace IAM.Modules.Provisioning.Infrastructure.Items;
+
+/// <summary>
+/// Runs planned items on their targets (DL-094). A runner claims a due item (Planned to Running, with a lease; the row
+/// version makes two runners' claims conflict, and an expired lease lets another take over), then runs its steps in order,
+/// saving each step's state before and after it, under the item's correlation id. A step that was running when a runner
+/// stopped is checked on the target first. Temporary failures put the item back for later with a growing delay, until the
+/// attempts run out; a rejection, a mismatch after the last step or an account the Account module won't record fails it for
+/// a person. Only after every step is done and the target matches is a new account recorded and the item succeeded. Each
+/// change is audited in its own transaction. Steps run under their fixed operation ids, so nothing is changed twice.
+/// </summary>
+public sealed class ProvisioningRunner(
+    ProvisioningDbContext db,
+    IAuditWriter audit,
+    TimeProvider clock,
+    IProvisioningTargets targets,
+    IAccountProvisioning accounts,
+    ProvisioningRunnerSettings settings)
+{
+    /// <summary>Runs up to one batch of due items; returns how many it claimed.</summary>
+    public async Task<int> RunOnceAsync(CancellationToken cancellationToken)
+    {
+        var now = Now();
+        var due = await db.Items.AsNoTracking()
+            .Where(i => (i.State == ProvisioningState.Planned && (i.NextAttemptAtUtc == null || i.NextAttemptAtUtc <= now))
+                || (i.State == ProvisioningState.Running && i.LeaseUntilUtc < now))
+            .OrderBy(i => i.ReceivedAtUtc)
+            .Select(i => i.Id)
+            .Take(settings.BatchSize)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var claimed = 0;
+        foreach (var id in due)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (await RunItemAsync(id, cancellationToken).ConfigureAwait(false))
+            {
+                claimed++;
+            }
+        }
+
+        return claimed;
+    }
+
+    /// <summary>Claims and runs one item; false if it isn't due or another runner claimed it first.</summary>
+    public async Task<bool> RunItemAsync(Guid itemId, CancellationToken cancellationToken)
+    {
+        db.ChangeTracker.Clear();
+        var now = Now();
+        var item = await db.Items.SingleOrDefaultAsync(i => i.Id == itemId, cancellationToken).ConfigureAwait(false);
+        if (item is null || !item.CanClaim(now))
+        {
+            return false;
+        }
+
+        item.Claim(now, settings.Lease);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            db.ChangeTracker.Clear();
+            return false;
+        }
+
+        // Everything this run audits carries the request's correlation id (DL-094).
+        using var trace = MessageCorrelation.StartFor(item.CorrelationId, "iam.provisioning.run");
+        var operations = await db.Operations.Where(o => o.ItemId == itemId).OrderBy(o => o.Step).ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (targets.Find(item.ConnectorKey ?? string.Empty) is not { } target)
+        {
+            item.Fail("ConnectorUnavailable", Now());
+            await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, null, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        foreach (var operation in operations.Where(o => o.State != ProvisioningState.Succeeded))
+        {
+            var step = Step(operation);
+            var interrupted = operation.State == ProvisioningState.Running;
+            operation.Start();
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+            // A step its runner was in the middle of may already be done: the target is read before it runs again.
+            var result = interrupted && await VerifyAsync(target, step, cancellationToken).ConfigureAwait(false)
+                ? new StepResult(StepStatus.Done, "AlreadyInState")
+                : await RunAsync(target, step, cancellationToken).ConfigureAwait(false);
+            if (result.Status == StepStatus.Unknown)
+            {
+                result = await VerifyAsync(target, step, cancellationToken).ConfigureAwait(false)
+                    ? new StepResult(StepStatus.Done, result.Code)
+                    : new StepResult(StepStatus.Retry, result.Code ?? "Unknown");
+            }
+
+            now = Now();
+            switch (result.Status)
+            {
+                case StepStatus.Done:
+                    operation.Complete(result.Code, now);
+                    await SaveAuditedAsync(item, ProvisioningAuditActions.StepDone, AuditOutcome.Succeeded, operation, cancellationToken).ConfigureAwait(false);
+                    break;
+
+                case StepStatus.Retry when item.Attempts + 1 < settings.MaxAttempts:
+                    operation.Release();
+                    item.RetryAt(now + settings.DelayAfter(item.Attempts + 1));
+                    await SaveAuditedAsync(item, ProvisioningAuditActions.StepRetry, AuditOutcome.Failed, operation, cancellationToken, result.Code).ConfigureAwait(false);
+                    return true;
+
+                default:
+                    // Rejected, or temporary failures that ran out of attempts: a person must look at it.
+                    operation.Fail(result.Code, now);
+                    item.Fail(result.Status == StepStatus.Rejected ? ProvisioningItem.ProblemCode(result.Code, "Rejected") : "RetriesExhausted", now);
+                    await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, operation, cancellationToken, result.Code).ConfigureAwait(false);
+                    return true;
+            }
+        }
+
+        // Every step is done: the target must now match the whole plan before anything is recorded.
+        foreach (var operation in operations)
+        {
+            if (!await VerifyAsync(target, Step(operation), cancellationToken).ConfigureAwait(false))
+            {
+                item.Fail("VerifyMismatch", Now());
+                await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, operation, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+        }
+
+        Guid? recorded = null;
+        if (item.NewAccountType is not null)
+        {
+            try
+            {
+                recorded = await accounts.RecordCreatedAsync(
+                    new CreatedAccount(item.Id, item.ApplicationId!.Value, item.NewAccountType, item.AccountName!, operations[0].TargetId, item.Beneficiary!),
+                    item.CorrelationId ?? MessageCorrelation.Current(),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (AccountNotRecordedException refused)
+            {
+                item.Fail("AccountNotRecorded", Now());
+                await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, null, cancellationToken, refused.Code).ConfigureAwait(false);
+                return true;
+            }
+        }
+
+        item.Succeed(recorded, Now());
+        await SaveAuditedAsync(item, ProvisioningAuditActions.Succeeded, AuditOutcome.Succeeded, null, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private static TargetStep Step(ProvisioningOperation o) => new(
+        o.Id,
+        o.Action,
+        o.TargetType,
+        o.TargetId,
+        o.RelatedType,
+        o.RelatedId,
+        JsonSerializer.Deserialize<Dictionary<string, string?>>(o.Attributes) ?? []);
+
+    /// <summary>Runs a step; a call that breaks off (other than for shutdown) has an unknown outcome.</summary>
+    private static async Task<StepResult> RunAsync(IProvisioningTarget target, TargetStep step, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await target.RunAsync(step, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return new StepResult(StepStatus.Unknown, "CallFailed");
+        }
+    }
+
+    /// <summary>Reads the target; a read that fails proves nothing, so it counts as not matching.</summary>
+    private static async Task<bool> VerifyAsync(IProvisioningTarget target, TargetStep step, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await target.VerifyAsync(step, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    private async Task SaveAuditedAsync(ProvisioningItem item, string action, AuditOutcome outcome, ProvisioningOperation? operation, CancellationToken cancellationToken, string? code = null)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        var cause = Activity.Current?.TraceId.ToHexString();
+        var correlation = item.CorrelationId ?? MessageCorrelation.Current();
+        List<AuditPayloadField> payload =
+        [
+            Field("state", item.State.ToString()),
+            Field("attempts", item.Attempts.ToString(CultureInfo.InvariantCulture)),
+            Field("connector", item.ConnectorKey ?? "none"),
+        ];
+        if (operation is not null)
+        {
+            payload.Add(Field("step", operation.Step.ToString(CultureInfo.InvariantCulture)));
+            payload.Add(Field("operationId", operation.Id.ToString()));
+            payload.Add(Field("operation", operation.Action));
+            payload.Add(Field("stepState", operation.State.ToString()));
+        }
+
+        payload.Add(Field("code", ProvisioningItem.ProblemCode(code ?? operation?.ResultCode, "none")));
+        if (item.RecordedAccountId is { } account)
+        {
+            payload.Add(Field("recordedAccountId", account.ToString()));
+        }
+
+        await audit.AppendAsync(
+            tx.GetDbTransaction(),
+            new AuditEventRecord
+            {
+                Action = action,
+                TargetType = ProvisioningAuditActions.Target,
+                TargetId = item.Id.ToString(),
+                Outcome = outcome,
+                Reason = item.State == ProvisioningState.Failed ? item.Problem : null,
+                OccurredAtUtc = Now(),
+                CorrelationId = correlation,
+                CausationId = cause is not null && cause != correlation ? cause : null,
+                Payload = payload,
+            },
+            cancellationToken).ConfigureAwait(false);
+        await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private DateTimeOffset Now() => UtcMicrosecondConverter.TruncateToMicroseconds(clock.GetUtcNow());
+
+    private static AuditPayloadField Field(string name, string value) => new(name, value, AuditFieldClass.Plain);
+}

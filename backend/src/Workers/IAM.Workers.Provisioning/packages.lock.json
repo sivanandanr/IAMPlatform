@@ -218,6 +218,12 @@
       "iam.buildingblocks.security": {
         "type": "Project"
       },
+      "iam.connectors.activedirectory.mock": {
+        "type": "Project",
+        "dependencies": {
+          "IAM.Connectors.Sdk": "[1.0.0, )"
+        }
+      },
       "iam.connectors.sdk": {
         "type": "Project"
       },
@@ -511,7 +517,9 @@
           "IAM.BuildingBlocks.Abstractions": "[1.0.0, )",
           "IAM.BuildingBlocks.Messaging": "[1.0.0, )",
           "IAM.BuildingBlocks.Persistence": "[1.0.0, )",
+          "IAM.BuildingBlocks.Security": "[1.0.0, )",
           "IAM.Modules.Account.Contracts": "[1.0.0, )",
+          "IAM.Modules.Administration.Contracts": "[1.0.0, )",
           "IAM.Modules.Audit.Contracts": "[1.0.0, )",
           "IAM.Modules.Catalog.Contracts": "[1.0.0, )",
           "IAM.Modules.Provisioning.Application": "[1.0.0, )",

@@ -103,6 +103,96 @@ public sealed class ProvisioningItem
 
     public DateTimeOffset ReceivedAtUtc { get; private set; }
 
+    /// <summary>The request's trace id (DL-094), carried into everything the runner audits; set once, when planned or blocked.</summary>
+    public string? CorrelationId { get; private set; }
+
+    /// <summary>How many times running it failed for now and was put back for later (DL-094).</summary>
+    public int Attempts { get; private set; }
+
+    /// <summary>Not run again before this, after a temporary failure.</summary>
+    public DateTimeOffset? NextAttemptAtUtc { get; private set; }
+
+    /// <summary>While running, the runner that claimed it owns it until this; after it, another may take it over.</summary>
+    public DateTimeOffset? LeaseUntilUtc { get; private set; }
+
+    /// <summary>The account the Account module recorded for a new account, once the target confirmed it.</summary>
+    public Guid? RecordedAccountId { get; private set; }
+
+    public DateTimeOffset? FinishedAtUtc { get; private set; }
+
+    /// <summary>A code to store as the problem: the connector's if it is one, else <paramref name="fallback"/>.</summary>
+    public static string ProblemCode(string? code, string fallback) =>
+        code is { Length: > 0 and <= 32 } && code.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-') ? code : fallback;
+
+    /// <summary>Records the request's trace id, once.</summary>
+    public void Correlate(string correlationId)
+    {
+        if (CorrelationId is not null || correlationId is not { Length: 32 } || !correlationId.All(char.IsAsciiHexDigitLower) || correlationId.All(c => c == '0'))
+        {
+            throw new InvalidOperationException("An item takes one trace id, once.");
+        }
+
+        CorrelationId = correlationId;
+    }
+
+    /// <summary>Whether a runner may take it now: planned and due, or running with an expired lease (its runner stopped).</summary>
+    public bool CanClaim(DateTimeOffset now) =>
+        (State == ProvisioningState.Planned && (NextAttemptAtUtc is null || NextAttemptAtUtc <= now))
+        || (State == ProvisioningState.Running && LeaseUntilUtc < now);
+
+    public void Claim(DateTimeOffset now, TimeSpan lease)
+    {
+        if (!CanClaim(now) || lease <= TimeSpan.Zero)
+        {
+            throw new InvalidOperationException("The item can't be claimed now.");
+        }
+
+        State = ProvisioningState.Running;
+        LeaseUntilUtc = now + lease;
+    }
+
+    /// <summary>A temporary failure: back to planned, not before <paramref name="next"/>.</summary>
+    public void RetryAt(DateTimeOffset next)
+    {
+        RequireRunning();
+        Attempts++;
+        State = ProvisioningState.Planned;
+        NextAttemptAtUtc = next;
+        LeaseUntilUtc = null;
+    }
+
+    public void Fail(string code, DateTimeOffset now)
+    {
+        RequireRunning();
+        ArgumentException.ThrowIfNullOrEmpty(code);
+        State = ProvisioningState.Failed;
+        Problem = code;
+        LeaseUntilUtc = null;
+        FinishedAtUtc = now;
+    }
+
+    public void Succeed(Guid? recordedAccountId, DateTimeOffset now)
+    {
+        RequireRunning();
+        if ((NewAccountType is not null) != (recordedAccountId is not null))
+        {
+            throw new InvalidOperationException("A new account succeeds only once it is recorded; an existing one records nothing.");
+        }
+
+        State = ProvisioningState.Succeeded;
+        RecordedAccountId = recordedAccountId;
+        LeaseUntilUtc = null;
+        FinishedAtUtc = now;
+    }
+
+    private void RequireRunning()
+    {
+        if (State != ProvisioningState.Running)
+        {
+            throw new InvalidOperationException("Only a running item moves on.");
+        }
+    }
+
     public static ProvisioningItem Block(Guid itemId, int? approvalActions, BlockReason reason, string? integrityProblem, ItemDetails? details, DateTimeOffset now)
     {
         var integrity = reason == BlockReason.Integrity;
@@ -182,6 +272,49 @@ public sealed class ProvisioningOperation
     public string Attributes { get; private set; }
 
     public ProvisioningState State { get; private set; }
+
+    /// <summary>The connector's result code when it finished, if it gave one.</summary>
+    public string? ResultCode { get; private set; }
+
+    public DateTimeOffset? CompletedAtUtc { get; private set; }
+
+    /// <summary>Starts (or, after a runner stopped, restarts) the step.</summary>
+    public void Start()
+    {
+        if (State is not (ProvisioningState.Planned or ProvisioningState.Running))
+        {
+            throw new InvalidOperationException("Only a planned or interrupted step starts.");
+        }
+
+        State = ProvisioningState.Running;
+    }
+
+    public void Complete(string? code, DateTimeOffset now) => Finish(ProvisioningState.Succeeded, code, now);
+
+    public void Fail(string? code, DateTimeOffset now) => Finish(ProvisioningState.Failed, code, now);
+
+    /// <summary>A temporary failure: the step waits to run again under the same operation id.</summary>
+    public void Release()
+    {
+        RequireRunning();
+        State = ProvisioningState.Planned;
+    }
+
+    private void Finish(ProvisioningState state, string? code, DateTimeOffset now)
+    {
+        RequireRunning();
+        State = state;
+        ResultCode = code is null ? null : ProvisioningItem.ProblemCode(code, "Other");
+        CompletedAtUtc = now;
+    }
+
+    private void RequireRunning()
+    {
+        if (State != ProvisioningState.Running)
+        {
+            throw new InvalidOperationException("Only a running step finishes.");
+        }
+    }
 
     internal static ProvisioningOperation Planned(Guid itemId, int step, string action, string targetType, string targetId, string? relatedType, string? relatedId, string attributes) => new()
     {

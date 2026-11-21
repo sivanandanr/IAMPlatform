@@ -269,6 +269,13 @@ namespace IAM.Persistence.SqlServer.Migrations.Workflow
                         .UseCollation("Latin1_General_100_BIN2")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(32)
+                        .HasColumnType("nchar(32)")
+                        .IsFixedLength()
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasPrecision(6)
                         .HasColumnType("datetimeoffset(6)");
@@ -329,6 +336,8 @@ namespace IAM.Persistence.SqlServer.Migrations.Workflow
                             t.HasTrigger("TR_ApprovalInstance_Guarded");
 
                             t.HasCheckConstraint("CK_ApprovalInstance_Beneficiary_Code", "DATALENGTH([Beneficiary]) > 0 AND DATALENGTH([Beneficiary]) = DATALENGTH(LTRIM(RTRIM([Beneficiary])))");
+
+                            t.HasCheckConstraint("CK_ApprovalInstance_CorrelationId_Code", "DATALENGTH([CorrelationId]) > 0 AND DATALENGTH([CorrelationId]) = DATALENGTH(LTRIM(RTRIM([CorrelationId])))");
 
                             t.HasCheckConstraint("CK_ApprovalInstance_Requester_Code", "DATALENGTH([Requester]) > 0 AND DATALENGTH([Requester]) = DATALENGTH(LTRIM(RTRIM([Requester])))");
 
