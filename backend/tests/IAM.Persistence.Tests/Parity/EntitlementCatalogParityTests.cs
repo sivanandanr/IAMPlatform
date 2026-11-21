@@ -329,6 +329,63 @@ public sealed class EntitlementCatalogParityTests(ParityDatabase db)
             .Refusal.ShouldBe(ApplicationRefusal.AlreadyPending);
     }
 
+    /// <summary>
+    /// DL-095: superseding is the only change to an active version, and it cannot carry a change to a nullable column (NULL to
+    /// a value or back) or a technical name that differs only by case or a trailing space. SQL Server compared these in a way
+    /// that let them through; PostgreSQL compares the row with IS NOT DISTINCT FROM. Both refuse, as the app login and as the
+    /// schema owner.
+    /// </summary>
+    [Fact]
+    public async Task SupersedingCannotCarryANullOrCaseChange()
+    {
+        var app = await ActiveApplicationAsync();
+        var accepted = await RegisterAsync(app.Id, NewKey("nullsafe_a"), Settings(technicalName: "CN=Null Safe A,OU=Groups,DC=corp,DC=test"));
+        await ActivateAsync(accepted.Id);
+
+        // Keeping the owner needs no acceptance, so version 2 is active with no OwnerAcceptedBy.
+        var unaccepted = await RegisterAsync(app.Id, NewKey("nullsafe_n"), Settings(technicalName: "CN=Null Safe N,OU=Groups,DC=corp,DC=test"));
+        await ActivateAsync(unaccepted.Id);
+        await using (var scope = Service())
+        {
+            await scope.Service.StartNewDraftAsync(unaccepted.Id, Settings(technicalName: "CN=Null Safe N,OU=Groups,DC=corp,DC=test", mode: "FixedDays", days: 60), Ct);
+            var request = await scope.Service.ProposeAsync(unaccepted.Id, "Fixed period", Ct);
+            request.AcceptedBy.ShouldBeNull();
+            await using var checker = Service(Checker);
+            await checker.Service.ApproveAsync(request.Id, request.ContentHash, null, Ct);
+        }
+
+        var acceptedVersion = await ActiveVersionIdAsync(accepted.Id);
+        var unacceptedVersion = await ActiveVersionIdAsync(unaccepted.Id);
+        (await OwnerAcceptedByAsync(acceptedVersion)).ShouldBe(Owner);
+        (await OwnerAcceptedByAsync(unacceptedVersion)).ShouldBeNull();
+
+        var supersede = $"{Col("State")} = 'Superseded'";
+        var at = "'2026-11-21T00:00:00+00:00'";
+        foreach (var login in Logins)
+        {
+            foreach (var (version, set) in new[]
+            {
+                (unacceptedVersion, $"{supersede}, {Col("OwnerAcceptedBy")} = 'mallory', {Col("OwnerAcceptedAtUtc")} = {at}"),
+                (acceptedVersion, $"{supersede}, {Col("OwnerAcceptedBy")} = NULL, {Col("OwnerAcceptedAtUtc")} = NULL"),
+                (acceptedVersion, $"{supersede}, {Col("TechnicalName")} = UPPER({Col("TechnicalName")})"),
+                (acceptedVersion, $"{supersede}, {Col("TechnicalName")} = {Concat(Col("TechnicalName"), "' '")}"),
+            })
+            {
+                var sql = $"UPDATE {Table("EntitlementVersion")} SET {set} WHERE {Col("Id")} = '{version}'";
+                (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(login, sql, Ct), sql)).Message.ShouldMatch("(?i)DL-087", sql);
+            }
+        }
+
+        (await OwnerAcceptedByAsync(acceptedVersion)).ShouldBe(Owner);
+        (await OwnerAcceptedByAsync(unacceptedVersion)).ShouldBeNull();
+
+        // Control: superseding with nothing else changed is still allowed, both with and without an acceptance.
+        foreach (var version in new[] { acceptedVersion, unacceptedVersion })
+        {
+            await db.ExecuteAsync(db.CatalogAppConnectionString, $"UPDATE {Table("EntitlementVersion")} SET {supersede} WHERE {Col("Id")} = '{version}'", Ct);
+        }
+    }
+
     private string[] Logins => [db.CatalogAppConnectionString, db.MigratorConnectionString];
 
     private string True => IsSqlServer ? "1" : "TRUE";
@@ -363,6 +420,23 @@ public sealed class EntitlementCatalogParityTests(ParityDatabase db)
     private string Table(string name) => IsSqlServer ? $"[catalog].[{name}]" : $"catalog.{IamModelConventions.ToSnakeCase(name)}";
 
     private string Col(string name) => IsSqlServer ? $"[{name}]" : IamModelConventions.ToSnakeCase(name);
+
+    private string Concat(string left, string right) => IsSqlServer ? $"{left} + {right}" : $"{left} || {right}";
+
+    private async Task<Guid> ActiveVersionIdAsync(Guid entitlementId)
+    {
+        var value = await db.ScalarAsync(
+            db.CatalogAppConnectionString,
+            $"SELECT {Col("Id")} FROM {Table("EntitlementVersion")} WHERE {Col("EntitlementId")} = '{entitlementId}' AND {Col("State")} = 'Active'",
+            Ct);
+        return value is Guid id ? id : Guid.Parse((string)value!, CultureInfo.InvariantCulture);
+    }
+
+    private async Task<string?> OwnerAcceptedByAsync(Guid versionId) =>
+        await db.ScalarAsync(
+            db.CatalogAppConnectionString,
+            $"SELECT {Col("OwnerAcceptedBy")} FROM {Table("EntitlementVersion")} WHERE {Col("Id")} = '{versionId}'",
+            Ct) as string;
 
     /// <summary>
     /// Inserts an approved request by SQL. Its own CHECK already refuses a checker who is the owner person or the acceptor, so
