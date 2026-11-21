@@ -179,6 +179,8 @@ public sealed partial class RabbitMqConsumer<THandler>(
                 return DeliveryDisposition.Reject;
             }
 
+            // The handling runs under the message's correlation id, so what it audits and sends carries it on (DL-094).
+            using var trace = MessageCorrelation.StartHandling(envelope, handler.ConsumerName);
             try
             {
                 var outcome = await handler.HandleAsync(envelope, cancellationToken).ConfigureAwait(false);

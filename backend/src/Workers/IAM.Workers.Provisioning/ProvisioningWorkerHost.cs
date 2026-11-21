@@ -1,10 +1,12 @@
 using IAM.BuildingBlocks.Messaging.RabbitMq;
 using IAM.BuildingBlocks.Persistence;
 using IAM.BuildingBlocks.Security;
+using IAM.Connectors.ActiveDirectory.Mock;
 using IAM.Connectors.Sdk;
 using IAM.Modules.Account.Infrastructure;
 using IAM.Modules.Audit.Infrastructure;
 using IAM.Modules.Catalog.Infrastructure;
+using IAM.Modules.Provisioning.Application.Items;
 using IAM.Modules.Provisioning.Domain.Items;
 using IAM.Modules.Provisioning.Infrastructure;
 using IAM.Modules.Provisioning.Infrastructure.Items;
@@ -25,7 +27,10 @@ namespace IAM.Workers.Provisioning;
 /// read, each with that module's own login, and <c>audit</c> the audit login that may only read audit rows), the broker
 /// (<c>Messaging:RabbitMq</c>, the provisioning module's own broker user), the consumer settings (<c>Provisioning:Consumer</c>)
 /// and the reviewed connector allowlist (<c>Provisioning:Connectors</c>), all checked before it runs. It writes as the fixed
-/// system actor <c>system:provisioning</c>, and every permission check says no. Planned operations are not run yet (5b).
+/// system actor <c>system:provisioning</c>, and every permission check says no. Since DL-094 it also runs planned items on
+/// their targets (<c>Provisioning:Runner</c>) and records the accounts it created (the account login). The only target is
+/// the in-memory mock AD connector (<c>Provisioning:Targets:mock-ad:BaseDn</c>): never production-ready (rule 10), and it
+/// starts empty, so its containers and groups must exist before anything can be created in it.
 /// </summary>
 public static class ProvisioningWorkerHost
 {
@@ -34,6 +39,8 @@ public static class ProvisioningWorkerHost
     public const string ConsumerSection = "Provisioning:Consumer";
 
     public const string ConnectorsSection = "Provisioning:Connectors";
+
+    public const string MockBaseDnSetting = "Provisioning:Targets:mock-ad:BaseDn";
 
     /// <summary>The most applications the allowlist may name.</summary>
     public const int MaxBindings = 500;
@@ -69,6 +76,19 @@ public static class ProvisioningWorkerHost
         services.AddAccountInfrastructure();
         services.AddProvisioningInfrastructure(Bindings(configuration));
         services.AddSingleton<IOperationLedger, DurableOperationLedger>();
+
+        // The runner (DL-094) and its one target: the mock AD connector, with the durable ledger.
+        var runner = configuration.GetSection(ProvisioningRunnerSettings.Section);
+        services.AddProvisioningRunner(new ProvisioningRunnerSettings(
+            runner.GetValue<int?>("IntervalSeconds"), runner.GetValue<int?>("BatchSize"), runner.GetValue<int?>("LeaseSeconds"),
+            runner.GetValue<int?>("MaxAttempts"), runner.GetValue<int?>("RetryDelaySeconds")));
+        var baseDn = configuration[MockBaseDnSetting] ?? MockActiveDirectoryConnector.DefaultBaseDn;
+        services.AddSingleton(sp => new MockActiveDirectoryConnector(ConnectorSettings.Default, sp.GetRequiredService<IOperationLedger>(), baseDn, sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton<IProvisioningTargets>(sp => new ConnectorTargets(new Dictionary<string, IProvisioningTarget>(StringComparer.Ordinal)
+        {
+            ["mock-ad"] = new ConnectorTarget(sp.GetRequiredService<MockActiveDirectoryConnector>()),
+        }));
+        services.AddHostedService<ProvisioningRunnerWorker>();
 
         services.AddSingleton(RabbitMqSettings.From(configuration));
         services.AddSingleton(ConsumerSettings.From(configuration, ConsumerSection));

@@ -36,6 +36,7 @@ public sealed class RequestDbContext(DbContextOptions<RequestDbContext> options)
         item.Property(x => x.PolicyMaker).IsRequired().IsCode(AuditColumns.ActorMaxLength);
         item.Property(x => x.Evidence).IsRequired();
         item.Property(x => x.Route).IsRequired();
+        item.Property(x => x.CorrelationId).IsCode(32).IsFixedLength();
         item.HasIndex(x => new { x.Requester, x.SubmittedAtUtc });
         item.HasIndex(x => new { x.Beneficiary, x.SubmittedAtUtc });
 

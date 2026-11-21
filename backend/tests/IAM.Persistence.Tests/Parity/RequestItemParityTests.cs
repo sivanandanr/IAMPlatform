@@ -37,7 +37,7 @@ namespace IAM.Persistence.Tests.Parity;
 /// </summary>
 [Collection(ParityDatabaseGroup.Name)]
 [Trait("Category", "DatabaseParity")]
-public sealed partial class RequestItemParityTests(ParityDatabase db)
+public sealed partial class RequestItemParityTests(ParityDatabase db, RabbitMqBroker broker) : IClassFixture<RabbitMqBroker>
 {
     private const string Admin = "req-admin";
     private const string Checker = "req-checker";

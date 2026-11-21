@@ -3,6 +3,7 @@ using System.Globalization;
 using IAM.BuildingBlocks.Messaging;
 using IAM.BuildingBlocks.Persistence;
 using IAM.Modules.Account.Contracts;
+using IAM.Modules.Administration.Contracts;
 using IAM.Modules.Audit.Contracts;
 using IAM.Modules.Catalog.Contracts;
 using IAM.Modules.Provisioning.Domain.Items;
@@ -28,8 +29,13 @@ public static class ProvisioningAuditActions
     public const string Target = "provisioning.item";
     public const string Planned = "provisioning.item.planned";
     public const string Blocked = "provisioning.item.blocked";
+    public const string StepDone = "provisioning.item.step_done";
+    public const string StepRetry = "provisioning.item.step_retry";
+    public const string Failed = "provisioning.item.failed";
+    public const string Succeeded = "provisioning.item.succeeded";
+    public const string ReadAction = AccessActions.ProvisioningItemsRead;
 
-    public static IReadOnlyList<string> All { get; } = [Planned, Blocked];
+    public static IReadOnlyList<string> All { get; } = [Planned, Blocked, StepDone, StepRetry, Failed, Succeeded];
 }
 
 /// <summary>
@@ -85,6 +91,8 @@ public sealed class AuthorizedApprovals(
             return await db.ReceiveOnceAsync(provider, ConsumerName, envelope, now, () => { }, cancellationToken).ConfigureAwait(false);
         }
 
+        // The request's correlation id, carried on to everything the runner does for this item (DL-094).
+        decision.Item.Correlate(MessageCorrelation.IsTraceId(envelope.CorrelationId) ? envelope.CorrelationId : MessageCorrelation.Current());
         return await db.ReceiveOnceAsync(
             provider,
             ConsumerName,

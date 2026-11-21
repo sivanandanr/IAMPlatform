@@ -80,6 +80,9 @@ namespace IAM.Persistence.SqlServer.Migrations.Account
                         .UseCollation("Latin1_General_100_BIN2")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<Guid?>("ProvisioningItemId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -108,6 +111,10 @@ namespace IAM.Persistence.SqlServer.Migrations.Account
                     b.HasKey("Id");
 
                     b.HasIndex("LinkRequestId");
+
+                    b.HasIndex("ProvisioningItemId")
+                        .IsUnique()
+                        .HasFilter("[ProvisioningItemId] IS NOT NULL");
 
                     b.HasIndex("ApplicationId", "Owner");
 

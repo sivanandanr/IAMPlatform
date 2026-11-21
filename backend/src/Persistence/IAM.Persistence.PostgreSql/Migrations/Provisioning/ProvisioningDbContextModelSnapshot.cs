@@ -165,6 +165,10 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                         .HasColumnType("integer")
                         .HasColumnName("approval_actions");
 
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
                     b.Property<string>("Beneficiary")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
@@ -176,6 +180,14 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("connector_key")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(32)
+                        .HasColumnType("character(32)")
+                        .HasColumnName("correlation_id")
+                        .IsFixedLength()
                         .UseCollation("C")
                         .HasAnnotation("Iam:Code", true);
 
@@ -198,12 +210,22 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                         .HasColumnType("uuid")
                         .HasColumnName("entitlement_version_id");
 
+                    b.Property<DateTimeOffset?>("FinishedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("finished_at_utc");
+
                     b.Property<string>("IntegrityProblem")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("integrity_problem")
                         .UseCollation("C")
                         .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset?>("LeaseUntilUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("lease_until_utc");
 
                     b.Property<DateTimeOffset>("ModifiedAtUtc")
                         .HasPrecision(6)
@@ -223,6 +245,11 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                         .UseCollation("C")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<DateTimeOffset?>("NextAttemptAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("next_attempt_at_utc");
+
                     b.Property<string>("Problem")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
@@ -234,6 +261,10 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                         .HasPrecision(6)
                         .HasColumnType("timestamp(6) with time zone")
                         .HasColumnName("received_at_utc");
+
+                    b.Property<Guid?>("RecordedAccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("recorded_account_id");
 
                     b.Property<string>("State")
                         .IsRequired()
@@ -264,6 +295,8 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
 
                             t.HasCheckConstraint("ck_provisioning_item_connector_key_code", "\"connector_key\" <> '' AND \"connector_key\" = btrim(\"connector_key\")");
 
+                            t.HasCheckConstraint("ck_provisioning_item_correlation_id_code", "\"correlation_id\" <> '' AND \"correlation_id\" = btrim(\"correlation_id\")");
+
                             t.HasCheckConstraint("ck_provisioning_item_integrity_problem_code", "\"integrity_problem\" <> '' AND \"integrity_problem\" = btrim(\"integrity_problem\")");
 
                             t.HasCheckConstraint("ck_provisioning_item_new_account_type_code", "\"new_account_type\" <> '' AND \"new_account_type\" = btrim(\"new_account_type\")");
@@ -293,6 +326,11 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)")
                         .HasColumnName("attributes");
+
+                    b.Property<DateTimeOffset?>("CompletedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("completed_at_utc");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasPrecision(6)
@@ -329,6 +367,13 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("related_type")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("ResultCode")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("result_code")
                         .UseCollation("C")
                         .HasAnnotation("Iam:Code", true);
 
@@ -377,6 +422,8 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                             t.HasCheckConstraint("ck_provisioning_operation_action_code", "\"action\" <> '' AND \"action\" = btrim(\"action\")");
 
                             t.HasCheckConstraint("ck_provisioning_operation_related_type_code", "\"related_type\" <> '' AND \"related_type\" = btrim(\"related_type\")");
+
+                            t.HasCheckConstraint("ck_provisioning_operation_result_code_code", "\"result_code\" <> '' AND \"result_code\" = btrim(\"result_code\")");
 
                             t.HasCheckConstraint("ck_provisioning_operation_state_code", "\"state\" <> '' AND \"state\" = btrim(\"state\")");
 

@@ -38,6 +38,7 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
         instance.HasKey(x => x.Id);
         instance.HasIndex(x => x.RequestItemId);
         instance.Property(x => x.State).IsRequired().IsCode(16);
+        instance.Property(x => x.CorrelationId).IsCode(32).IsFixedLength();
         instance.Property(x => x.Requester).IsRequired().IsCode(AuditColumns.ActorMaxLength);
         instance.Property(x => x.Beneficiary).IsRequired().IsCode(AuditColumns.ActorMaxLength);
         instance.HasIndex(x => new { x.State, x.NextDeadlineUtc });
@@ -113,6 +114,9 @@ public sealed class ApprovalInstanceRow
 
     /// <summary>The earliest deadline of an open level, for the timeout worker (slice 3); null when nothing is open.</summary>
     public DateTimeOffset? NextDeadlineUtc { get; set; }
+
+    /// <summary>The trace id the approval started under (the request's, DL-094); never changes. Null for older instances.</summary>
+    public string? CorrelationId { get; init; }
 }
 
 /// <summary>One accepted action and its inputs, as JSON. Never changed or deleted.</summary>

@@ -1,6 +1,8 @@
 using System.Globalization;
+using IAM.BuildingBlocks.Messaging;
 using IAM.Connectors.Sdk;
 using IAM.Modules.Audit.Contracts;
+using IAM.Modules.Provisioning.Application.Items;
 using IAM.Modules.Provisioning.Domain.Items;
 using IAM.Modules.Workflow.Infrastructure.Approvals;
 using IAM.Modules.Workflow.Infrastructure.Persistence;
@@ -152,7 +154,7 @@ public sealed class ProvisioningRulesTests
     {
         using (var host = ProvisioningWorkerHost.Build([], Complete))
         {
-            host.Services.GetServices<IHostedService>().Count().ShouldBe(1, "the consumer");
+            host.Services.GetServices<IHostedService>().Count().ShouldBe(2, "the consumer and the runner");
             host.Services.GetRequiredService<IOperationLedger>().ShouldBeOfType<DurableOperationLedger>();
         }
 
@@ -170,6 +172,74 @@ public sealed class ProvisioningRulesTests
         var bindings = ProvisioningWorkerHost.Bindings(new ConfigurationBuilder().AddInMemoryCollection([.. Binding(0, App, "mock-ad")]).Build());
         bindings.ShouldHaveSingleItem().ShouldBe(new ConnectorBinding(App, "mock-ad", Container));
         ProvisioningWorkerHost.Bindings(new ConfigurationBuilder().Build()).ShouldBeEmpty("no allowlist: everything is manual work");
+    }
+
+    [Theory]
+    [InlineData("0123456789abcdef0123456789abcdef", true)]
+    [InlineData("0123456789ABCDEF0123456789abcdef", false)]
+    [InlineData("00000000000000000000000000000000", false)]
+    [InlineData("0123456789abcdef", false)]
+    [InlineData("0123456789abcdef0123456789abcdeg", false)]
+    [InlineData(null, false)]
+    public void OnlyAW3CTraceIdIsCarriedAsTheCorrelationId(string? value, bool carried)
+    {
+        MessageCorrelation.IsTraceId(value).ShouldBe(carried);
+        using var trace = MessageCorrelation.StartFor(value, "test");
+        (trace is not null).ShouldBe(carried);
+        if (carried)
+        {
+            MessageCorrelation.Current().ShouldBe(value);
+        }
+    }
+
+    [Theory]
+    [InlineData(OperationStatus.Applied, StepStatus.Done)]
+    [InlineData(OperationStatus.AlreadyInState, StepStatus.Done)]
+    [InlineData(OperationStatus.Failed, StepStatus.Retry)]
+    [InlineData(OperationStatus.Rejected, StepStatus.Rejected)]
+    [InlineData(OperationStatus.Unsupported, StepStatus.Rejected)]
+    public async Task AConnectorsOutcomeBecomesAStepStatus(OperationStatus outcome, StepStatus expected)
+    {
+        var step = new TargetStep(Guid.CreateVersion7(), "account.enable", "account", "CN=a,OU=Users,DC=example,DC=test", null, null, new Dictionary<string, string?>());
+        var result = await new ConnectorTarget(new FixedConnector(outcome)).RunAsync(step, CancellationToken.None);
+        result.Status.ShouldBe(expected);
+        ConnectorTarget.ToOperation(step).ShouldSatisfyAllConditions(o => o.OperationId.ShouldBe(step.OperationId), o => o.Related.ShouldBeNull(), o => o.Secret.ShouldBeNull());
+    }
+
+    [Fact]
+    public void RunnerSettingsAreBoundedAndTheDelayGrows()
+    {
+        var settings = new ProvisioningRunnerSettings(retryDelaySeconds: 30);
+        settings.DelayAfter(1).ShouldBe(TimeSpan.FromSeconds(30));
+        settings.DelayAfter(3).ShouldBe(TimeSpan.FromSeconds(120));
+        settings.DelayAfter(40).ShouldBe(TimeSpan.FromHours(1), "never more than an hour");
+        Should.Throw<ArgumentOutOfRangeException>(() => new ProvisioningRunnerSettings(batchSize: 0));
+        Should.Throw<ArgumentOutOfRangeException>(() => new ProvisioningRunnerSettings(leaseSeconds: 10));
+        Should.Throw<ArgumentOutOfRangeException>(() => new ProvisioningRunnerSettings(maxAttempts: 51));
+    }
+
+    [Fact]
+    public void AnItemMovesOnlyForwardAndSucceedsWithItsRecordedAccount()
+    {
+        var item = ProvisioningPlanner.ForNewAccount(Guid.CreateVersion7(), 3, Details(null, "Secondary", "adm.ben"), Group, ConnectorBinding.Create(App, "mock-ad", Container), Now).Item;
+        Should.Throw<InvalidOperationException>(() => item.Fail("X", Now), "only a running item moves on");
+        item.CanClaim(Now).ShouldBeTrue();
+        item.Claim(Now, TimeSpan.FromMinutes(5));
+        item.CanClaim(Now.AddMinutes(1)).ShouldBeFalse("its lease holds");
+        item.CanClaim(Now.AddMinutes(6)).ShouldBeTrue("a lease that ran out can be taken over");
+        Should.Throw<InvalidOperationException>(() => item.Succeed(null, Now), "a new account is recorded first");
+        item.RetryAt(Now.AddMinutes(1));
+        item.ShouldSatisfyAllConditions(i => i.State.ShouldBe(ProvisioningState.Planned), i => i.Attempts.ShouldBe(1), i => i.LeaseUntilUtc.ShouldBeNull());
+        item.CanClaim(Now).ShouldBeFalse("not before its next attempt");
+        item.Claim(Now.AddMinutes(2), TimeSpan.FromMinutes(5));
+        item.Succeed(Guid.CreateVersion7(), Now);
+        item.State.ShouldBe(ProvisioningState.Succeeded);
+        item.CanClaim(Now.AddDays(1)).ShouldBeFalse();
+        Should.Throw<InvalidOperationException>(() => item.Correlate("0123456789abcdef0123456789abcdeg"));
+        item.Correlate("0123456789abcdef0123456789abcdef");
+        Should.Throw<InvalidOperationException>(() => item.Correlate("0123456789abcdef0123456789abcdef"), "once");
+        ProvisioningItem.ProblemCode("TargetUnavailable", "x").ShouldBe("TargetUnavailable");
+        ProvisioningItem.ProblemCode("has spaces", "Rejected").ShouldBe("Rejected");
     }
 
     private static readonly KeyValuePair<string, string?>[] Complete =
@@ -226,4 +296,21 @@ public sealed class ProvisioningRulesTests
 
     private static Dictionary<string, string?> With(AuditTrailEntry entry, string name, string value) =>
         new(entry.Payload, StringComparer.Ordinal) { [name] = value };
+
+    /// <summary>A connector that ends every operation the same way (only what the adapter calls is implemented).</summary>
+    private sealed class FixedConnector(OperationStatus outcome) : IConnector
+    {
+        public ConnectorCapabilities Capabilities => throw new NotSupportedException();
+
+        public Task<ConnectorHealth> CheckHealthAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<ObjectSnapshot?> ReadAsync(ObjectRef target, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<OperationResult> ExecuteAsync(ConnectorOperation operation, CancellationToken cancellationToken) =>
+            Task.FromResult(new OperationResult(operation.OperationId, outcome, null));
+
+        public Task<VerificationResult> VerifyAsync(ConnectorOperation operation, CancellationToken cancellationToken) => Task.FromResult(new VerificationResult(true, null));
+
+        public Task<ObjectPage> ListAsync(string objectType, string? continuation, int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
 }
