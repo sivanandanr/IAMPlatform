@@ -7,6 +7,7 @@ using IAM.Modules.Identity.Infrastructure.Persistence;
 using IAM.Modules.Notification.Infrastructure.Persistence;
 using IAM.Modules.Organization.Infrastructure.Persistence;
 using IAM.Modules.Policy.Infrastructure.Persistence;
+using IAM.Modules.Provisioning.Infrastructure.Persistence;
 using IAM.Modules.Request.Infrastructure.Persistence;
 using IAM.Modules.Workflow.Infrastructure.Persistence;
 using IAM.Persistence.PostgreSql;
@@ -118,6 +119,18 @@ internal static class TestSupport
         }
 
         return new PolicyDbContext(options.Options);
+    }
+
+    public static ProvisioningDbContext CreateProvisioning(DatabaseProvider provider, string connectionString, AuditingSaveChangesInterceptor? interceptor = null)
+    {
+        var options = new DbContextOptionsBuilder<ProvisioningDbContext>();
+        ProviderFor(provider).Configure(options, connectionString, ProvisioningDbContext.SchemaName);
+        if (interceptor is not null)
+        {
+            options.AddInterceptors(interceptor);
+        }
+
+        return new ProvisioningDbContext(options.Options);
     }
 
     public static RequestDbContext CreateRequest(DatabaseProvider provider, string connectionString, AuditingSaveChangesInterceptor? interceptor = null)
