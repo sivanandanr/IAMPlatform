@@ -158,6 +158,135 @@ public sealed class RequestItemParityTests(ParityDatabase db)
     }
 
     [Fact]
+    public async Task OnlyAPersonOnTheOpenNameStageGivesTheNameAndOnlyTheName()
+    {
+        var world = await WorldAsync();
+
+        // The entitlement owner's Action level gives the new Secondary account's name, then the application owner decides.
+        var route = new FixedMatrix(Route(Stage("EntitlementOwner", kind: "Action", fields: ["AccountName"]), Stage("ApplicationOwner", sequence: 2)));
+        RequestItemView item;
+        await using (var scope = Service(world.Beneficiary, route))
+        {
+            item = await scope.Service.SubmitAsync(new SubmitItem(world.Beneficiary, world.Privileged, null, "Secondary", null, null), Ct);
+            item.AccountName.ShouldBeNull("no naming rule: the level gives it");
+        }
+
+        var submitted = MessageEnvelopes.Read<RequestItemSubmitted>(await OutboxEnvelopeAsync(item.Id));
+        var nameStage = submitted.Stages.Single(s => s.Kind == "Action").StageId;
+        var decisionStage = submitted.Stages.Single(s => s.Kind == "Decision").StageId;
+
+        async Task Refused(string actor, Guid stage, string name, RequestRefusal refusal)
+        {
+            await using var scope = Service(actor, route);
+            (await Should.ThrowAsync<RequestRefusedException>(() => scope.Service.GiveAccountNameAsync(item.Id, stage, name, Ct))).Refusal.ShouldBe(refusal, refusal.ToString());
+        }
+
+        // Before the approval starts, nobody is on any stage.
+        await Refused(world.EntitlementOwner, nameStage, "adm.ben", RequestRefusal.NotOnStage);
+        var (workflow, workflowContext) = Workflow();
+        await using (workflowContext)
+        {
+            (await new RequestItemApprovals(workflow).HandleAsync(await OutboxEnvelopeAsync(item.Id), Ct)).ShouldBe(MessageOutcome.Processed);
+        }
+
+        await Refused(world.Beneficiary, nameStage, "adm.ben", RequestRefusal.NotOnStage);
+        await Refused("someone-else", nameStage, "adm.ben", RequestRefusal.NotOnStage);
+        await Refused(world.EntitlementOwner, decisionStage, "adm.ben", RequestRefusal.NotANameStage);
+        await Refused(world.EntitlementOwner, Guid.CreateVersion7(), "adm.ben", RequestRefusal.NotANameStage);
+        await Refused(world.EntitlementOwner, nameStage, world.PrimaryName.ToUpperInvariant(), RequestRefusal.NameInUse);
+
+        await using (var scope = Service(world.EntitlementOwner, route))
+        {
+            (await Should.ThrowAsync<RequestRejectedException>(() => scope.Service.GiveAccountNameAsync(item.Id, nameStage, "bad name", Ct))).Field.ShouldBe("Name");
+            (await scope.Service.GiveAccountNameAsync(item.Id, nameStage, "adm-ben", Ct)).AccountName.ShouldBe("adm-ben");
+            (await scope.Service.GiveAccountNameAsync(item.Id, nameStage, "adm.ben", Ct)).AccountName.ShouldBe("adm.ben", "changed again while the stage is open");
+            (await Should.ThrowAsync<RequestRefusedException>(() => scope.Service.GiveAccountNameAsync(item.Id, nameStage, "adm.ben", Ct))).Refusal.ShouldBe(RequestRefusal.NameUnchanged);
+        }
+
+        await using (var scope = Service(world.Beneficiary, route))
+        {
+            var seen = (await scope.Service.FindAsync(item.Id, Ct)).ShouldNotBeNull();
+            seen.AccountName.ShouldBe("adm.ben");
+            seen.NewAccountName.ShouldBeNull("the frozen item never changes");
+            (await scope.Service.MineAsync(Ct)).Single(i => i.Id == item.Id).AccountName.ShouldBe("adm.ben");
+        }
+
+        // Once the owner completes the task, the name is settled: nobody can change it.
+        var (ownerWorkflow, ownerContext) = Workflow(world.EntitlementOwner);
+        await using (ownerContext)
+        {
+            var instance = (await ownerWorkflow.FindAsync(item.Id, Ct)).ShouldNotBeNull();
+            await ownerWorkflow.CompleteAsync(item.Id, instance.Version, Guid.CreateVersion7(), nameStage, "Named", Ct);
+        }
+
+        await Refused(world.EntitlementOwner, nameStage, "adm.later", RequestRefusal.NotOnStage);
+        (await AuditCountAsync(item.Id.ToString(), RequestAuditActions.AccountNamed, "Succeeded")).ShouldBe(2);
+
+        // The assignments are append-only.
+        foreach (var login in new[] { db.RequestAppConnectionString, db.MigratorConnectionString })
+        {
+            foreach (var sql in new[]
+            {
+                $"UPDATE {Table("AccountNameAssignment")} SET {Col("Name")} = 'mallory' WHERE {Col("ItemId")} = '{item.Id}'",
+                $"DELETE FROM {Table("AccountNameAssignment")} WHERE {Col("ItemId")} = '{item.Id}'",
+            })
+            {
+                (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(login, sql, Ct), sql)).Message.ShouldNotBeNullOrEmpty();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task NoNameIsGivenWhileTheApprovalIsHeld()
+    {
+        var world = await WorldAsync();
+
+        // A parallel stage with nobody to approve holds the approval; the name stage stays open, but nothing is done on it.
+        var route = new FixedMatrix(Route(Stage("EntitlementOwner", kind: "Action", fields: ["AccountName"]), Stage("Workgroup", workgroup: "no_such_workgroup")));
+        RequestItemView item;
+        await using (var scope = Service(world.Beneficiary, route))
+        {
+            item = await scope.Service.SubmitAsync(new SubmitItem(world.Beneficiary, world.Privileged, null, "Secondary", null, null), Ct);
+        }
+
+        var nameStage = MessageEnvelopes.Read<RequestItemSubmitted>(await OutboxEnvelopeAsync(item.Id)).Stages.Single(s => s.Kind == "Action").StageId;
+        var (workflow, workflowContext) = Workflow();
+        await using (workflowContext)
+        {
+            (await new RequestItemApprovals(workflow).HandleAsync(await OutboxEnvelopeAsync(item.Id), Ct)).ShouldBe(MessageOutcome.Processed);
+            var held = (await workflow.FindAsync(item.Id, Ct)).ShouldNotBeNull();
+            held.State.ShouldBe("Held");
+            held.Stages.Single(s => s.StageId == nameStage).State.ShouldBe("Active");
+            held.Stages.Single(s => s.StageId == nameStage).Candidates.ShouldBe([world.EntitlementOwner]);
+        }
+
+        await using var named = Service(world.EntitlementOwner, route);
+        (await Should.ThrowAsync<RequestRefusedException>(() => named.Service.GiveAccountNameAsync(item.Id, nameStage, "adm.ben", Ct))).Refusal.ShouldBe(RequestRefusal.NotOnStage);
+    }
+
+    [Fact]
+    public async Task AnItemForAnExistingAccountHasNoNameToGive()
+    {
+        var world = await WorldAsync();
+        var route = new FixedMatrix(Route(Stage("EntitlementOwner", kind: "Action", fields: ["AccountName"]), Stage("ApplicationOwner", sequence: 2)));
+        RequestItemView item;
+        await using (var scope = Service(world.Beneficiary, route))
+        {
+            item = await scope.Service.SubmitAsync(new SubmitItem(world.Beneficiary, world.Standard, world.Primary, null, null, null), Ct);
+        }
+
+        var stage = MessageEnvelopes.Read<RequestItemSubmitted>(await OutboxEnvelopeAsync(item.Id)).Stages.Single(s => s.Kind == "Action").StageId;
+        var (workflow, workflowContext) = Workflow();
+        await using (workflowContext)
+        {
+            await new RequestItemApprovals(workflow).HandleAsync(await OutboxEnvelopeAsync(item.Id), Ct);
+        }
+
+        await using var named = Service(world.EntitlementOwner, route);
+        (await Should.ThrowAsync<RequestRefusedException>(() => named.Service.GiveAccountNameAsync(item.Id, stage, "adm.ben", Ct))).Refusal.ShouldBe(RequestRefusal.NoNewAccount);
+    }
+
+    [Fact]
     public async Task TheDatabaseKeepsItemsFrozenAndOutboxMessagesUnchanged()
     {
         var world = await WorldAsync();
@@ -184,16 +313,17 @@ public sealed class RequestItemParityTests(ParityDatabase db)
 
         if (!IsSqlServer)
         {
-            foreach (var table in new[] { "request_item", "outbox_message" })
+            // The item table is truncated with the names that reference it, so the guard triggers (not the foreign key) refuse.
+            foreach (var tables in new[] { "request.request_item, request.account_name_assignment", "request.account_name_assignment", "request.outbox_message" })
             {
-                (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(db.MigratorConnectionString, $"TRUNCATE request.{table}", Ct), table)).Message.ShouldMatch("(?i)DL-0(76|91)");
+                (await Should.ThrowAsync<Exception>(() => db.ExecuteAsync(db.MigratorConnectionString, $"TRUNCATE {tables}", Ct), tables)).Message.ShouldMatch("(?i)DL-0(76|91|92)");
             }
         }
     }
 
     // ---- The world: an active application, entitlements, and linked accounts --------------------------------------------
 
-    private sealed record World(string Beneficiary, string EntitlementOwner, Guid Application, Guid Standard, Guid Privileged, Guid ServiceAllowed, Guid Primary, Guid OthersPrimary);
+    private sealed record World(string Beneficiary, string EntitlementOwner, Guid Application, Guid Standard, Guid Privileged, Guid ServiceAllowed, Guid Primary, Guid OthersPrimary, string PrimaryName);
 
     private async Task<World> WorldAsync()
     {
@@ -250,7 +380,7 @@ public sealed class RequestItemParityTests(ParityDatabase db)
             return (await k.Service.ApproveLinkAsync(link.Id, null, Ct)).AccountId!.Value;
         }
 
-        return new World(beneficiary, entitlementOwner, app.Id, standard, privilegedId, serviceAllowed, await LinkAsync(beneficiary, $"ben.{tag}"), await LinkAsync(other, $"other.{tag}"));
+        return new World(beneficiary, entitlementOwner, app.Id, standard, privilegedId, serviceAllowed, await LinkAsync(beneficiary, $"ben.{tag}"), await LinkAsync(other, $"other.{tag}"), $"ben.{tag}");
     }
 
     // ---- Matrix selections -------------------------------------------------------------------------------------------------
@@ -279,12 +409,14 @@ public sealed class RequestItemParityTests(ParityDatabase db)
         var context = TestSupport.CreateRequest(db.Provider, db.RequestAppConnectionString, new AuditingSaveChangesInterceptor(TimeProvider.System, new FixedActor(actor)));
         var catalog = TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString);
         var accounts = TestSupport.CreateAccount(db.Provider, db.AccountAppConnectionString);
+        var (workflow, workflowContext) = Workflow();
         var writer = new AuditWriter(TestSupport.ProviderFor(db.Provider), TimeProvider.System, new FixedActor(actor), new AuditActionCatalog(RequestAuditActions.All.Select(a => new AuditActionRegistration(a))));
         var service = new RequestItemService(
             context, writer, TimeProvider.System, TestSupport.ProviderFor(db.Provider), new FixedActor(actor),
-            new Grants((actor, AccessActions.RequestItemsSubmit)),
-            new EntitlementDirectory(catalog), new AccountDirectory(accounts), new AccountNaming(accounts), new UnavailablePersonAttributeSource(), matrix);
-        return new RequestScope(service, context, catalog, accounts);
+            new Grants((actor, AccessActions.RequestItemsSubmit), (actor, AccessActions.RequestItemsNameAccount)),
+            new EntitlementDirectory(catalog), new AccountDirectory(accounts), new AccountNaming(accounts), new UnavailablePersonAttributeSource(), matrix,
+            new ApprovalStageChecks(workflow));
+        return new RequestScope(service, context, catalog, accounts, workflowContext);
     }
 
     private CatalogScope Catalog(string actor, Grants permissions)
@@ -309,17 +441,17 @@ public sealed class RequestItemParityTests(ParityDatabase db)
             context, catalog);
     }
 
-    private (ApprovalWorkflowService Service, IAsyncDisposable Context) Workflow()
+    private (ApprovalWorkflowService Service, IAsyncDisposable Context) Workflow(string actor = "system:workflow")
     {
-        var context = TestSupport.CreateWorkflow(db.Provider, db.WorkflowAppConnectionString, new AuditingSaveChangesInterceptor(TimeProvider.System, new FixedActor("system:workflow")));
-        var writer = new AuditWriter(TestSupport.ProviderFor(db.Provider), TimeProvider.System, new FixedActor("system:workflow"),
+        var context = TestSupport.CreateWorkflow(db.Provider, db.WorkflowAppConnectionString, new AuditingSaveChangesInterceptor(TimeProvider.System, new FixedActor(actor)));
+        var writer = new AuditWriter(TestSupport.ProviderFor(db.Provider), TimeProvider.System, new FixedActor(actor),
             new AuditActionCatalog(WorkflowAuditActions.All.Select(a => new AuditActionRegistration(a))));
         var resolver = new ApproverResolver(
             new ApplicationApproverDirectory(TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString)),
             new WorkgroupDirectory(TestSupport.CreateOrganization(db.Provider, db.OrganizationAppConnectionString)),
             new ApproverResolutionSettings(),
             new EntitlementDirectory(TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString)));
-        return (new ApprovalWorkflowService(context, writer, TimeProvider.System, TestSupport.ProviderFor(db.Provider), new FixedActor("system:workflow"), new Grants(), resolver), context);
+        return (new ApprovalWorkflowService(context, writer, TimeProvider.System, TestSupport.ProviderFor(db.Provider), new FixedActor(actor), new Grants((actor, AccessActions.ApprovalsAct)), resolver), context);
     }
 
     private async Task<MessageEnvelope> OutboxEnvelopeAsync(Guid itemId)

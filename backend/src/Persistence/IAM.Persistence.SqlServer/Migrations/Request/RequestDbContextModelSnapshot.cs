@@ -140,6 +140,81 @@ namespace IAM.Persistence.SqlServer.Migrations.Request
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("IAM.Modules.Request.Domain.Items.AccountNameAssignment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<Guid>("ItemId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("PreviousName")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("SetAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("SetBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<Guid>("StageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ItemId", "SetAtUtc");
+
+                    b.ToTable("AccountNameAssignment", "request", t =>
+                        {
+                            t.HasTrigger("TR_AccountNameAssignment_AppendOnly");
+
+                            t.HasCheckConstraint("CK_AccountNameAssignment_Name_Code", "DATALENGTH([Name]) > 0 AND DATALENGTH([Name]) = DATALENGTH(LTRIM(RTRIM([Name])))");
+
+                            t.HasCheckConstraint("CK_AccountNameAssignment_PreviousName_Code", "DATALENGTH([PreviousName]) > 0 AND DATALENGTH([PreviousName]) = DATALENGTH(LTRIM(RTRIM([PreviousName])))");
+
+                            t.HasCheckConstraint("CK_AccountNameAssignment_SetBy_Code", "DATALENGTH([SetBy]) > 0 AND DATALENGTH([SetBy]) = DATALENGTH(LTRIM(RTRIM([SetBy])))");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("IAM.Modules.Request.Domain.Items.RequestItem", b =>
                 {
                     b.Property<Guid>("Id")
@@ -284,6 +359,15 @@ namespace IAM.Persistence.SqlServer.Migrations.Request
                         });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("IAM.Modules.Request.Domain.Items.AccountNameAssignment", b =>
+                {
+                    b.HasOne("IAM.Modules.Request.Domain.Items.RequestItem", null)
+                        .WithMany()
+                        .HasForeignKey("ItemId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

@@ -517,7 +517,8 @@
           "IAM.Modules.Policy.Contracts": "[1.0.0, )",
           "IAM.Modules.Request.Application": "[1.0.0, )",
           "IAM.Modules.Request.Contracts": "[1.0.0, )",
-          "IAM.Modules.Request.Domain": "[1.0.0, )"
+          "IAM.Modules.Request.Domain": "[1.0.0, )",
+          "IAM.Modules.Workflow.Contracts": "[1.0.0, )"
         }
       },
       "iam.modules.workflow.application": {

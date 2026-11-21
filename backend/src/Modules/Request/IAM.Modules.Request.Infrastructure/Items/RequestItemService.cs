@@ -15,6 +15,7 @@ using IAM.Modules.Request.Application.Items;
 using IAM.Modules.Request.Contracts;
 using IAM.Modules.Request.Domain.Items;
 using IAM.Modules.Request.Infrastructure.Persistence;
+using IAM.Modules.Workflow.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 
@@ -25,13 +26,15 @@ public static class RequestAuditActions
 {
     public const string Submitted = "request.item.submitted";
     public const string Refused = "request.item.refused";
+    public const string AccountNamed = "request.item.account_named";
     public const string Target = "request.item";
 
     public const string SubmitAction = AccessActions.RequestItemsSubmit;
     public const string ForOthersAction = AccessActions.RequestItemsForOthers;
     public const string ReadAction = AccessActions.RequestItemsRead;
+    public const string NameAction = AccessActions.RequestItemsNameAccount;
 
-    public static IReadOnlyList<string> All { get; } = [Submitted, Refused];
+    public static IReadOnlyList<string> All { get; } = [Submitted, Refused, AccountNamed];
 }
 
 /// <summary>
@@ -51,7 +54,8 @@ public sealed class RequestItemService(
     IAccountDirectory accounts,
     IAccountNaming naming,
     IPersonAttributeSource people,
-    IApprovalMatrix matrix) : IRequestItems
+    IApprovalMatrix matrix,
+    IApprovalStageChecks stages) : IRequestItems
 {
     private const int MaxMine = 200;
 
@@ -149,7 +153,9 @@ public sealed class RequestItemService(
 
         // People see their own items; anyone else needs the read permission, and a refusal looks like "not found".
         var own = string.Equals(item.Requester, actor, StringComparison.Ordinal) || string.Equals(item.Beneficiary, actor, StringComparison.Ordinal);
-        return own || await permissions.CanAsync(actor, RequestAuditActions.ReadAction, cancellationToken).ConfigureAwait(false) ? View(item) : null;
+        return own || await permissions.CanAsync(actor, RequestAuditActions.ReadAction, cancellationToken).ConfigureAwait(false)
+            ? View(item, await CurrentNameAsync(item, cancellationToken).ConfigureAwait(false))
+            : null;
     }
 
     public async Task<IReadOnlyList<RequestItemView>> MineAsync(CancellationToken cancellationToken)
@@ -161,8 +167,95 @@ public sealed class RequestItemService(
             .Take(MaxMine)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        return [.. items.Select(View)];
+        var ids = items.Select(i => i.Id).ToList();
+        var names = (await db.AccountNames.AsNoTracking().Where(n => ids.Contains(n.ItemId)).ToListAsync(cancellationToken).ConfigureAwait(false))
+            .GroupBy(n => n.ItemId)
+            .ToDictionary(g => g.Key, g => g.OrderBy(n => n.SetAtUtc).ThenBy(n => n.Id).Last().Name);
+        return [.. items.Select(i => View(i, names.GetValueOrDefault(i.Id) ?? i.NewAccountName))];
     }
+
+    /// <summary>
+    /// A name for the item's new account, given on one of its open Action stages that lists the account-name field, by one of
+    /// that stage's people (DL-092). Names only (rule 11): nothing else about the item can change, and the item stays frozen.
+    /// </summary>
+    public async Task<RequestItemView> GiveAccountNameAsync(Guid itemId, Guid stageId, string name, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        var actor = Actor();
+        var now = UtcMicrosecondConverter.TruncateToMicroseconds(clock.GetUtcNow());
+        var item = await db.Items.AsNoTracking().SingleOrDefaultAsync(i => i.Id == itemId, cancellationToken).ConfigureAwait(false);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        AccountNameAssignment given;
+        try
+        {
+            await RequireAsync(actor, RequestAuditActions.NameAction, RequestRefusal.NotAllowed, cancellationToken).ConfigureAwait(false);
+
+            // An item the caller isn't on a stage of looks the same whether or not it exists.
+            if (item is null)
+            {
+                throw new RequestRefusedException(RequestRefusal.NotOnStage);
+            }
+
+            var route = JsonSerializer.Deserialize<List<SubmittedStage>>(item.Route, MessageEnvelopes.Json) ?? throw new RequestRefusedException(RequestRefusal.InvalidRecord);
+            if (!route.Any(s => s.StageId == stageId && s.Kind == "Action" && s.Fields.Contains("AccountName", StringComparer.Ordinal)))
+            {
+                throw new RequestRefusedException(RequestRefusal.NotANameStage);
+            }
+
+            // The approval's instance id is the item id (DL-091).
+            if (!await stages.CanActOnOpenActionStageAsync(item.Id, stageId, actor, cancellationToken).ConfigureAwait(false))
+            {
+                throw new RequestRefusedException(RequestRefusal.NotOnStage);
+            }
+
+            if (RequestItem.IsAccountName(name) && await accounts.IsNameInUseAsync(item.ApplicationId, name, cancellationToken).ConfigureAwait(false))
+            {
+                throw new RequestRefusedException(RequestRefusal.NameInUse);
+            }
+
+            given = AccountNameAssignment.Give(item, stageId, await CurrentNameAsync(item, cancellationToken).ConfigureAwait(false), name, actor, now);
+        }
+        catch (RequestRefusedException refusal)
+        {
+            await RefuseAsync(tx, item?.EntitlementId ?? Guid.Empty, refusal, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+
+        db.AccountNames.Add(given);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await audit.AppendAsync(
+            tx.GetDbTransaction(),
+            new AuditEventRecord
+            {
+                Action = RequestAuditActions.AccountNamed,
+                TargetType = RequestAuditActions.Target,
+                TargetId = item.Id.ToString(),
+                Outcome = AuditOutcome.Succeeded,
+                OccurredAtUtc = now,
+                CorrelationId = Activity.Current?.TraceId.ToHexString() ?? Guid.NewGuid().ToString("N"),
+                Payload =
+                [
+                    Field("stageId", stageId.ToString()),
+                    Field("newAccountType", item.NewAccountType ?? "none"),
+                    Field("proposedName", item.NewAccountName ?? "none"),
+                    Field("previousName", given.PreviousName ?? "none"),
+                    Field("name", given.Name),
+                ],
+            },
+            cancellationToken).ConfigureAwait(false);
+        await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return View(item, given.Name);
+    }
+
+    /// <summary>The account name now: the latest assignment, else the naming rule's proposal (or the owner's, for Service and Shared).</summary>
+    private async Task<string?> CurrentNameAsync(RequestItem item, CancellationToken cancellationToken) =>
+        await db.AccountNames.AsNoTracking()
+            .Where(n => n.ItemId == item.Id)
+            .OrderByDescending(n => n.SetAtUtc).ThenByDescending(n => n.Id)
+            .Select(n => n.Name)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false)
+        ?? item.NewAccountName;
 
     /// <summary>
     /// Checks the account the item names, or the new one it asks for (spec v3.2 §2.5, §3.1, §5.3). Returns the account type and,
@@ -357,7 +450,7 @@ public sealed class RequestItemService(
 
     private static AuditPayloadField Field(string name, string value) => new(name, value, AuditFieldClass.Plain);
 
-    private static RequestItemView View(RequestItem i) => new(
+    private static RequestItemView View(RequestItem i, string? accountName = null) => new(
         i.Id, i.Requester, i.Beneficiary, i.ApplicationId, i.EntitlementId, i.EntitlementVersionId, i.AccountId, i.NewAccountType, i.NewAccountName,
-        i.DurationDays, i.State.ToString(), i.MatrixVersionId, i.MatchedRuleId, i.SubmittedAtUtc);
+        i.DurationDays, i.State.ToString(), i.MatrixVersionId, i.MatchedRuleId, i.SubmittedAtUtc, accountName ?? i.NewAccountName);
 }

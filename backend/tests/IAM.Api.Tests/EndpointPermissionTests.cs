@@ -135,6 +135,7 @@ public sealed class EndpointPermissionTests
             ["Request.MyItems"] = "request.items.submit",
             ["Request.GetItem"] = "request.items.submit",
             ["Request.SubmitItem"] = "request.items.submit",
+            ["Request.GiveAccountName"] = "request.items.name-account",
             ["Organization.GetWorkgroup"] = "organization.workgroups.read",
             ["Organization.RegisterWorkgroup"] = "organization.workgroups.manage",
             ["Organization.RenameWorkgroup"] = "organization.workgroups.manage",

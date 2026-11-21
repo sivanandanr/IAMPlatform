@@ -13,5 +13,6 @@
     <ProjectReference Include="..\..\Catalog\IAM.Modules.Catalog.Contracts\IAM.Modules.Catalog.Contracts.csproj" />
     <ProjectReference Include="..\..\Identity\IAM.Modules.Identity.Contracts\IAM.Modules.Identity.Contracts.csproj" />
     <ProjectReference Include="..\..\Policy\IAM.Modules.Policy.Contracts\IAM.Modules.Policy.Contracts.csproj" />
+    <ProjectReference Include="..\..\Workflow\IAM.Modules.Workflow.Contracts\IAM.Modules.Workflow.Contracts.csproj" />
   </ItemGroup>
 </Project>

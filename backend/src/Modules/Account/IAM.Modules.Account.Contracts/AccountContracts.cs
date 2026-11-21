@@ -17,6 +17,9 @@ public interface IAccountDirectory
 
     /// <summary>The person's live (not closed) accounts in the application, at most 100.</summary>
     Task<IReadOnlyList<AccountRecord>> ForOwnerAsync(Guid applicationId, string owner, CancellationToken cancellationToken);
+
+    /// <summary>Whether a live (not closed) account of the application has this name, compared ignoring case (DL-089).</summary>
+    Task<bool> IsNameInUseAsync(Guid applicationId, string name, CancellationToken cancellationToken);
 }
 
 /// <summary>A proposed account name with the naming rule version it came from (evidence), or why there is none.</summary>

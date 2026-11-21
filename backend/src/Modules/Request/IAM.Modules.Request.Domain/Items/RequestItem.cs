@@ -55,6 +55,21 @@ public enum RequestRefusal
     AlreadyRequested = 14,
 
     InvalidRecord = 15,
+
+    /// <summary>The item asks for no new account, so there is no name to give (DL-092).</summary>
+    NoNewAccount = 16,
+
+    /// <summary>The stage isn't one of the item's Action stages that may give the account name.</summary>
+    NotANameStage = 17,
+
+    /// <summary>The caller can't act on that stage now: it isn't open, or they aren't one of its people (DL-092).</summary>
+    NotOnStage = 18,
+
+    /// <summary>A live account of the application already has this name (DL-086).</summary>
+    NameInUse = 19,
+
+    /// <summary>The name is already the item's account name.</summary>
+    NameUnchanged = 20,
 }
 
 /// <summary>A request was refused by a rule (see <see cref="RequestRefusal"/>).</summary>

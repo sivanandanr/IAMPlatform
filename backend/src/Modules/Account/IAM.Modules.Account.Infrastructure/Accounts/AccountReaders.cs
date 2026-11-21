@@ -27,6 +27,13 @@ public sealed class AccountDirectory(AccountDbContext db) : IAccountDirectory
         return [.. accounts.Select(Record)];
     }
 
+    public Task<bool> IsNameInUseAsync(Guid applicationId, string name, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        var key = AccountRules.NameKey(name);
+        return db.Accounts.AnyAsync(a => a.ApplicationId == applicationId && a.NameKey == key && a.Status != AccountStatus.Closed, cancellationToken);
+    }
+
     private static AccountRecord Record(AccountEntity a) => new(a.Id, a.ApplicationId, a.Type.ToString(), a.Name, a.TargetId, a.Owner, a.Status.ToString(), a.Verified);
 }
 
