@@ -28,8 +28,9 @@ public sealed class PermissionCheckTests
         // DL-073: anyone may look at and act on approvals that concern them; the workflow service decides which those are.
         // DL-087: anyone may accept ownership of an entitlement; the catalog service checks they are the owner named.
         // DL-091: anyone may request access for themselves; the request service checks everything else.
+        // DL-092: anyone may give a new account's name; the request service checks they are on the open name stage.
         ActionCatalog.EveryoneActions.Order(StringComparer.Ordinal).ShouldBe(
-            [ActionCatalog.OwnPermissionsRead, ActionCatalog.EntitlementOwnershipAccept, ActionCatalog.SelfRead, ActionCatalog.RequestItemsSubmit, ActionCatalog.ApprovalsAct, ActionCatalog.InstancesView]);
+            [ActionCatalog.OwnPermissionsRead, ActionCatalog.EntitlementOwnershipAccept, ActionCatalog.SelfRead, ActionCatalog.RequestItemsNameAccount, ActionCatalog.RequestItemsSubmit, ActionCatalog.ApprovalsAct, ActionCatalog.InstancesView]);
 
     [Fact]
     public async Task UnknownActionsAndEmptySubjectsAreRefusedWithoutReadingTheStore()

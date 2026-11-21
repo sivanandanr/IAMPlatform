@@ -20,6 +20,7 @@ public static class RequestModule
         services.AddRequestInfrastructure();
         services.AddExceptionHandler<RequestExceptionHandler>();
         services.AddSingleton<FluentValidation.IValidator<SubmitItemBody>, SubmitItemBodyValidator>();
+        services.AddSingleton<FluentValidation.IValidator<AccountNameBody>, AccountNameBodyValidator>();
         return services;
     }
 

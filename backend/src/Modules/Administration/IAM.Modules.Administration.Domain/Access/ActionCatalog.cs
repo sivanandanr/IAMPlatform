@@ -42,6 +42,7 @@ public static class ActionCatalog
     public const string RequestItemsSubmit = "request.items.submit";
     public const string RequestItemsForOthers = "request.items.request-for-others";
     public const string RequestItemsRead = "request.items.read";
+    public const string RequestItemsNameAccount = "request.items.name-account";
 
     public static IReadOnlyList<ActionDefinition> All { get; } = Array.AsReadOnly(
     [
@@ -78,6 +79,7 @@ public static class ActionCatalog
         new ActionDefinition(RequestItemsSubmit, "Request access for yourself, and see your own requests (DL-091)", Everyone: true),
         new ActionDefinition(RequestItemsForOthers, "Request access for someone else (DL-091)", Everyone: false),
         new ActionDefinition(RequestItemsRead, "See every request item (DL-091)", Everyone: false),
+        new ActionDefinition(RequestItemsNameAccount, "Give a new account's name on an approval task where you are eligible (DL-092)", Everyone: true),
     ]);
 
     private static readonly Dictionary<string, ActionDefinition> ById = All.ToDictionary(a => a.Id, StringComparer.Ordinal);

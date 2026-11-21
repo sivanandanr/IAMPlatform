@@ -40,4 +40,5 @@ public static class AccessActions
     public const string RequestItemsSubmit = "request.items.submit";
     public const string RequestItemsForOthers = "request.items.request-for-others";
     public const string RequestItemsRead = "request.items.read";
+    public const string RequestItemsNameAccount = "request.items.name-account";
 }

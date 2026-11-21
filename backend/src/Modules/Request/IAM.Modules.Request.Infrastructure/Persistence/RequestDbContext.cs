@@ -19,6 +19,8 @@ public sealed class RequestDbContext(DbContextOptions<RequestDbContext> options)
 
     public DbSet<OutboxMessageRow> Outbox => Set<OutboxMessageRow>();
 
+    public DbSet<AccountNameAssignment> AccountNames => Set<AccountNameAssignment>();
+
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         var item = modelBuilder.Entity<RequestItem>();
@@ -36,6 +38,15 @@ public sealed class RequestDbContext(DbContextOptions<RequestDbContext> options)
         item.Property(x => x.Route).IsRequired();
         item.HasIndex(x => new { x.Requester, x.SubmittedAtUtc });
         item.HasIndex(x => new { x.Beneficiary, x.SubmittedAtUtc });
+
+        var name = modelBuilder.Entity<AccountNameAssignment>();
+        name.ToTable("AccountNameAssignment", t => t.HasTrigger("TR_AccountNameAssignment_AppendOnly"));
+        name.HasKey(x => x.Id);
+        name.Property(x => x.PreviousName).IsCode(256);
+        name.Property(x => x.Name).IsRequired().IsCode(256);
+        name.Property(x => x.SetBy).IsRequired().IsCode(AuditColumns.ActorMaxLength);
+        name.HasOne<RequestItem>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
+        name.HasIndex(x => new { x.ItemId, x.SetAtUtc });
 
         // One waiting item per person and entitlement: a filtered unique index, hand-written in the migrations.
         modelBuilder.ConfigureOutbox("TR_OutboxMessage_Guarded");

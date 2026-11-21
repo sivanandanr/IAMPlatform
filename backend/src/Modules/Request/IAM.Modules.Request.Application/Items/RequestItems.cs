@@ -22,7 +22,8 @@ public sealed record RequestItemView(
     string State,
     Guid MatrixVersionId,
     Guid MatchedRuleId,
-    DateTimeOffset SubmittedAtUtc);
+    DateTimeOffset SubmittedAtUtc,
+    string? AccountName = null);
 
 /// <summary>
 /// Request items (DL-091). Submitting checks everything server-side, freezes the item and sends it for approval in one
@@ -37,6 +38,12 @@ public interface IRequestItems
 
     /// <summary>Items the caller asked for or gets access from, newest first, at most 200.</summary>
     Task<IReadOnlyList<RequestItemView>> MineAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Gives the new account's name on an open Action stage that may give it (DL-092). Only one of that stage's people, and only
+    /// a name: never access, people or dates. Proposed and final names are audited.
+    /// </summary>
+    Task<RequestItemView> GiveAccountNameAsync(Guid itemId, Guid stageId, string name, CancellationToken cancellationToken);
 }
 
 public enum RequestFailureKind
@@ -70,8 +77,8 @@ public static class RequestApi
                 code = refused.Refusal?.ToString();
                 return refused.Refusal switch
                 {
-                    RequestRefusal.NotAllowed or RequestRefusal.NotForOthers or RequestRefusal.NotAccountOwner => RequestFailureKind.Forbidden,
-                    RequestRefusal.AlreadyRequested or RequestRefusal.PrimaryExists => RequestFailureKind.WrongState,
+                    RequestRefusal.NotAllowed or RequestRefusal.NotForOthers or RequestRefusal.NotAccountOwner or RequestRefusal.NotOnStage => RequestFailureKind.Forbidden,
+                    RequestRefusal.AlreadyRequested or RequestRefusal.PrimaryExists or RequestRefusal.NameInUse or RequestRefusal.NameUnchanged => RequestFailureKind.WrongState,
                     RequestRefusal.InvalidRecord or null => RequestFailureKind.Unavailable,
                     _ => RequestFailureKind.Invalid,
                 };

@@ -2,6 +2,7 @@ using IAM.BuildingBlocks.Persistence;
 using IAM.Modules.Audit.Contracts;
 using IAM.Modules.Workflow.Application.Approvals;
 using IAM.Modules.Workflow.Application.Approvers;
+using IAM.Modules.Workflow.Contracts;
 using IAM.Modules.Workflow.Infrastructure.Approvals;
 using IAM.Modules.Workflow.Infrastructure.Approvers;
 using IAM.Modules.Workflow.Infrastructure.Persistence;
@@ -29,7 +30,9 @@ public static class WorkflowInfrastructure
         services.TryAddSingleton(sp => new ApproverResolutionSettings(sp.GetRequiredService<IConfiguration>()[FallbackWorkgroupSetting]));
         services.TryAddScoped<IApproverResolver, ApproverResolver>();
         services.TryAddScoped<IApprovalEscalation, ApprovalEscalationService>();
-        services.TryAddScoped<IApprovalWorkflow, ApprovalWorkflowService>();
+        services.TryAddScoped<ApprovalWorkflowService>();
+        services.TryAddScoped<IApprovalWorkflow>(sp => sp.GetRequiredService<ApprovalWorkflowService>());
+        services.TryAddScoped<IApprovalStageChecks, ApprovalStageChecks>();
         services.TryAddScoped<IDueApprovals, DueApprovals>();
         foreach (var action in WorkflowAuditActions.All)
         {

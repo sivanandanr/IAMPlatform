@@ -159,6 +159,93 @@ namespace IAM.Persistence.PostgreSql.Migrations.Request
                         });
                 });
 
+            modelBuilder.Entity("IAM.Modules.Request.Domain.Items.AccountNameAssignment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("created_by");
+
+                    b.Property<Guid>("ItemId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("item_id");
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("modified_at_utc");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("modified_by");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("name")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<string>("PreviousName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("previous_name")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<DateTimeOffset>("SetAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("set_at_utc");
+
+                    b.Property<string>("SetBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("set_by")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
+                    b.Property<Guid>("StageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("stage_id");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id")
+                        .HasName("pk_account_name_assignment");
+
+                    b.HasIndex("ItemId", "SetAtUtc")
+                        .HasDatabaseName("ix_account_name_assignment_item_id_set_at_utc");
+
+                    b.ToTable("account_name_assignment", "request", t =>
+                        {
+                            t.HasTrigger("tr_account_name_assignment_append_only");
+
+                            t.HasCheckConstraint("ck_account_name_assignment_name_code", "\"name\" <> '' AND \"name\" = btrim(\"name\")");
+
+                            t.HasCheckConstraint("ck_account_name_assignment_previous_name_code", "\"previous_name\" <> '' AND \"previous_name\" = btrim(\"previous_name\")");
+
+                            t.HasCheckConstraint("ck_account_name_assignment_set_by_code", "\"set_by\" <> '' AND \"set_by\" = btrim(\"set_by\")");
+                        });
+                });
+
             modelBuilder.Entity("IAM.Modules.Request.Domain.Items.RequestItem", b =>
                 {
                     b.Property<Guid>("Id")
@@ -328,6 +415,16 @@ namespace IAM.Persistence.PostgreSql.Migrations.Request
 
                             t.HasCheckConstraint("ck_request_item_state_code", "\"state\" <> '' AND \"state\" = btrim(\"state\")");
                         });
+                });
+
+            modelBuilder.Entity("IAM.Modules.Request.Domain.Items.AccountNameAssignment", b =>
+                {
+                    b.HasOne("IAM.Modules.Request.Domain.Items.RequestItem", null)
+                        .WithMany()
+                        .HasForeignKey("ItemId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_account_name_assignment_request_item_item_id");
                 });
 #pragma warning restore 612, 618
         }

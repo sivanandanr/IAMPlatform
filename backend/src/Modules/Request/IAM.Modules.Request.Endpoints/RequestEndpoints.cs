@@ -20,6 +20,19 @@ namespace IAM.Modules.Request.Endpoints;
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SubmitItemBody(string? Beneficiary, Guid? EntitlementId, Guid? AccountId, string? NewAccountType, string? NewAccountName, int? DurationDays);
 
+/// <summary>Body of give-account-name: the Action stage it is given on and the name. Nothing else about the item is accepted.</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record AccountNameBody(Guid? StageId, string? Name);
+
+public sealed class AccountNameBodyValidator : AbstractValidator<AccountNameBody>
+{
+    public AccountNameBodyValidator()
+    {
+        RuleFor(b => b.StageId).NotNull().NotEqual(Guid.Empty);
+        RuleFor(b => b.Name).NotEmpty().MaximumLength(RequestApiLimits.NameLength);
+    }
+}
+
 public static class RequestApiLimits
 {
     public const int PersonLength = 200;
@@ -40,13 +53,14 @@ public sealed class SubmitItemBodyValidator : AbstractValidator<SubmitItemBody>
     }
 }
 
-internal sealed class RequestValidationFilter(IValidator<SubmitItemBody> validator) : IEndpointFilter
+internal sealed class RequestValidationFilter<TBody>(IValidator<TBody> validator) : IEndpointFilter
+    where TBody : class
 {
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(next);
-        var body = context.Arguments.OfType<SubmitItemBody>().SingleOrDefault();
+        var body = context.Arguments.OfType<TBody>().SingleOrDefault();
         if (body is null)
         {
             return TypedResults.ValidationProblem(new Dictionary<string, string[]> { ["body"] = ["A JSON body is required."] });
@@ -111,9 +125,16 @@ internal static class RequestEndpoints
             .RequireBodyLimit(RequestApiLimits.MaxBodyBytes)
             .RequireRateLimiting(IamRateLimits.AdministrationWrites)
             .MapPost(string.Empty, SubmitAsync)
-            .AddEndpointFilter<RequestValidationFilter>()
+            .AddEndpointFilter<RequestValidationFilter<SubmitItemBody>>()
             .RequirePermission(AccessActions.RequestItemsSubmit)
             .WithName("Request.SubmitItem");
+        items.MapGroup(string.Empty)
+            .RequireBodyLimit(RequestApiLimits.MaxBodyBytes)
+            .RequireRateLimiting(IamRateLimits.AdministrationWrites)
+            .MapPut("/{id:guid}/account-name", GiveAccountNameAsync)
+            .AddEndpointFilter<RequestValidationFilter<AccountNameBody>>()
+            .RequirePermission(AccessActions.RequestItemsNameAccount)
+            .WithName("Request.GiveAccountName");
     }
 
     private static async Task<Ok<IReadOnlyList<RequestItemView>>> MineAsync(IRequestItems items, CancellationToken cancellationToken) =>
@@ -121,6 +142,9 @@ internal static class RequestEndpoints
 
     private static async Task<Results<Ok<RequestItemView>, NotFound>> GetAsync(Guid id, IRequestItems items, CancellationToken cancellationToken) =>
         await items.FindAsync(id, cancellationToken).ConfigureAwait(false) is { } view ? TypedResults.Ok(view) : TypedResults.NotFound();
+
+    private static async Task<Ok<RequestItemView>> GiveAccountNameAsync(Guid id, AccountNameBody body, IRequestItems items, CancellationToken cancellationToken) =>
+        TypedResults.Ok(await items.GiveAccountNameAsync(id, body.StageId!.Value, body.Name!, cancellationToken).ConfigureAwait(false));
 
     private static async Task<Created<RequestItemView>> SubmitAsync(SubmitItemBody body, IRequestItems items, CancellationToken cancellationToken)
     {
