@@ -453,7 +453,7 @@ public sealed class NotificationInboxParityTests(ParityDatabase db, RabbitMqBrok
             new ApplicationApproverDirectory(TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString)),
             new WorkgroupDirectory(TestSupport.CreateOrganization(db.Provider, db.OrganizationAppConnectionString)),
             new ApproverResolutionSettings());
-        return new ApprovalWorkflowService(context, writer, clock, TestSupport.ProviderFor(db.Provider), new FixedActor(null), new NoPermissions(), resolver);
+        return new ApprovalWorkflowService(context, writer, clock, TestSupport.ProviderFor(db.Provider), new FixedActor(null), new NoPermissions(), resolver, new NoItemSource());
     }
 
     private OutboxRelay<WorkflowDbContext> Relay(IMessagePublisher publisher)

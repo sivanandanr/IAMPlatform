@@ -12,7 +12,7 @@ namespace IAM.Modules.Request.Infrastructure.Items;
 /// </summary>
 public sealed class RequestItemSource(RequestDbContext db) : IRequestItemSource
 {
-    public async Task<ProvisionableItem?> FindAsync(Guid itemId, IReadOnlyDictionary<Guid, DateTimeOffset>? namesGivenBy, CancellationToken cancellationToken)
+    public async Task<ProvisionableItem?> FindAsync(Guid itemId, ApprovedAccountName? approvedName, CancellationToken cancellationToken)
     {
         var item = await db.Items.AsNoTracking().SingleOrDefaultAsync(i => i.Id == itemId, cancellationToken).ConfigureAwait(false);
         if (item is null)
@@ -20,15 +20,17 @@ public sealed class RequestItemSource(RequestDbContext db) : IRequestItemSource
             return null;
         }
 
-        var names = await db.AccountNames.AsNoTracking()
-            .Where(n => n.ItemId == itemId)
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
-        var given = names
-            .Where(n => namesGivenBy is null || (namesGivenBy.TryGetValue(n.StageId, out var closed) && n.SetAtUtc <= closed))
-            .OrderByDescending(n => n.SetAtUtc).ThenByDescending(n => n.Id)
-            .Select(n => n.Name)
-            .FirstOrDefault();
+        // Exactly the assignment the approval recorded (DL-099), and only this item's; else the naming rule's proposal.
+        var name = item.NewAccountName;
+        if (approvedName?.AssignmentId is { } assignmentId)
+        {
+            name = await db.AccountNames.AsNoTracking()
+                .Where(n => n.Id == assignmentId && n.ItemId == itemId)
+                .Select(n => n.Name)
+                .SingleOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         return new ProvisionableItem(
             item.Id,
             item.Requester,
@@ -39,7 +41,31 @@ public sealed class RequestItemSource(RequestDbContext db) : IRequestItemSource
             item.EntitlementContentHash,
             item.AccountId,
             item.NewAccountType,
-            given ?? item.NewAccountName);
+            name,
+            item.CorrelationId);
+    }
+
+    public async Task<AccountNameSnapshot?> CurrentAccountNameAsync(Guid itemId, CancellationToken cancellationToken)
+    {
+        var item = await db.Items.AsNoTracking()
+            .Where(i => i.Id == itemId)
+            .Select(i => new { i.NewAccountType, i.NewAccountName })
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (item?.NewAccountType is null)
+        {
+            return null;
+        }
+
+        var latest = await db.AccountNames.AsNoTracking()
+            .Where(n => n.ItemId == itemId)
+            .OrderByDescending(n => n.SetAtUtc).ThenByDescending(n => n.Id)
+            .Select(n => new { n.Id, n.Name })
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return latest is not null ? new AccountNameSnapshot(latest.Id, latest.Name)
+            : item.NewAccountName is { } proposal ? new AccountNameSnapshot(null, proposal)
+            : null;
     }
 
     public async Task<RequestItemSubmitted?> FindSubmittedAsync(Guid itemId, CancellationToken cancellationToken)

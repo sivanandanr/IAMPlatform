@@ -265,7 +265,7 @@ public sealed class WorkflowOutboxParityTests(ParityDatabase db)
             new ApplicationApproverDirectory(TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString)),
             new WorkgroupDirectory(TestSupport.CreateOrganization(db.Provider, db.OrganizationAppConnectionString)),
             new ApproverResolutionSettings());
-        return new ApprovalWorkflowService(context, writer, clock, TestSupport.ProviderFor(db.Provider), new FixedActor(actor), new EscalatorOnly(), resolver);
+        return new ApprovalWorkflowService(context, writer, clock, TestSupport.ProviderFor(db.Provider), new FixedActor(actor), new EscalatorOnly(), resolver, new NoItemSource());
     }
 
     private sealed class EscalatorOnly : IPermissionEvaluator

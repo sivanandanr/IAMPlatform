@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Globalization;
 using IAM.BuildingBlocks.Persistence;
 using IAM.BuildingBlocks.Security;
@@ -10,6 +11,7 @@ using IAM.Modules.Catalog.Infrastructure.Applications;
 using IAM.Modules.Catalog.Infrastructure.Entitlements;
 using IAM.Modules.Catalog.Infrastructure.Persistence;
 using IAM.Modules.Organization.Contracts;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Shouldly;
 
 namespace IAM.Persistence.Tests.Parity;
@@ -403,22 +405,52 @@ public sealed class EntitlementCatalogParityTests(ParityDatabase db)
         await AcceptAsync(second.Id);
         var requests = new[] { await ProposeAsync(first.Id), await ProposeAsync(second.Id) };
 
-        // Both checkers at once: the application's lock makes them take turns, and the second sees the first's name (DL-098).
-        var outcomes = await Task.WhenAll(requests.Select(async r =>
+        // The first checker's approval is held just before it commits, holding the application's lock (DL-098); only then does
+        // the second start (DL-099: the order is fixed, not left to timing). The second must wait for the first, and then see
+        // its name.
+        var hold = new HoldFirstCommit();
+        var firstApproval = Task.Run(() => ApproveAsync(requests[0], hold));
+        await hold.Reached.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        var secondApproval = Task.Run(() => ApproveAsync(requests[1], null));
+        (await Task.WhenAny(secondApproval, Task.Delay(TimeSpan.FromSeconds(2), Ct))).ShouldNotBe(secondApproval, "the second waits while the first holds the lock");
+        hold.Release.SetResult();
+        (await firstApproval).ShouldBeNull();
+        (await secondApproval).ShouldBe(ApplicationRefusal.TechnicalNameInUse);
+
+        async Task<ApplicationRefusal?> ApproveAsync(EntitlementChangeRequestView request, IInterceptor? extra)
         {
-            await using var checker = Service(Checker);
+            await using var checker = Service(Checker, extra: extra);
             try
             {
-                await checker.Service.ApproveAsync(r.Id, r.ContentHash, null, Ct);
-                return (ApplicationRefusal?)null;
+                await checker.Service.ApproveAsync(request.Id, request.ContentHash, null, Ct);
+                return null;
             }
             catch (ApplicationRefusedException refused)
             {
                 return refused.Refusal;
             }
-        }));
-        outcomes.Count(o => o is null).ShouldBe(1);
-        outcomes.Count(o => o == ApplicationRefusal.TechnicalNameInUse).ShouldBe(1);
+        }
+    }
+
+    /// <summary>Holds the first commit it sees until released, and says when it got there.</summary>
+    private sealed class HoldFirstCommit : DbTransactionInterceptor
+    {
+        private int _commits;
+
+        public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction transaction, TransactionEventData eventData, InterceptionResult result, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _commits) == 1)
+            {
+                Reached.TrySetResult();
+                await Release.Task.WaitAsync(TimeSpan.FromSeconds(60), cancellationToken);
+            }
+
+            return result;
+        }
     }
 
     private string[] Logins => [db.CatalogAppConnectionString, db.MigratorConnectionString];
@@ -559,9 +591,9 @@ public sealed class EntitlementCatalogParityTests(ParityDatabase db)
         return Convert.ToInt64(await db.ScalarAsync(db.AuditAppConnectionString, sql, Ct), CultureInfo.InvariantCulture);
     }
 
-    private (CatalogDbContext Context, AuditWriter Writer) Parts(string? actor)
+    private (CatalogDbContext Context, AuditWriter Writer) Parts(string? actor, IInterceptor? extra = null)
     {
-        var context = TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString, new AuditingSaveChangesInterceptor(TimeProvider.System, new FixedActor(actor)));
+        var context = TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString, new AuditingSaveChangesInterceptor(TimeProvider.System, new FixedActor(actor)), extra);
         var writer = new AuditWriter(
             TestSupport.ProviderFor(db.Provider),
             TimeProvider.System,
@@ -570,9 +602,9 @@ public sealed class EntitlementCatalogParityTests(ParityDatabase db)
         return (context, writer);
     }
 
-    private Scope<EntitlementCatalogAdministrationService> Service(string? actor = Author, FakePermissions? permissions = null)
+    private Scope<EntitlementCatalogAdministrationService> Service(string? actor = Author, FakePermissions? permissions = null, IInterceptor? extra = null)
     {
-        var (context, writer) = Parts(actor);
+        var (context, writer) = Parts(actor, extra);
         return new(context, new EntitlementCatalogAdministrationService(
             context, writer, TimeProvider.System, TestSupport.ProviderFor(db.Provider), new FixedActor(actor), permissions ?? DefaultPermissions, new FakeWorkgroups()));
     }

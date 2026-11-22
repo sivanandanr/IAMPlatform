@@ -446,7 +446,7 @@ public sealed class WorkflowParityTests(ParityDatabase db)
             new ApplicationApproverDirectory(TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString)),
             new WorkgroupDirectory(TestSupport.CreateOrganization(db.Provider, db.OrganizationAppConnectionString)),
             new ApproverResolutionSettings());
-        return new ApprovalWorkflowService(context, writer, clock, TestSupport.ProviderFor(db.Provider), new FixedActor(actor), Permissions, resolverOverride ?? resolver);
+        return new ApprovalWorkflowService(context, writer, clock, TestSupport.ProviderFor(db.Provider), new FixedActor(actor), Permissions, resolverOverride ?? resolver, new NoItemSource());
     }
 
     private sealed class RefusingResolver : IApproverResolver

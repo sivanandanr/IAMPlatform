@@ -132,6 +132,7 @@ namespace IAM.Persistence.PostgreSql.Migrations.Policy
                         .HasAnnotation("Iam:Code", true);
 
                     b.Property<string>("Editors")
+                        .IsRequired()
                         .HasMaxLength(4100)
                         .HasColumnType("character varying(4100)")
                         .HasColumnName("editors");

@@ -85,13 +85,18 @@ internal static class TestSupport
         return new AdministrationDbContext(options.Options);
     }
 
-    public static CatalogDbContext CreateCatalog(DatabaseProvider provider, string connectionString, AuditingSaveChangesInterceptor? interceptor = null)
+    public static CatalogDbContext CreateCatalog(DatabaseProvider provider, string connectionString, AuditingSaveChangesInterceptor? interceptor = null, IInterceptor? extra = null)
     {
         var options = new DbContextOptionsBuilder<CatalogDbContext>();
         ProviderFor(provider).Configure(options, connectionString, CatalogDbContext.SchemaName);
         if (interceptor is not null)
         {
             options.AddInterceptors(interceptor);
+        }
+
+        if (extra is not null)
+        {
+            options.AddInterceptors(extra);
         }
 
         return new CatalogDbContext(options.Options);
@@ -188,6 +193,19 @@ internal static class TestSupport
             yield return e;
         }
     }
+}
+
+/// <summary>No request items: for workflow tests that don't involve one, so a completion records no account name (DL-099).</summary>
+internal sealed class NoItemSource : IAM.Modules.Request.Contracts.IRequestItemSource
+{
+    public Task<IAM.Modules.Request.Contracts.ProvisionableItem?> FindAsync(Guid itemId, IAM.Modules.Request.Contracts.ApprovedAccountName? approvedName, CancellationToken cancellationToken) =>
+        Task.FromResult<IAM.Modules.Request.Contracts.ProvisionableItem?>(null);
+
+    public Task<IAM.Modules.Request.Contracts.AccountNameSnapshot?> CurrentAccountNameAsync(Guid itemId, CancellationToken cancellationToken) =>
+        Task.FromResult<IAM.Modules.Request.Contracts.AccountNameSnapshot?>(null);
+
+    public Task<IAM.Modules.Request.Contracts.RequestItemSubmitted?> FindSubmittedAsync(Guid itemId, CancellationToken cancellationToken) =>
+        Task.FromResult<IAM.Modules.Request.Contracts.RequestItemSubmitted?>(null);
 }
 
 internal sealed class FixedActor(string? actor) : IAuditActorAccessor

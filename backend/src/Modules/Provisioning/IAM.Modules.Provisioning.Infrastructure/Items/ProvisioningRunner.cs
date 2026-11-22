@@ -25,8 +25,14 @@ namespace IAM.Modules.Provisioning.Infrastructure.Items;
 /// Since DL-096, before each run the approval and the plan are decided again from the verified approval and the frozen item
 /// (<see cref="ProvisioningDecider"/>), and the stored steps must be exactly that plan: what the runner does never rests on its
 /// own tables alone, and an approval, entitlement or account that changed since planning stops the run. A create is done
-/// only when this operation made the object; an object that was already there is never taken over. If a new account can't
-/// be recorded after its steps ran, its entitlement is removed and it is disabled before the item fails.
+/// only when this operation made the object; an object that was already there is never taken over.
+/// </para>
+/// <para>
+/// Since DL-099 every failure after a step ran goes one way (<c>FailAsync</c>): what this item did is undone first
+/// (<see cref="ProvisioningPlanner.Undo"/>), under fixed operation ids, audited, resumed after a crash and read back; the item
+/// fails with its reason, or <c>UndoFailed</c>. A target read that fails is retried, never taken as an answer; an approval that
+/// is still being written postpones the run without counting an attempt; the lease is renewed before every step, the final
+/// read and the recording.
 /// </para>
 /// </summary>
 public sealed class ProvisioningRunner(
@@ -97,23 +103,11 @@ public sealed class ProvisioningRunner(
 
         // Everything this run audits carries the request's correlation id (DL-094).
         using var trace = MessageCorrelation.StartFor(item.CorrelationId, "iam.provisioning.run");
-
-        // A run that keeps stopping without finishing (an error the runner can't handle) fails for a person (DL-097).
-        if (takeover && item.Attempts >= settings.MaxAttempts)
-        {
-            item.Fail("RunnerError", Now());
-            await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, null, cancellationToken).ConfigureAwait(false);
-            return true;
-        }
         var operations = await db.Operations.Where(o => o.ItemId == itemId).OrderBy(o => o.Step).ToListAsync(cancellationToken).ConfigureAwait(false);
-        if (targets.Find(item.ConnectorKey ?? string.Empty) is not { } target)
-        {
-            item.Fail("ConnectorUnavailable", Now());
-            await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, null, cancellationToken).ConfigureAwait(false);
-            return true;
-        }
+        var plan = operations.Where(o => o.Step <= ProvisioningPlanner.MaxPlanSteps).ToList();
 
-        // A new account recorded by a run that stopped before finishing the item: it is done (DL-096).
+        // A new account recorded by a run that stopped before finishing the item is done (DL-096), even on its last attempt
+        // (DL-099): it is checked before the attempt limit.
         if (item.NewAccountType is not null && await accounts.FindRecordedAsync(item.Id, cancellationToken).ConfigureAwait(false) is { } already)
         {
             item.Succeed(already, Now());
@@ -121,30 +115,88 @@ public sealed class ProvisioningRunner(
             return true;
         }
 
-        // Decided again from the verified approval and the frozen item; the stored steps must be exactly that plan (DL-096).
-        var plan = operations.Where(o => o.Step <= ProvisioningPlanner.MaxPlanSteps).ToList();
-        var fresh = await decider.DecideAsync(item.Id, item.ApprovalActions ?? 1, closed: true, Now(), cancellationToken).ConfigureAwait(false);
+        var lastAttempt = takeover && item.Attempts >= settings.MaxAttempts;
+        IProvisioningTarget? found;
+        try
+        {
+            found = targets.Find(item.ConnectorKey ?? string.Empty);
+        }
+        catch (Exception ex) when (lastAttempt && ex is not OperationCanceledException)
+        {
+            // The error that kept stopping the run: it ends here (DL-097).
+            found = null;
+        }
+
+        if (found is not { } target)
+        {
+            // Nothing can be run or undone without the connector: a person must look at it, and at anything its steps did.
+            var undoNeeded = ProvisioningPlanner.Undo(item.Id, plan).Count > 0 || operations.Any(o => o.Step > ProvisioningPlanner.MaxPlanSteps);
+            var reason = lastAttempt ? "RunnerError" : "ConnectorUnavailable";
+            item.Fail(undoNeeded ? "UndoFailed" : reason, Now());
+            await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, null, cancellationToken, reason).ConfigureAwait(false);
+            return true;
+        }
+
+        var run = new Run(item, target, plan, operations);
+
+        // An undo a run stopped in the middle of is finished before anything else (DL-099).
+        if (operations.Any(o => o.Step > ProvisioningPlanner.MaxPlanSteps))
+        {
+            await FailAsync(run, "Interrupted", null, null, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        // A run that keeps stopping without finishing (an error the runner can't handle) fails for a person (DL-097), after
+        // whatever its steps did is undone (DL-099).
+        if (lastAttempt)
+        {
+            await FailAsync(run, "RunnerError", null, null, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        // Decided again from the verified approval and the frozen item; the stored steps must be exactly that plan, and the
+        // stored item exactly its facts (DL-096, DL-099).
+        ProvisioningPlan? fresh;
+        try
+        {
+            fresh = await decider.DecideAsync(item.Id, item.ApprovalActions ?? 1, Now(), cancellationToken).ConfigureAwait(false);
+        }
+        catch (ApprovalChangingException)
+        {
+            // The approval is being written: nothing was tried, so no attempt is counted (DL-099).
+            item.Postpone(Now() + settings.RetryDelay);
+            await SaveAuditedAsync(item, ProvisioningAuditActions.StepRetry, AuditOutcome.Failed, null, cancellationToken, "ApprovalChanging").ConfigureAwait(false);
+            return true;
+        }
+
         var stop = fresh switch
         {
             null => "NoLongerAuthorized",
             { Item.State: ProvisioningState.Blocked } => ProvisioningItem.ProblemCode(fresh.Item.IntegrityProblem ?? fresh.Item.Problem, "Recheck"),
-            _ when !ProvisioningPlanner.SamePlan(fresh.Operations, plan) => "PlanMismatch",
+            _ when !ProvisioningPlanner.SamePlan(fresh.Operations, plan) || !SameFacts(item, fresh.Item) => "PlanMismatch",
             _ => null,
         };
         if (stop is not null)
         {
-            item.Fail(stop, Now());
-            await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, null, cancellationToken).ConfigureAwait(false);
+            await FailAsync(run, stop, null, null, cancellationToken).ConfigureAwait(false);
             return true;
         }
 
+        var facts = fresh!.Item;
+
         // An existing account's target id was given by a person when it was linked and isn't verified: the account must really
-        // be on the target before anything is granted to it (DL-098).
-        if (item.AccountId is not null && !await ExistsAsync(target, ProvisioningPlanner.AccountObject, plan[0].TargetId, cancellationToken).ConfigureAwait(false))
+        // be on the target before anything is granted to it (DL-098). A read that fails proves nothing either way: try later.
+        if (item.AccountId is not null)
         {
-            item.Fail("AccountNotOnTarget", Now());
-            await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, null, cancellationToken).ConfigureAwait(false);
-            return true;
+            switch (await ExistsAsync(target, ProvisioningPlanner.AccountObject, plan[0].TargetId, cancellationToken).ConfigureAwait(false))
+            {
+                case null:
+                    await RetryOrFailAsync(run, null, "TargetUnreadable", cancellationToken).ConfigureAwait(false);
+                    return true;
+                case false:
+                    await FailAsync(run, "AccountNotOnTarget", null, null, cancellationToken).ConfigureAwait(false);
+                    return true;
+            }
         }
 
         foreach (var operation in plan.Where(o => o.State != ProvisioningState.Succeeded))
@@ -156,26 +208,20 @@ public sealed class ProvisioningRunner(
 
             // The lease is renewed with each step, under the item's row version: if another runner took the item over, this
             // run stops here rather than run the step a second time (DL-097).
-            item.Renew(Now(), settings.Lease);
-            try
+            if (!await RenewAsync(item, cancellationToken).ConfigureAwait(false))
             {
-                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                db.ChangeTracker.Clear();
                 return true;
             }
 
             // A step its runner was in the middle of may already be done: the target is read before it runs again. Not for a
             // create: an object being there doesn't prove this operation made it (DL-096), so the create runs again under its
             // operation id and the connector's ledger answers.
-            var result = interrupted && !creates && await VerifyAsync(target, step, cancellationToken).ConfigureAwait(false)
+            var result = interrupted && !creates && await VerifyAsync(target, step, cancellationToken).ConfigureAwait(false) == true
                 ? new StepResult(StepStatus.Done, "AlreadyInState")
                 : await RunAsync(target, step, cancellationToken).ConfigureAwait(false);
             if (result.Status == StepStatus.Unknown)
             {
-                result = !creates && await VerifyAsync(target, step, cancellationToken).ConfigureAwait(false)
+                result = !creates && await VerifyAsync(target, step, cancellationToken).ConfigureAwait(false) == true
                     ? new StepResult(StepStatus.Done, result.Code)
                     : new StepResult(StepStatus.Retry, result.Code ?? "Unknown");
             }
@@ -186,57 +232,77 @@ public sealed class ProvisioningRunner(
                 result = new StepResult(StepStatus.Rejected, "TargetExists");
             }
 
-            now = Now();
             switch (result.Status)
             {
                 case StepStatus.Done:
-                    operation.Complete(result.Code, now);
+                    operation.Complete(result.Code, Now());
                     await SaveAuditedAsync(item, ProvisioningAuditActions.StepDone, AuditOutcome.Succeeded, operation, cancellationToken).ConfigureAwait(false);
                     break;
 
-                case StepStatus.Retry when item.Attempts + 1 < settings.MaxAttempts:
-                    operation.Release();
-                    item.RetryAt(now + settings.DelayAfter(item.Attempts + 1));
-                    await SaveAuditedAsync(item, ProvisioningAuditActions.StepRetry, AuditOutcome.Failed, operation, cancellationToken, result.Code).ConfigureAwait(false);
+                case StepStatus.Retry:
+                    await RetryOrFailAsync(run, operation, result.Code, cancellationToken).ConfigureAwait(false);
                     return true;
 
                 default:
-                    // Rejected, or temporary failures that ran out of attempts: a person must look at it.
-                    operation.Fail(result.Code, now);
-                    item.Fail(result.Status == StepStatus.Rejected ? ProvisioningItem.ProblemCode(result.Code, "Rejected") : "RetriesExhausted", now);
-                    await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, operation, cancellationToken, result.Code).ConfigureAwait(false);
+                    // Rejected: a person must look at it, after what earlier steps did is undone (DL-099).
+                    operation.Fail(result.Code, Now());
+                    await FailAsync(run, ProvisioningItem.ProblemCode(result.Code, "Rejected"), operation, result.Code, cancellationToken).ConfigureAwait(false);
                     return true;
             }
         }
 
-        // Every step is done: the target must now match the whole plan before anything is recorded.
+        // Every step is done: the target must now match the whole plan before anything is recorded. The lease is renewed
+        // first (DL-099); a read that fails proves nothing, so it is tried again later rather than failing the item.
+        if (!await RenewAsync(item, cancellationToken).ConfigureAwait(false))
+        {
+            return true;
+        }
+
         foreach (var operation in plan)
         {
-            if (!await VerifyAsync(target, Step(operation), cancellationToken).ConfigureAwait(false))
+            switch (await VerifyAsync(target, Step(operation), cancellationToken).ConfigureAwait(false))
             {
-                item.Fail("VerifyMismatch", Now());
-                await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, operation, cancellationToken).ConfigureAwait(false);
-                return true;
+                case null:
+                    await RetryOrFailAsync(run, null, "TargetUnreadable", cancellationToken).ConfigureAwait(false);
+                    return true;
+                case false:
+                    await FailAsync(run, "VerifyMismatch", operation, null, cancellationToken).ConfigureAwait(false);
+                    return true;
             }
         }
 
         Guid? recorded = null;
-        if (item.NewAccountType is not null)
+        if (facts.NewAccountType is not null)
         {
+            if (!await RenewAsync(item, cancellationToken).ConfigureAwait(false))
+            {
+                return true;
+            }
+
             try
             {
+                // From the decided facts, never the runner's own row alone (DL-099).
                 recorded = await accounts.RecordCreatedAsync(
-                    new CreatedAccount(item.Id, item.ApplicationId!.Value, item.NewAccountType, item.AccountName!, plan[0].TargetId, item.Beneficiary!),
+                    new CreatedAccount(item.Id, facts.ApplicationId!.Value, facts.NewAccountType, facts.AccountName!, plan[0].TargetId, facts.Beneficiary!),
                     item.CorrelationId ?? MessageCorrelation.Current(),
                     cancellationToken).ConfigureAwait(false);
             }
             catch (AccountNotRecordedException refused)
             {
                 // The access exists on the target but can't be recorded: take it away before a person looks at it (DL-096).
-                var undone = await UndoAsync(item, target, plan, operations, cancellationToken).ConfigureAwait(false);
-                item.Fail(undone ? "AccountNotRecorded" : "UndoFailed", Now());
-                await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, null, cancellationToken, refused.Code).ConfigureAwait(false);
+                await FailAsync(run, "AccountNotRecorded", null, refused.Code, cancellationToken).ConfigureAwait(false);
                 return true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                // The write may have committed before the error: read it back before undoing anything (DL-099).
+                if (await accounts.FindRecordedAsync(item.Id, cancellationToken).ConfigureAwait(false) is not { } committed)
+                {
+                    await FailAsync(run, "RecordFailed", null, null, cancellationToken).ConfigureAwait(false);
+                    return true;
+                }
+
+                recorded = committed;
             }
         }
 
@@ -245,18 +311,88 @@ public sealed class ProvisioningRunner(
         return true;
     }
 
-    /// <summary>
-    /// Removes the entitlement and disables the new account (steps 11 and 12, fixed operation ids), each audited, then reads the
-    /// target to confirm. Undo steps already stored must be exactly the expected ones, or nothing is run. True if undone.
-    /// </summary>
-    private async Task<bool> UndoAsync(ProvisioningItem item, IProvisioningTarget target, List<ProvisioningOperation> plan, List<ProvisioningOperation> operations, CancellationToken cancellationToken)
+    /// <summary>One run's item, target and stored steps.</summary>
+    private sealed record Run(ProvisioningItem Item, IProvisioningTarget Target, List<ProvisioningOperation> Plan, List<ProvisioningOperation> Operations);
+
+    /// <summary>Whether the stored item says exactly what the item decided again says (DL-099): the runner never acts on its own row alone.</summary>
+    public static bool SameFacts(ProvisioningItem stored, ProvisioningItem fresh)
     {
-        var expected = ProvisioningPlanner.UndoNewAccount(item.Id, plan);
-        var stored = operations.Where(o => o.Step > ProvisioningPlanner.MaxPlanSteps).OrderBy(o => o.Step).ToList();
+        ArgumentNullException.ThrowIfNull(stored);
+        ArgumentNullException.ThrowIfNull(fresh);
+        return string.Equals(stored.Beneficiary, fresh.Beneficiary, StringComparison.Ordinal)
+        && stored.ApplicationId == fresh.ApplicationId
+        && stored.EntitlementId == fresh.EntitlementId
+        && stored.EntitlementVersionId == fresh.EntitlementVersionId
+        && stored.AccountId == fresh.AccountId
+        && string.Equals(stored.NewAccountType, fresh.NewAccountType, StringComparison.Ordinal)
+        && string.Equals(stored.AccountName, fresh.AccountName, StringComparison.Ordinal)
+        && string.Equals(stored.ConnectorKey, fresh.ConnectorKey, StringComparison.Ordinal);
+    }
+
+    /// <summary>A temporary failure: back to planned with a growing delay, or failed (and undone) once the attempts run out.</summary>
+    private async Task RetryOrFailAsync(Run run, ProvisioningOperation? operation, string? code, CancellationToken cancellationToken)
+    {
+        if (run.Item.Attempts + 1 < settings.MaxAttempts)
+        {
+            operation?.Release();
+            run.Item.RetryAt(Now() + settings.DelayAfter(run.Item.Attempts + 1));
+            await SaveAuditedAsync(run.Item, ProvisioningAuditActions.StepRetry, AuditOutcome.Failed, operation, cancellationToken, code).ConfigureAwait(false);
+            return;
+        }
+
+        operation?.Fail(code, Now());
+        await FailAsync(run, "RetriesExhausted", operation, code, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The one way an item fails once it has a connector (DL-099): what its steps did is undone first, then the item fails with
+    /// <paramref name="reason"/>, or <c>UndoFailed</c> if the undo didn't take. If another runner took the item over meanwhile,
+    /// this run stops and leaves the item to it.
+    /// </summary>
+    private async Task FailAsync(Run run, string reason, ProvisioningOperation? operation, string? code, CancellationToken cancellationToken)
+    {
+        var problem = reason;
+        var undo = ProvisioningPlanner.Undo(run.Item.Id, run.Plan);
+        if (undo.Count > 0 || run.Operations.Any(o => o.Step > ProvisioningPlanner.MaxPlanSteps))
+        {
+            switch (await UndoAsync(run, undo, reason, cancellationToken).ConfigureAwait(false))
+            {
+                case null:
+                    return;
+                case false:
+                    problem = "UndoFailed";
+                    break;
+            }
+        }
+
+        run.Item.Fail(problem, Now());
+        await SaveAuditedAsync(run.Item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, operation, cancellationToken, code ?? (problem == reason ? null : reason)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Runs the undo steps (fixed operation ids), each audited, with the lease renewed before each, then reads the target to
+    /// confirm. The steps are stored first, with the reason audited, so a run that stops half-way resumes them; steps already
+    /// stored must be exactly the expected ones, or nothing is run. True if undone; null if another runner took the item over.
+    /// </summary>
+    private async Task<bool?> UndoAsync(Run run, IReadOnlyList<ProvisioningOperation> expected, string reason, CancellationToken cancellationToken)
+    {
+        var item = run.Item;
+        var stored = run.Operations.Where(o => o.Step > ProvisioningPlanner.MaxPlanSteps).OrderBy(o => o.Step).ToList();
         if (stored.Count == 0)
         {
             db.Operations.AddRange(expected);
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            run.Operations.AddRange(expected);
+            item.Renew(Now(), settings.Lease);
+            try
+            {
+                await SaveAuditedAsync(item, ProvisioningAuditActions.StepUndone, AuditOutcome.Failed, null, cancellationToken, reason).ConfigureAwait(false);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                db.ChangeTracker.Clear();
+                return null;
+            }
+
             stored = [.. expected];
         }
         else if (!stored.Select(Key).SequenceEqual(expected.Select(Key), StringComparer.Ordinal))
@@ -275,10 +411,14 @@ public sealed class ProvisioningRunner(
 
             var step = Step(operation);
             operation.Start();
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            var result = await RunAsync(target, step, cancellationToken).ConfigureAwait(false);
+            if (!await RenewAsync(item, cancellationToken).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            var result = await RunAsync(run.Target, step, cancellationToken).ConfigureAwait(false);
             var done = result.Status == StepStatus.Done
-                || (result.Status == StepStatus.Unknown && await VerifyAsync(target, step, cancellationToken).ConfigureAwait(false));
+                || (result.Status == StepStatus.Unknown && await VerifyAsync(run.Target, step, cancellationToken).ConfigureAwait(false) == true);
             if (done)
             {
                 operation.Complete(result.Code, Now());
@@ -294,12 +434,28 @@ public sealed class ProvisioningRunner(
 
         foreach (var operation in stored)
         {
-            undone &= await VerifyAsync(target, Step(operation), cancellationToken).ConfigureAwait(false);
+            undone &= await VerifyAsync(run.Target, Step(operation), cancellationToken).ConfigureAwait(false) == true;
         }
 
         return undone;
 
         static string Key(ProvisioningOperation o) => string.Join('|', o.Step, o.Id, o.Action, o.TargetId, o.RelatedId ?? "-");
+    }
+
+    /// <summary>Extends the lease under the item's row version; false (and nothing more is done) if another runner took it over.</summary>
+    private async Task<bool> RenewAsync(ProvisioningItem item, CancellationToken cancellationToken)
+    {
+        item.Renew(Now(), settings.Lease);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            db.ChangeTracker.Clear();
+            return false;
+        }
     }
 
     private static TargetStep Step(ProvisioningOperation o) => new(
@@ -311,14 +467,23 @@ public sealed class ProvisioningRunner(
         o.RelatedId,
         JsonSerializer.Deserialize<Dictionary<string, string?>>(o.Attributes) ?? []);
 
+    /// <summary>
+    /// A connector call within the step time limit (DL-097). The limit is a hard one (DL-099): a call that ignores cancellation
+    /// is abandoned when it runs out, and this run carries on.
+    /// </summary>
+    private async Task<T> WithinLimitAsync<T>(Func<CancellationToken, Task<T>> call, CancellationToken cancellationToken)
+    {
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(settings.StepTimeout);
+        return await call(limit.Token).WaitAsync(settings.StepTimeout, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>Runs a step within the step time limit; a call that breaks off or runs out of time (not shutdown) has an unknown outcome.</summary>
     private async Task<StepResult> RunAsync(IProvisioningTarget target, TargetStep step, CancellationToken cancellationToken)
     {
         try
         {
-            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            limit.CancelAfter(settings.StepTimeout);
-            return await target.RunAsync(step, limit.Token).ConfigureAwait(false);
+            return await WithinLimitAsync(ct => target.RunAsync(step, ct), cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
@@ -326,33 +491,29 @@ public sealed class ProvisioningRunner(
         }
     }
 
-    /// <summary>Whether an object is on the target, within the step time limit; a read that fails proves nothing, so it counts as absent.</summary>
-    private async Task<bool> ExistsAsync(IProvisioningTarget target, string objectType, string id, CancellationToken cancellationToken)
+    /// <summary>Whether an object is on the target, within the step time limit; null if the read failed (it proves nothing).</summary>
+    private async Task<bool?> ExistsAsync(IProvisioningTarget target, string objectType, string id, CancellationToken cancellationToken)
     {
         try
         {
-            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            limit.CancelAfter(settings.StepTimeout);
-            return await target.ExistsAsync(objectType, id, limit.Token).ConfigureAwait(false);
+            return await WithinLimitAsync(ct => target.ExistsAsync(objectType, id, ct), cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            return false;
+            return null;
         }
     }
 
-    /// <summary>Reads the target within the step time limit; a read that fails or runs out of time proves nothing, so it counts as not matching.</summary>
-    private async Task<bool> VerifyAsync(IProvisioningTarget target, TargetStep step, CancellationToken cancellationToken)
+    /// <summary>Whether the target matches a step, within the step time limit; null if the read failed (it proves nothing).</summary>
+    private async Task<bool?> VerifyAsync(IProvisioningTarget target, TargetStep step, CancellationToken cancellationToken)
     {
         try
         {
-            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            limit.CancelAfter(settings.StepTimeout);
-            return await target.VerifyAsync(step, limit.Token).ConfigureAwait(false);
+            return await WithinLimitAsync(ct => target.VerifyAsync(step, ct), cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            return false;
+            return null;
         }
     }
 

@@ -138,6 +138,7 @@ public sealed class MatrixVersion
         ContentHash = string.Empty;
         CompiledHash = string.Empty;
         EditedBy = string.Empty;
+        Editors = string.Empty;
     }
 
     public Guid Id { get; private set; }
@@ -161,9 +162,9 @@ public sealed class MatrixVersion
 
     /// <summary>
     /// Everyone who wrote this draft's content, one per line (DL-098); none of them can be the second person, even when someone
-    /// else's edit came later. Null for versions written before DL-098, where <see cref="EditedBy"/> is the only writer known.
+    /// else's edit came later. Required since DL-099: versions written before DL-098 were given <see cref="EditedBy"/>.
     /// </summary>
-    public string? Editors { get; private set; }
+    public string Editors { get; private set; }
 
     /// <summary>The most people one draft may have been written by (the list fits its column).</summary>
     public const int MaxEditors = 20;
@@ -171,7 +172,7 @@ public sealed class MatrixVersion
     /// <summary>Whether <paramref name="person"/> wrote any of this version's content.</summary>
     public bool WasWrittenBy(string person) =>
         string.Equals(EditedBy, person, StringComparison.Ordinal)
-        || (Editors?.Split('\n').Contains(person, StringComparer.Ordinal) ?? false);
+        || Editors.Split('\n').Contains(person, StringComparer.Ordinal);
 
     public Guid? ActivatedByRequestId { get; private set; }
 
@@ -222,7 +223,7 @@ public sealed class MatrixVersion
         // against newer attribute versions, never moves authorship away from who wrote them.
         if (contentChanged)
         {
-            var editors = Editors?.Split('\n').ToList() ?? (string.IsNullOrEmpty(EditedBy) ? [] : [EditedBy]);
+            List<string> editors = Editors.Length > 0 ? [.. Editors.Split('\n')] : string.IsNullOrEmpty(EditedBy) ? [] : [EditedBy];
             if (!editors.Contains(editor, StringComparer.Ordinal))
             {
                 if (editors.Count >= MaxEditors)

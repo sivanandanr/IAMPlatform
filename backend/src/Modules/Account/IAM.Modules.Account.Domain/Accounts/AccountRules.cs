@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using IAM.BuildingBlocks.Abstractions.SecondPerson;
 
@@ -151,15 +152,172 @@ public static partial class AccountRules
     /// <summary>The form names are compared in: lower case (invariant), so another spelling of a name is the same name.</summary>
     public static string NameKey(string name) => name.ToLowerInvariant();
 
-    /// <summary>A target id in lower case: directories compare them ignoring case, so this is what must be unique (DL-098).</summary>
-    public static string TargetIdKey(string targetId) => targetId.ToLowerInvariant();
+    /// <summary>
+    /// The form a target id must be unique in (DL-098, DL-099): what a directory would take as the same object. A distinguished
+    /// name is read component by component: spaces around separators dropped, escapes decoded, then written back one way, in
+    /// lower case. Anything else (a GUID) is lower case. ASCII only, lowered the same way the databases lower it.
+    /// </summary>
+    public static string TargetIdKey(string targetId)
+    {
+        ArgumentNullException.ThrowIfNull(targetId);
+        return AsciiLower(CanonicalDn(targetId) ?? targetId.Trim());
+    }
 
-    /// <summary>The target's own identifier (a distinguished name, a GUID): visible text without leading or trailing spaces.</summary>
+    /// <summary>Whether text is printable ASCII (space to tilde): target ids are compared the same way in C# and both databases.</summary>
+    public static bool IsPrintableAscii(string text) => text.All(c => c is >= ' ' and <= '~');
+
+    /// <summary>The target's own identifier (a distinguished name, a GUID): printable ASCII without leading or trailing spaces.</summary>
     public static void ValidateTargetId(string? targetId)
     {
-        if (!SecondPersonText.IsText(targetId, TargetIdMaxLength) || targetId!.Trim().Length != targetId.Length)
+        if (!SecondPersonText.IsText(targetId, TargetIdMaxLength) || targetId!.Trim().Length != targetId.Length || !IsPrintableAscii(targetId))
         {
-            throw new AccountRejectedException("TargetId", $"must be visible text of at most {TargetIdMaxLength} characters, without leading or trailing spaces");
+            throw new AccountRejectedException("TargetId", $"must be printable ASCII of at most {TargetIdMaxLength} characters, without leading or trailing spaces");
+        }
+    }
+
+    private static string AsciiLower(string text) =>
+        string.Create(text.Length, text, static (span, source) =>
+        {
+            for (var i = 0; i < source.Length; i++)
+            {
+                var c = source[i];
+                span[i] = c is >= 'A' and <= 'Z' ? (char)(c + 32) : c;
+            }
+        });
+
+    /// <summary>
+    /// A distinguished name written one way (RFC 4514): <c>type=value</c> components joined by commas, spaces around them dropped,
+    /// escapes decoded and only the special characters escaped again. Null if the text isn't a plain DN this can read (a
+    /// multi-valued component, a bad escape, a non-ASCII byte): it is then compared as it is.
+    /// </summary>
+    private static string? CanonicalDn(string text)
+    {
+        if (!text.Contains('=', StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var components = new List<string>();
+        var type = new StringBuilder();
+        var value = new List<(char Char, bool Escaped)>();
+        var inValue = false;
+        for (var i = 0; i <= text.Length; i++)
+        {
+            if (i == text.Length || (text[i] == ',' && inValue))
+            {
+                if (!inValue || Component(type, value) is not { } component)
+                {
+                    return null;
+                }
+
+                components.Add(component);
+                type.Clear();
+                value.Clear();
+                inValue = false;
+                continue;
+            }
+
+            var c = text[i];
+            if (!inValue)
+            {
+                if (c == '=')
+                {
+                    inValue = true;
+                }
+                else if (c is ',' or '+' or '\\')
+                {
+                    return null;
+                }
+                else
+                {
+                    type.Append(c);
+                }
+
+                continue;
+            }
+
+            if (c == '+')
+            {
+                return null;
+            }
+
+            if (c != '\\')
+            {
+                value.Add((c, false));
+                continue;
+            }
+
+            if (i + 1 >= text.Length)
+            {
+                return null;
+            }
+
+            var next = text[i + 1];
+            if (i + 2 < text.Length && Uri.IsHexDigit(next) && Uri.IsHexDigit(text[i + 2]))
+            {
+                var decoded = (char)Convert.ToByte(text.Substring(i + 1, 2), 16);
+                if (decoded is < ' ' or > '~')
+                {
+                    return null;
+                }
+
+                value.Add((decoded, true));
+                i += 2;
+            }
+            else if (next is ',' or '+' or '"' or '\\' or '<' or '>' or ';' or '=' or '#' or ' ')
+            {
+                value.Add((next, true));
+                i++;
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        return string.Join(',', components);
+
+        static string? Component(StringBuilder typeText, List<(char Char, bool Escaped)> chars)
+        {
+            var name = typeText.ToString().Trim(' ');
+            if (name.Length == 0 || !name.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '.'))
+            {
+                return null;
+            }
+
+            var start = 0;
+            var end = chars.Count;
+            while (start < end && chars[start] is (' ', false))
+            {
+                start++;
+            }
+
+            while (end > start && chars[end - 1] is (' ', false))
+            {
+                end--;
+            }
+
+            if (start == end)
+            {
+                return null;
+            }
+
+            var written = new StringBuilder(name).Append('=');
+            for (var k = start; k < end; k++)
+            {
+                var ch = chars[k].Char;
+                var special = ch is ',' or '+' or '"' or '\\' or '<' or '>' or ';' or '='
+                    || (k == start && ch is '#' or ' ')
+                    || (k == end - 1 && ch == ' ');
+                if (special)
+                {
+                    written.Append('\\');
+                }
+
+                written.Append(ch);
+            }
+
+            return written.ToString();
         }
     }
 
