@@ -158,7 +158,11 @@ public interface IApprovalWorkflow
     // Nobody acts on another's behalf until a delegation registry exists (DL-075d), so these take no principal.
     Task<ApprovalInstanceView> DecideAsync(Guid instanceId, long expectedVersion, Guid decisionId, Guid stageId, bool approve, string? reason, CancellationToken cancellationToken);
 
-    Task<ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, string? note, CancellationToken cancellationToken);
+    /// <summary>
+    /// Completes an Action level. With <paramref name="expectedAccountName"/>, the account name must still be the one the person
+    /// saw, else <see cref="ApprovalRefusal.AccountNameChanged"/> (DL-100).
+    /// </summary>
+    Task<ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, string? note, CancellationToken cancellationToken, string? expectedAccountName = null);
 
     Task<ApprovalInstanceView> ReturnForChangesAsync(Guid instanceId, long expectedVersion, Guid stageId, string? reason, CancellationToken cancellationToken);
 

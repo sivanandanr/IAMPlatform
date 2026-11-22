@@ -65,6 +65,9 @@ public enum DeliveryDisposition
 
     /// <summary>Failed for now: tried again after the retry delay, until the delivery limit dead-letters it.</summary>
     Retry = 3,
+
+    /// <summary>Not decidable yet (DL-100): tried again after the retry delay without counting, a bounded number of times.</summary>
+    Defer = 4,
 }
 
 /// <summary>
@@ -195,6 +198,10 @@ public sealed partial class RabbitMqConsumer<THandler>(
             {
                 LogRejected(logger, handler.ConsumerName, envelope.MessageId, envelope.Type);
                 return DeliveryDisposition.Reject;
+            }
+            catch (MessageDeferredException)
+            {
+                return DeliveryDisposition.Defer;
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
@@ -348,9 +355,12 @@ public sealed partial class RabbitMqConsumer<THandler>(
                 break;
             default:
                 // Counted here, not by the broker: a requeued message isn't counted towards a quorum queue's delivery
-                // limit (RabbitMQ 4), so requeueing would retry a failing message without end (DL-078).
+                // limit (RabbitMQ 4), so requeueing would retry a failing message without end (DL-078). A deferral isn't
+                // counted, up to its own limit (DL-100).
                 var attempt = RabbitMqTopology.AttemptOf(delivery.BasicProperties);
-                if (attempt >= settings.DeliveryLimit)
+                var deferrals = RabbitMqTopology.DeferralsOf(delivery.BasicProperties);
+                var deferred = disposition == DeliveryDisposition.Defer && deferrals < RabbitMqTopology.MaxDeferrals;
+                if (!deferred && attempt >= settings.DeliveryLimit)
                 {
                     LogGivenUp(logger, subscription.ConsumerName, attempt);
                     await channel.BasicRejectAsync(delivery.DeliveryTag, requeue: false, stoppingToken).ConfigureAwait(false);
@@ -361,7 +371,8 @@ public sealed partial class RabbitMqConsumer<THandler>(
                 {
                     Headers = new Dictionary<string, object?>(delivery.BasicProperties.Headers ?? new Dictionary<string, object?>())
                     {
-                        [RabbitMqTopology.AttemptHeader] = (attempt + 1).ToString(CultureInfo.InvariantCulture),
+                        [RabbitMqTopology.AttemptHeader] = (deferred ? attempt : attempt + 1).ToString(CultureInfo.InvariantCulture),
+                        [RabbitMqTopology.DeferralHeader] = (deferred ? deferrals + 1 : deferrals).ToString(CultureInfo.InvariantCulture),
                     },
                 };
                 await retries.BasicPublishAsync(RabbitMqTopology.RetryExchangeFor(subscription), queue, mandatory: true, copy, delivery.Body, stoppingToken).ConfigureAwait(false);

@@ -5,7 +5,8 @@ namespace IAM.Modules.Request.Contracts;
 
 /// <summary>
 /// A frozen request item as provisioning sees it (DL-093): who gets which entitlement version, on which account, the new
-/// account's name (the one the approval recorded, DL-099) and the item's correlation id (DL-094, DL-099). Ids and codes only.
+/// account's name (the one the approval recorded, DL-099), the item's correlation id (DL-094, DL-099), and whether any workflow
+/// level gave a name at all (DL-100). Ids and codes only.
 /// </summary>
 public sealed record ProvisionableItem(
     Guid ItemId,
@@ -18,7 +19,8 @@ public sealed record ProvisionableItem(
     Guid? AccountId,
     string? NewAccountType,
     string? AccountName,
-    string? CorrelationId = null)
+    string? CorrelationId = null,
+    bool NameGiven = false)
 {
     /// <summary>The item id only: logging this object must not expose a person or a login.</summary>
     public override string ToString() => $"{nameof(ProvisionableItem)} {ItemId}";

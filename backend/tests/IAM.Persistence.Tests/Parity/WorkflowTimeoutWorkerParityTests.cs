@@ -342,7 +342,7 @@ public sealed class ApprovalTimeoutSweeperTests
 
         public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> DecideAsync(Guid instanceId, long expectedVersion, Guid decisionId, Guid stageId, bool approve, string? reason, CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, string? note, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, string? note, CancellationToken cancellationToken, string? expectedAccountName = null) => throw new NotSupportedException();
 
         public Task<IAM.Modules.Workflow.Application.Approvals.ApprovalInstanceView> ReturnForChangesAsync(Guid instanceId, long expectedVersion, Guid stageId, string? reason, CancellationToken cancellationToken) => throw new NotSupportedException();
 

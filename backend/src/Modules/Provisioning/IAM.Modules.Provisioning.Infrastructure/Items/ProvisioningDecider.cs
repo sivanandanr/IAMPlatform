@@ -110,6 +110,13 @@ public sealed class ProvisioningDecider(
             return Correlated(ProvisioningPlanner.ForExistingAccount(itemId, actions, details, account.TargetId, entitlement.TechnicalName, binding, now), item);
         }
 
+        // A name a level gave that no completion recorded (an approval completed before DL-099) never falls back to the
+        // proposal (DL-100).
+        if (approvedName is null && item.NameGiven)
+        {
+            return Blocked(BlockReason.NameNotApproved);
+        }
+
         if (item.AccountName is null || item.NewAccountType is null)
         {
             return approvedName is null ? Blocked(BlockReason.NoAccountName) : Blocked(BlockReason.NameNotApproved);

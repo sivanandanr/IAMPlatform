@@ -173,6 +173,12 @@ public static partial class AccountRules
         {
             throw new AccountRejectedException("TargetId", $"must be printable ASCII of at most {TargetIdMaxLength} characters, without leading or trailing spaces");
         }
+
+        // One spelling per object (DL-100): a distinguished name this can write one way, or a GUID in its plain form.
+        if (targetId.Contains('=', StringComparison.Ordinal) ? CanonicalDn(targetId) is null : !Guid.TryParseExact(targetId, "D", out _))
+        {
+            throw new AccountRejectedException("TargetId", "must be a distinguished name of named attributes (no quotes, ';', '+' or BER values) or a GUID in the form 00000000-0000-0000-0000-000000000000");
+        }
     }
 
     private static string AsciiLower(string text) =>
@@ -236,7 +242,8 @@ public static partial class AccountRules
                 continue;
             }
 
-            if (c == '+')
+            // A multi-valued component, a quoted value or the old ';' separator: not read (DL-100), so refused.
+            if (c is '+' or '"' or ';')
             {
                 return null;
             }
@@ -280,7 +287,8 @@ public static partial class AccountRules
         static string? Component(StringBuilder typeText, List<(char Char, bool Escaped)> chars)
         {
             var name = typeText.ToString().Trim(' ');
-            if (name.Length == 0 || !name.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '.'))
+            // A type by name only (DL-100): an OID such as 2.5.4.3 would be another spelling of CN.
+            if (name.Length == 0 || !char.IsAsciiLetter(name[0]) || !name.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'))
             {
                 return null;
             }
@@ -297,7 +305,8 @@ public static partial class AccountRules
                 end--;
             }
 
-            if (start == end)
+            // An unescaped leading '#' is a BER-encoded value, not text (RFC 4514): refused (DL-100).
+            if (start == end || chars[start] is ('#', false))
             {
                 return null;
             }

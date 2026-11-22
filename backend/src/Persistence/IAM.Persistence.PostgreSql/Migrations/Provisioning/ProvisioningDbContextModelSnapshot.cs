@@ -88,6 +88,58 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                     b.HasAnnotation("Iam:AppendOnly", true);
                 });
 
+            modelBuilder.Entity("IAM.Modules.Provisioning.Domain.Items.GrantLock", b =>
+                {
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("account_id");
+
+                    b.Property<Guid>("EntitlementId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("entitlement_id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("created_by");
+
+                    b.Property<Guid>("HeldBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("held_by");
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("modified_at_utc");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("modified_by");
+
+                    b.Property<DateTimeOffset>("UntilUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("timestamp(6) with time zone")
+                        .HasColumnName("until_utc");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("AccountId", "EntitlementId")
+                        .HasName("pk_grant_lock");
+
+                    b.ToTable("grant_lock", "provisioning");
+                });
+
             modelBuilder.Entity("IAM.Modules.Provisioning.Domain.Items.OperationLedgerRecord", b =>
                 {
                     b.Property<Guid>("OperationId")
@@ -250,6 +302,10 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                         .HasColumnType("timestamp(6) with time zone")
                         .HasColumnName("next_attempt_at_utc");
 
+                    b.Property<int>("Postponements")
+                        .HasColumnType("integer")
+                        .HasColumnName("postponements");
+
                     b.Property<string>("Problem")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
@@ -274,6 +330,17 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                         .UseCollation("C")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<int>("UndoAttempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("undo_attempts");
+
+                    b.Property<string>("UndoReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("undo_reason")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
                     b.Property<long>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint")
@@ -281,6 +348,9 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
 
                     b.HasKey("Id")
                         .HasName("pk_provisioning_item");
+
+                    b.HasIndex("AccountId", "EntitlementId")
+                        .HasDatabaseName("ix_provisioning_item_account_id_entitlement_id");
 
                     b.HasIndex("State", "ReceivedAtUtc")
                         .HasDatabaseName("ix_provisioning_item_state_received_at_utc");
@@ -304,6 +374,8 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                             t.HasCheckConstraint("ck_provisioning_item_problem_code", "\"problem\" <> '' AND \"problem\" = btrim(\"problem\")");
 
                             t.HasCheckConstraint("ck_provisioning_item_state_code", "\"state\" <> '' AND \"state\" = btrim(\"state\")");
+
+                            t.HasCheckConstraint("ck_provisioning_item_undo_reason_code", "\"undo_reason\" <> '' AND \"undo_reason\" = btrim(\"undo_reason\")");
                         });
                 });
 

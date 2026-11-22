@@ -47,6 +47,7 @@ public static class WorkflowApi
                         or ApprovalRefusal.StagePastDeadline or ApprovalRefusal.AlreadyAuthorized or ApprovalRefusal.EscalationNeedsSecondPerson
                         or ApprovalRefusal.SingleEscalatorStage or ApprovalRefusal.TooManyEscalations or ApprovalRefusal.TimeWentBackwards
                         => WorkflowFailureKind.WrongState,
+                    ApprovalRefusal.AccountNameChanged => WorkflowFailureKind.Conflict,
                     _ => WorkflowFailureKind.Invalid,
                 };
             default:

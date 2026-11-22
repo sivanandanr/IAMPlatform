@@ -42,7 +42,8 @@ public sealed class RequestItemSource(RequestDbContext db) : IRequestItemSource
             item.AccountId,
             item.NewAccountType,
             name,
-            item.CorrelationId);
+            item.CorrelationId,
+            await db.AccountNames.AsNoTracking().AnyAsync(n => n.ItemId == itemId, cancellationToken).ConfigureAwait(false));
     }
 
     public async Task<AccountNameSnapshot?> CurrentAccountNameAsync(Guid itemId, CancellationToken cancellationToken)
@@ -59,7 +60,7 @@ public sealed class RequestItemSource(RequestDbContext db) : IRequestItemSource
 
         var latest = await db.AccountNames.AsNoTracking()
             .Where(n => n.ItemId == itemId)
-            .OrderByDescending(n => n.SetAtUtc).ThenByDescending(n => n.Id)
+            .OrderByDescending(n => n.Seq)
             .Select(n => new { n.Id, n.Name })
             .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);

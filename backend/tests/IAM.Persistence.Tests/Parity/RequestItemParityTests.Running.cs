@@ -222,7 +222,7 @@ public sealed partial class RequestItemParityTests
         return item;
     }
 
-    private async Task<bool> RunAsync(Guid item, IProvisioningTarget? target, TimeProvider? clock = null, int maxAttempts = 5, CancellationToken? cancellationToken = null, int? stepTimeoutSeconds = null, IProvisioningTargets? targets = null, IApprovalIntegrity? integrity = null)
+    private async Task<bool> RunAsync(Guid item, IProvisioningTarget? target, TimeProvider? clock = null, int maxAttempts = 5, CancellationToken? cancellationToken = null, int? stepTimeoutSeconds = null, IProvisioningTargets? targets = null, IApprovalIntegrity? integrity = null, int? undoMaxAttempts = null, int? maxPostponements = null, string? groupContainer = null)
     {
         const string actor = "system:provisioning";
         clock ??= TimeProvider.System;
@@ -232,17 +232,23 @@ public sealed partial class RequestItemParityTests
             new AuditActionCatalog(ProvisioningAuditActions.All.Select(a => new AuditActionRegistration(a))));
         // The runner decides again before it runs (DL-096), with the binding the item was planned with.
         var application = (await context.Items.AsNoTracking().SingleAsync(i => i.Id == item, Ct)).ApplicationId ?? Guid.CreateVersion7();
-        var (decider, contexts) = Decider([ConnectorBinding.Create(application, "mock-ad", AccountContainer, GroupContainer)], clock, integrity);
+        var binding = ConnectorBinding.Create(application, "mock-ad", AccountContainer, groupContainer ?? GroupContainer);
+        var (decider, contexts) = Decider([binding], clock, integrity);
         try
         {
+            await using var audit = TestSupport.CreateAudit(db.Provider, db.AuditAppConnectionString);
             var runner = new ProvisioningRunner(
                 context,
                 writer,
+                new AuditTrail(audit),
                 clock,
                 targets ?? new Targets(target),
                 AccountRecorder(accounts, clock),
+                new AccountDirectory(accounts),
+                new ConnectorBindings([binding]),
                 decider,
-                new ProvisioningRunnerSettings(batchSize: 10, leaseSeconds: 60, maxAttempts: maxAttempts, retryDelaySeconds: 30, stepTimeoutSeconds: stepTimeoutSeconds));
+                new ProvisioningRunnerSettings(batchSize: 10, leaseSeconds: 60, maxAttempts: maxAttempts, retryDelaySeconds: 30, stepTimeoutSeconds: stepTimeoutSeconds, undoMaxAttempts: undoMaxAttempts, maxPostponements: maxPostponements),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<ProvisioningRunner>.Instance);
             return await runner.RunItemAsync(item, cancellationToken ?? Ct);
         }
         finally
@@ -298,19 +304,19 @@ public sealed partial class RequestItemParityTests
         public string? DoneCode { get; init; }
 
         /// <summary>Per-step answers to a read of the target, overriding <see cref="Matches"/>.</summary>
-        public Func<TargetStep, bool>? MatchesStep { get; init; }
+        public Func<TargetStep, bool?>? MatchesStep { get; init; }
 
         /// <summary>Whether reads of the target fail (an unreachable directory).</summary>
         public bool ReadsFail { get; init; }
 
-        public Task<bool> VerifyAsync(TargetStep operation, CancellationToken cancellationToken) =>
-            ReadsFail ? throw new TimeoutException("The read broke off.") : Task.FromResult(MatchesStep?.Invoke(operation) ?? Matches);
+        public Task<bool?> VerifyAsync(TargetStep operation, CancellationToken cancellationToken) =>
+            ReadsFail ? throw new TimeoutException("The read broke off.") : Task.FromResult(MatchesStep is null ? Matches : MatchesStep(operation));
 
         /// <summary>Whether objects are on the target (an existing account is read before anything is granted to it).</summary>
         public bool Exists { get; init; } = true;
 
-        public Task<bool> ExistsAsync(string objectType, string id, CancellationToken cancellationToken) =>
-            ReadsFail ? throw new TimeoutException("The read broke off.") : Task.FromResult(Exists);
+        public Task<bool?> ExistsAsync(string objectType, string id, CancellationToken cancellationToken) =>
+            ReadsFail ? throw new TimeoutException("The read broke off.") : Task.FromResult<bool?>(Exists);
     }
 
     private sealed class MovingClock(DateTimeOffset start) : TimeProvider

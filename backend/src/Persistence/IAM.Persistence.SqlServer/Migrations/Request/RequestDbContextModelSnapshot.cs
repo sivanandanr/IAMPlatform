@@ -179,6 +179,12 @@ namespace IAM.Persistence.SqlServer.Migrations.Request
                         .UseCollation("Latin1_General_100_BIN2")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<long>("Seq")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Seq"));
+
                     b.Property<DateTimeOffset>("SetAtUtc")
                         .HasPrecision(6)
                         .HasColumnType("datetimeoffset(6)");
@@ -198,6 +204,9 @@ namespace IAM.Persistence.SqlServer.Migrations.Request
                         .HasColumnType("bigint");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ItemId", "Seq")
+                        .IsUnique();
 
                     b.HasIndex("ItemId", "SetAtUtc");
 

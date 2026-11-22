@@ -206,6 +206,13 @@ namespace IAM.Persistence.PostgreSql.Migrations.Request
                         .UseCollation("C")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<long>("Seq")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("seq");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Seq"));
+
                     b.Property<DateTimeOffset>("SetAtUtc")
                         .HasPrecision(6)
                         .HasColumnType("timestamp(6) with time zone")
@@ -230,6 +237,10 @@ namespace IAM.Persistence.PostgreSql.Migrations.Request
 
                     b.HasKey("Id")
                         .HasName("pk_account_name_assignment");
+
+                    b.HasIndex("ItemId", "Seq")
+                        .IsUnique()
+                        .HasDatabaseName("ix_account_name_assignment_item_id_seq");
 
                     b.HasIndex("ItemId", "SetAtUtc")
                         .HasDatabaseName("ix_account_name_assignment_item_id_set_at_utc");

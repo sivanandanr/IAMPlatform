@@ -23,10 +23,17 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
             result.Code ?? result.Status.ToString());
     }
 
-    public async Task<bool> VerifyAsync(TargetStep operation, CancellationToken cancellationToken) =>
-        (await connector.VerifyAsync(ToOperation(operation), cancellationToken).ConfigureAwait(false)).Matches;
+    /// <summary>
+    /// The connector reports a read it couldn't make as "no match" with a code (DL-100): that proves nothing, so it is null here,
+    /// and only a clean read answers yes or no.
+    /// </summary>
+    public async Task<bool?> VerifyAsync(TargetStep operation, CancellationToken cancellationToken)
+    {
+        var result = await connector.VerifyAsync(ToOperation(operation), cancellationToken).ConfigureAwait(false);
+        return result.Code is null ? result.Matches : null;
+    }
 
-    public async Task<bool> ExistsAsync(string objectType, string id, CancellationToken cancellationToken) =>
+    public async Task<bool?> ExistsAsync(string objectType, string id, CancellationToken cancellationToken) =>
         await connector.ReadAsync(new ObjectRef(objectType, id), cancellationToken).ConfigureAwait(false) is not null;
 
     public static ConnectorOperation ToOperation(TargetStep step)

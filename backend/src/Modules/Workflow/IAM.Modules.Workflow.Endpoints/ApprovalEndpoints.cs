@@ -21,7 +21,7 @@ namespace IAM.Modules.Workflow.Endpoints;
 public sealed record DecisionBody(long? ExpectedVersion, Guid? DecisionId, Guid? StageId, bool? Approve, string? Reason);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-public sealed record CompletionBody(long? ExpectedVersion, Guid? CompletionId, Guid? StageId, string? Note);
+public sealed record CompletionBody(long? ExpectedVersion, Guid? CompletionId, Guid? StageId, string? Note, string? ExpectedAccountName = null);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ReturnBody(long? ExpectedVersion, Guid? StageId, string? Reason);
@@ -63,6 +63,9 @@ public sealed class CompletionBodyValidator : AbstractValidator<CompletionBody>
         RuleFor(b => b.CompletionId).NotNull().NotEqual(Guid.Empty);
         RuleFor(b => b.StageId).NotNull().NotEqual(Guid.Empty);
         RuleFor(b => b.Note).MaximumLength(WorkflowApiLimits.ReasonLength);
+
+        // The name the person saw (DL-100): a login, so letters, digits, dots, underscores or hyphens only.
+        RuleFor(b => b.ExpectedAccountName).Length(1, 256).Matches("^[A-Za-z0-9][A-Za-z0-9._-]*$").When(b => b.ExpectedAccountName is not null);
     }
 }
 
@@ -248,7 +251,7 @@ internal static class ApprovalEndpoints
         TypedResults.Ok(await workflow.DecideAsync(id, body.ExpectedVersion!.Value, body.DecisionId!.Value, body.StageId!.Value, body.Approve!.Value, body.Reason, cancellationToken).ConfigureAwait(false));
 
     private static async Task<Ok<ApprovalInstanceView>> CompleteAsync(Guid id, CompletionBody body, IApprovalWorkflow workflow, CancellationToken cancellationToken) =>
-        TypedResults.Ok(await workflow.CompleteAsync(id, body.ExpectedVersion!.Value, body.CompletionId!.Value, body.StageId!.Value, body.Note, cancellationToken).ConfigureAwait(false));
+        TypedResults.Ok(await workflow.CompleteAsync(id, body.ExpectedVersion!.Value, body.CompletionId!.Value, body.StageId!.Value, body.Note, cancellationToken, body.ExpectedAccountName).ConfigureAwait(false));
 
     private static async Task<Ok<ApprovalInstanceView>> ReturnAsync(Guid id, ReturnBody body, IApprovalWorkflow workflow, CancellationToken cancellationToken) =>
         TypedResults.Ok(await workflow.ReturnForChangesAsync(id, body.ExpectedVersion!.Value, body.StageId!.Value, body.Reason, cancellationToken).ConfigureAwait(false));
