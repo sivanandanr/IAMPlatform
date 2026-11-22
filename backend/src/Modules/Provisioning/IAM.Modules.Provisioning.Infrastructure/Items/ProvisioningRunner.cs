@@ -138,6 +138,15 @@ public sealed class ProvisioningRunner(
             return true;
         }
 
+        // An existing account's target id was given by a person when it was linked and isn't verified: the account must really
+        // be on the target before anything is granted to it (DL-098).
+        if (item.AccountId is not null && !await ExistsAsync(target, ProvisioningPlanner.AccountObject, plan[0].TargetId, cancellationToken).ConfigureAwait(false))
+        {
+            item.Fail("AccountNotOnTarget", Now());
+            await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, null, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
         foreach (var operation in plan.Where(o => o.State != ProvisioningState.Succeeded))
         {
             var step = Step(operation);
@@ -314,6 +323,21 @@ public sealed class ProvisioningRunner(
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return new StepResult(StepStatus.Unknown, "CallFailed");
+        }
+    }
+
+    /// <summary>Whether an object is on the target, within the step time limit; a read that fails proves nothing, so it counts as absent.</summary>
+    private async Task<bool> ExistsAsync(IProvisioningTarget target, string objectType, string id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            limit.CancelAfter(settings.StepTimeout);
+            return await target.ExistsAsync(objectType, id, limit.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return false;
         }
     }
 

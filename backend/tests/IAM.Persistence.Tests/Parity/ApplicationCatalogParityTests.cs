@@ -49,7 +49,8 @@ public sealed class ApplicationCatalogParityTests(ParityDatabase db)
     [Fact]
     public async Task TheMigrationAppliesOnceAndSeedsTheBuiltInRoleTypes()
     {
-        db.CatalogFirstRunApplied.Count.ShouldBe(IsSqlServer ? 5 : 4, "SQL Server has the null-safe guard fix (DL-095)");
+        db.CatalogFirstRunApplied.Count.ShouldBe(IsSqlServer ? 6 : 5, "SQL Server has the null-safe guard fix (DL-095)");
+        db.CatalogFirstRunApplied[^1].ShouldEndWith("_EntitlementVersionGuard");
         db.CatalogFirstRunApplied[0].ShouldEndWith("_ApplicationCatalog");
         db.CatalogFirstRunApplied[1].ShouldEndWith("_ApplicationCatalogHardening");
         db.CatalogFirstRunApplied[2].ShouldEndWith("_GroupHoldersAreWorkgroups");

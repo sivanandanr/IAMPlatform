@@ -43,6 +43,9 @@ public interface IProvisioningTarget
 
     /// <summary>Whether the target now matches what the operation asked for, by reading it.</summary>
     Task<bool> VerifyAsync(TargetStep operation, CancellationToken cancellationToken);
+
+    /// <summary>Whether an object is there on the target now (DL-098), read before anything is granted to an existing account.</summary>
+    Task<bool> ExistsAsync(string objectType, string id, CancellationToken cancellationToken);
 }
 
 /// <summary>The targets by connector key; null for a key that isn't configured.</summary>

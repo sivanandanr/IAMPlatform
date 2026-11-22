@@ -48,6 +48,9 @@ public enum BlockReason
 
     /// <summary>The new account's target id is taken, or the person already has a live Primary account (DL-096).</summary>
     AccountTaken = 10,
+
+    /// <summary>The entitlement's group isn't in the application's allowed group container (DL-098).</summary>
+    EntitlementOutOfScope = 11,
 }
 
 /// <summary>The account and entitlement a planned item acts on (DL-093). For a new account, the account fields are its name.</summary>

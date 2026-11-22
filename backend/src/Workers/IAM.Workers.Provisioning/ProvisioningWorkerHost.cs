@@ -107,8 +107,8 @@ public static class ProvisioningWorkerHost
     }
 
     /// <summary>
-    /// The reviewed allowlist (DL-093): <c>Provisioning:Connectors:N:ApplicationId</c>, <c>ConnectorKey</c> and
-    /// <c>AccountContainer</c>. A malformed or repeated entry stops the worker; an empty list means every application is manual.
+    /// The reviewed allowlist (DL-093, DL-098): <c>Provisioning:Connectors:N:ApplicationId</c>, <c>ConnectorKey</c>,
+    /// <c>AccountContainer</c> and <c>GroupContainer</c>. A malformed or repeated entry stops the worker; an empty list means every application is manual.
     /// </summary>
     public static IReadOnlyList<ConnectorBinding> Bindings(IConfiguration configuration)
     {
@@ -129,7 +129,7 @@ public static class ProvisioningWorkerHost
 
             try
             {
-                bindings.Add(ConnectorBinding.Create(applicationId, entry["ConnectorKey"], entry["AccountContainer"]));
+                bindings.Add(ConnectorBinding.Create(applicationId, entry["ConnectorKey"], entry["AccountContainer"], entry["GroupContainer"]));
             }
             catch (ArgumentException ex)
             {

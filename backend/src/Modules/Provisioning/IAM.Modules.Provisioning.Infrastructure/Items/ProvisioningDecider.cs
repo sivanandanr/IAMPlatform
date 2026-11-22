@@ -85,6 +85,12 @@ public sealed class ProvisioningDecider(
             return Blocked(BlockReason.ManualWork);
         }
 
+        // The group must be in the application's allowed container (DL-098).
+        if (!ProvisioningPlanner.IsInGroupContainer(entitlement.TechnicalName, binding))
+        {
+            return Blocked(BlockReason.EntitlementOutOfScope);
+        }
+
         if (item.AccountId is { } accountId)
         {
             var account = await accounts.FindAsync(accountId, cancellationToken).ConfigureAwait(false);

@@ -108,6 +108,13 @@ namespace IAM.Persistence.PostgreSql.Migrations.Account
                         .HasColumnType("character varying(512)")
                         .HasColumnName("target_id");
 
+                    b.Property<string>("TargetIdKey")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("target_id_key")
+                        .UseCollation("C")
+                        .HasAnnotation("Iam:Code", true);
+
                     b.Property<string>("Type")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -151,6 +158,8 @@ namespace IAM.Persistence.PostgreSql.Migrations.Account
                             t.HasCheckConstraint("ck_account_owner_code", "\"owner\" <> '' AND \"owner\" = btrim(\"owner\")");
 
                             t.HasCheckConstraint("ck_account_status_code", "\"status\" <> '' AND \"status\" = btrim(\"status\")");
+
+                            t.HasCheckConstraint("ck_account_target_id_key_code", "\"target_id_key\" <> '' AND \"target_id_key\" = btrim(\"target_id_key\")");
 
                             t.HasCheckConstraint("ck_account_type_code", "\"type\" <> '' AND \"type\" = btrim(\"type\")");
                         });

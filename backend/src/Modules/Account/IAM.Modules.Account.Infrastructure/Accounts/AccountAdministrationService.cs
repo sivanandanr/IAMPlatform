@@ -453,7 +453,8 @@ public sealed class AccountAdministrationService(
             throw new AccountRefusedException(AccountRefusal.NameInUse);
         }
 
-        if (await live.AnyAsync(a => a.TargetId == request.TargetId, cancellationToken).ConfigureAwait(false))
+        var targetKey = AccountRules.TargetIdKey(request.TargetId);
+        if (await live.AnyAsync(a => a.TargetIdKey == targetKey, cancellationToken).ConfigureAwait(false))
         {
             throw new AccountRefusedException(AccountRefusal.TargetInUse);
         }

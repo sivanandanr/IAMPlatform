@@ -41,8 +41,8 @@ public sealed class AccountParityTests(ParityDatabase db)
     public async Task TheMigrationAppliesOnce()
     {
         db.AccountFirstRunApplied[0].ShouldEndWith("_Accounts");
-        db.AccountFirstRunApplied.Count.ShouldBe(IsSqlServer ? 3 : 2, "SQL Server has the hyphen fix (DL-091)");
-        db.AccountFirstRunApplied[^1].ShouldEndWith("_AccountsCreated");
+        db.AccountFirstRunApplied.Count.ShouldBe(IsSqlServer ? 4 : 3, "SQL Server has the hyphen fix (DL-091)");
+        db.AccountFirstRunApplied[^1].ShouldEndWith("_AccountTargetKey");
         db.AccountSecondRunPending.ShouldBeEmpty();
         var tables = IsSqlServer
             ? "SELECT STRING_AGG(TABLE_NAME, ',') FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'account'"

@@ -221,5 +221,7 @@ public sealed partial class RequestItemParityTests
         }
 
         public Task<bool> VerifyAsync(TargetStep operation, CancellationToken cancellationToken) => inner.VerifyAsync(operation, cancellationToken);
+
+        public Task<bool> ExistsAsync(string objectType, string id, CancellationToken cancellationToken) => inner.ExistsAsync(objectType, id, cancellationToken);
     }
 }

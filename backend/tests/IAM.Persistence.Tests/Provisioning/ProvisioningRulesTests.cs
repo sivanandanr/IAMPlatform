@@ -19,6 +19,7 @@ public sealed class ProvisioningRulesTests
 {
     private const string Container = "OU=Users,OU=App,DC=example,DC=test";
     private const string Group = "CN=App-Readers,OU=Groups,DC=example,DC=test";
+    private const string Groups = "OU=Groups,DC=example,DC=test";
     private static readonly Guid App = Guid.CreateVersion7();
     private static readonly DateTimeOffset Now = new(2026, 11, 21, 8, 0, 0, TimeSpan.Zero);
 
@@ -47,7 +48,7 @@ public sealed class ProvisioningRulesTests
     public void ANewAccountIsCreatedGivenTheEntitlementThenEnabled()
     {
         var item = Guid.CreateVersion7();
-        var binding = ConnectorBinding.Create(App, "mock-ad", Container);
+        var binding = ConnectorBinding.Create(App, "mock-ad", Container, Groups);
         var plan = ProvisioningPlanner.ForNewAccount(item, 3, Details(null, "Secondary", "adm.ben"), Group, binding, Now);
 
         plan.Item.State.ShouldBe(ProvisioningState.Planned);
@@ -69,16 +70,16 @@ public sealed class ProvisioningRulesTests
             Should.Throw<ArgumentException>(() => ProvisioningPlanner.ForNewAccount(item, 3, bad, Group, binding, Now));
         }
 
-        Should.Throw<ArgumentException>(() => ProvisioningPlanner.ForNewAccount(item, 3, Details(null, "Secondary", "adm.ben"), Group, ConnectorBinding.Create(Guid.CreateVersion7(), "mock-ad", Container), Now));
+        Should.Throw<ArgumentException>(() => ProvisioningPlanner.ForNewAccount(item, 3, Details(null, "Secondary", "adm.ben"), Group, ConnectorBinding.Create(Guid.CreateVersion7(), "mock-ad", Container, Groups), Now));
     }
 
     [Fact]
     public void AnExistingAccountIsOnlyGivenTheEntitlement()
     {
         var item = Guid.CreateVersion7();
-        var plan = ProvisioningPlanner.ForExistingAccount(item, 2, Details(Guid.CreateVersion7(), null, null), $"CN=ben,{Container}", Group, ConnectorBinding.Create(App, "mock-ad", Container), Now);
+        var plan = ProvisioningPlanner.ForExistingAccount(item, 2, Details(Guid.CreateVersion7(), null, null), $"CN=ben,{Container}", Group, ConnectorBinding.Create(App, "mock-ad", Container, Groups), Now);
         plan.Operations.Select(o => (o.Step, o.Action, o.TargetId, o.RelatedId)).ShouldBe([(1, "account.entitlement.add", $"CN=ben,{Container}", Group)]);
-        Should.Throw<ArgumentException>(() => ProvisioningPlanner.ForExistingAccount(item, 2, Details(null, "Secondary", "x"), "CN=x", Group, ConnectorBinding.Create(App, "mock-ad", Container), Now));
+        Should.Throw<ArgumentException>(() => ProvisioningPlanner.ForExistingAccount(item, 2, Details(null, "Secondary", "x"), "CN=x", Group, ConnectorBinding.Create(App, "mock-ad", Container, Groups), Now));
     }
 
     [Theory]
@@ -92,11 +93,34 @@ public sealed class ProvisioningRulesTests
     [InlineData(null, Container)]
     [InlineData("mock-ad", null)]
     public void ABindingNamesAKnownConnectorAndAnOuPath(string? connector, string? container) =>
-        Should.Throw<ArgumentException>(() => ConnectorBinding.Create(App, connector, container));
+        Should.Throw<ArgumentException>(() => ConnectorBinding.Create(App, connector, container, Groups));
+
+    [Fact]
+    public void AnEntitlementsGroupMustBeAPlainGroupInTheAllowedContainer()
+    {
+        var binding = ConnectorBinding.Create(App, "mock-ad", Container, Groups);
+        ProvisioningPlanner.IsInGroupContainer(Group, binding).ShouldBeTrue();
+        ProvisioningPlanner.IsInGroupContainer("cn=App-Readers,ou=groups,dc=example,dc=test", binding).ShouldBeTrue("DNs compare ignoring case");
+        foreach (var outside in new[]
+        {
+            "CN=Domain Admins,CN=Users,DC=example,DC=test",
+            "CN=Admins,OU=Other,OU=Groups,DC=example,DC=test",
+            "CN=A,OU=Sub,OU=Groups,DC=example,DC=test",
+            "CN=A+CN=B,OU=Groups,DC=example,DC=test",
+            "OU=Groups,DC=example,DC=test",
+            "CN=,OU=Groups,DC=example,DC=test",
+        })
+        {
+            ProvisioningPlanner.IsInGroupContainer(outside, binding).ShouldBeFalse(outside);
+        }
+
+        Should.Throw<ArgumentException>(() => ConnectorBinding.Create(App, "mock-ad", Container, "DC=example,DC=test"));
+        Should.Throw<ArgumentException>(() => ConnectorBinding.Create(App, "mock-ad", Container, null));
+    }
 
     [Fact]
     public void ABindingNeedsItsApplication() =>
-        Should.Throw<ArgumentException>(() => ConnectorBinding.Create(Guid.Empty, "mock-ad", Container));
+        Should.Throw<ArgumentException>(() => ConnectorBinding.Create(Guid.Empty, "mock-ad", Container, Groups));
 
     [Fact]
     public void OnlyAnIntegrityBlockHasNoTrustedActionCount()
@@ -170,7 +194,7 @@ public sealed class ProvisioningRulesTests
         Should.Throw<InvalidOperationException>(() => ProvisioningWorkerHost.Build([], [.. Complete, .. Binding(0, App, "mock-ad"), .. Binding(1, App, "mock-ad")]), "an application twice");
 
         var bindings = ProvisioningWorkerHost.Bindings(new ConfigurationBuilder().AddInMemoryCollection([.. Binding(0, App, "mock-ad")]).Build());
-        bindings.ShouldHaveSingleItem().ShouldBe(new ConnectorBinding(App, "mock-ad", Container));
+        bindings.ShouldHaveSingleItem().ShouldBe(new ConnectorBinding(App, "mock-ad", Container, Groups));
         ProvisioningWorkerHost.Bindings(new ConfigurationBuilder().Build()).ShouldBeEmpty("no allowlist: everything is manual work");
     }
 
@@ -221,7 +245,7 @@ public sealed class ProvisioningRulesTests
     [Fact]
     public void AnItemMovesOnlyForwardAndSucceedsWithItsRecordedAccount()
     {
-        var item = ProvisioningPlanner.ForNewAccount(Guid.CreateVersion7(), 3, Details(null, "Secondary", "adm.ben"), Group, ConnectorBinding.Create(App, "mock-ad", Container), Now).Item;
+        var item = ProvisioningPlanner.ForNewAccount(Guid.CreateVersion7(), 3, Details(null, "Secondary", "adm.ben"), Group, ConnectorBinding.Create(App, "mock-ad", Container, Groups), Now).Item;
         Should.Throw<InvalidOperationException>(() => item.Fail("X", Now), "only a running item moves on");
         item.CanClaim(Now).ShouldBeTrue();
         item.Claim(Now, TimeSpan.FromMinutes(5));
@@ -263,6 +287,7 @@ public sealed class ProvisioningRulesTests
         new($"Provisioning:Connectors:{index}:ApplicationId", app.ToString("D")),
         new($"Provisioning:Connectors:{index}:ConnectorKey", connector),
         new($"Provisioning:Connectors:{index}:AccountContainer", Container),
+        new($"Provisioning:Connectors:{index}:GroupContainer", Groups),
     ];
 
     private static ItemDetails Details(Guid? account, string? newType, string? name) =>

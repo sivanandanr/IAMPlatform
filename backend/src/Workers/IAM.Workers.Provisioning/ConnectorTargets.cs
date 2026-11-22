@@ -26,6 +26,9 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
     public async Task<bool> VerifyAsync(TargetStep operation, CancellationToken cancellationToken) =>
         (await connector.VerifyAsync(ToOperation(operation), cancellationToken).ConfigureAwait(false)).Matches;
 
+    public async Task<bool> ExistsAsync(string objectType, string id, CancellationToken cancellationToken) =>
+        await connector.ReadAsync(new ObjectRef(objectType, id), cancellationToken).ConfigureAwait(false) is not null;
+
     public static ConnectorOperation ToOperation(TargetStep step)
     {
         ArgumentNullException.ThrowIfNull(step);

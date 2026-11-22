@@ -151,6 +151,9 @@ public static partial class AccountRules
     /// <summary>The form names are compared in: lower case (invariant), so another spelling of a name is the same name.</summary>
     public static string NameKey(string name) => name.ToLowerInvariant();
 
+    /// <summary>A target id in lower case: directories compare them ignoring case, so this is what must be unique (DL-098).</summary>
+    public static string TargetIdKey(string targetId) => targetId.ToLowerInvariant();
+
     /// <summary>The target's own identifier (a distinguished name, a GUID): visible text without leading or trailing spaces.</summary>
     public static void ValidateTargetId(string? targetId)
     {

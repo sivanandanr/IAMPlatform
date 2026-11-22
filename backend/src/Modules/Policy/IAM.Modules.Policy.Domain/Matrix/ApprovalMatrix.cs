@@ -159,6 +159,20 @@ public sealed class MatrixVersion
     /// <summary>Who wrote this content; they can't be the second person.</summary>
     public string EditedBy { get; private set; }
 
+    /// <summary>
+    /// Everyone who wrote this draft's content, one per line (DL-098); none of them can be the second person, even when someone
+    /// else's edit came later. Null for versions written before DL-098, where <see cref="EditedBy"/> is the only writer known.
+    /// </summary>
+    public string? Editors { get; private set; }
+
+    /// <summary>The most people one draft may have been written by (the list fits its column).</summary>
+    public const int MaxEditors = 20;
+
+    /// <summary>Whether <paramref name="person"/> wrote any of this version's content.</summary>
+    public bool WasWrittenBy(string person) =>
+        string.Equals(EditedBy, person, StringComparison.Ordinal)
+        || (Editors?.Split('\n').Contains(person, StringComparer.Ordinal) ?? false);
+
     public Guid? ActivatedByRequestId { get; private set; }
 
     public MatrixDocument ToDocument()
@@ -198,15 +212,34 @@ public sealed class MatrixVersion
         MatrixDocuments.Validate(document);
         var stored = MatrixDocuments.ToStored(document);
         var hash = MatrixDocuments.ComputeContentHash(VersionNumber, stored);
-        if (hash == ContentHash && compiledHash == CompiledHash)
+        var contentChanged = hash != ContentHash;
+        if (!contentChanged && compiledHash == CompiledHash)
         {
             return false;
+        }
+
+        // Only a change of content makes someone its writer (DL-098): saving the same rules again, which only recompiles them
+        // against newer attribute versions, never moves authorship away from who wrote them.
+        if (contentChanged)
+        {
+            var editors = Editors?.Split('\n').ToList() ?? (string.IsNullOrEmpty(EditedBy) ? [] : [EditedBy]);
+            if (!editors.Contains(editor, StringComparer.Ordinal))
+            {
+                if (editors.Count >= MaxEditors)
+                {
+                    throw new MatrixRefusedException(MatrixRefusal.NotAllowed);
+                }
+
+                editors.Add(editor);
+            }
+
+            Editors = string.Join('\n', editors);
+            EditedBy = editor;
         }
 
         Document = stored;
         ContentHash = hash;
         CompiledHash = compiledHash;
-        EditedBy = editor;
         return true;
     }
 
@@ -327,7 +360,7 @@ public sealed class MatrixChangeRequest
         }
 
         var draft = matrix.RequireActivatable(VersionNumber, ContentHash);
-        if (string.Equals(draft.EditedBy, checker, StringComparison.Ordinal))
+        if (draft.WasWrittenBy(checker))
         {
             throw new MatrixRefusedException(MatrixRefusal.MakerCannotDecide);
         }

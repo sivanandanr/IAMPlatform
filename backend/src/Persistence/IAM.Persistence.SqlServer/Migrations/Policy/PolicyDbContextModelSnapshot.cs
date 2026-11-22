@@ -116,6 +116,10 @@ namespace IAM.Persistence.SqlServer.Migrations.Policy
                         .UseCollation("Latin1_General_100_BIN2")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<string>("Editors")
+                        .HasMaxLength(4100)
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<Guid>("MatrixId")
                         .HasColumnType("uniqueidentifier");
 

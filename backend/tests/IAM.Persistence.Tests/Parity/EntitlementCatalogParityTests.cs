@@ -369,6 +369,12 @@ public sealed class EntitlementCatalogParityTests(ParityDatabase db)
                 (acceptedVersion, $"{supersede}, {Col("OwnerAcceptedBy")} = NULL, {Col("OwnerAcceptedAtUtc")} = NULL"),
                 (acceptedVersion, $"{supersede}, {Col("TechnicalName")} = UPPER({Col("TechnicalName")})"),
                 (acceptedVersion, $"{supersede}, {Col("TechnicalName")} = {Concat(Col("TechnicalName"), "' '")}"),
+
+                // DL-098: every column the content hash covers stays as it was.
+                (acceptedVersion, $"{supersede}, {Col("Risk")} = 'Low'"),
+                (acceptedVersion, $"{supersede}, {Col("Description")} = 'Changed after approval'"),
+                (acceptedVersion, $"{supersede}, {Col("EscalationWorkgroup")} = 'grp_other'"),
+                (acceptedVersion, $"{supersede}, {Col("AccessForDefaultDays")} = 31"),
             })
             {
                 var sql = $"UPDATE {Table("EntitlementVersion")} SET {set} WHERE {Col("Id")} = '{version}'";
@@ -384,6 +390,35 @@ public sealed class EntitlementCatalogParityTests(ParityDatabase db)
         {
             await db.ExecuteAsync(db.CatalogAppConnectionString, $"UPDATE {Table("EntitlementVersion")} SET {supersede} WHERE {Col("Id")} = '{version}'", Ct);
         }
+    }
+
+    [Fact]
+    public async Task TwoApprovalsCanNotBothTakeOneTechnicalName()
+    {
+        var app = await ActiveApplicationAsync();
+        var name = $"CN=Shared {Guid.NewGuid().ToString("N")[..8]},OU=Groups,DC=corp,DC=test";
+        var first = await RegisterAsync(app.Id, NewKey("race_a"), Settings(technicalName: name));
+        var second = await RegisterAsync(app.Id, NewKey("race_b"), Settings(technicalName: name.ToUpperInvariant()));
+        await AcceptAsync(first.Id);
+        await AcceptAsync(second.Id);
+        var requests = new[] { await ProposeAsync(first.Id), await ProposeAsync(second.Id) };
+
+        // Both checkers at once: the application's lock makes them take turns, and the second sees the first's name (DL-098).
+        var outcomes = await Task.WhenAll(requests.Select(async r =>
+        {
+            await using var checker = Service(Checker);
+            try
+            {
+                await checker.Service.ApproveAsync(r.Id, r.ContentHash, null, Ct);
+                return (ApplicationRefusal?)null;
+            }
+            catch (ApplicationRefusedException refused)
+            {
+                return refused.Refusal;
+            }
+        }));
+        outcomes.Count(o => o is null).ShouldBe(1);
+        outcomes.Count(o => o == ApplicationRefusal.TechnicalNameInUse).ShouldBe(1);
     }
 
     private string[] Logins => [db.CatalogAppConnectionString, db.MigratorConnectionString];
