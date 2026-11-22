@@ -184,7 +184,7 @@ public sealed class WorkflowTimeoutWorkerParityTests(ParityDatabase db)
             new ApplicationApproverDirectory(TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString)),
             new WorkgroupDirectory(TestSupport.CreateOrganization(db.Provider, db.OrganizationAppConnectionString)),
             new ApproverResolutionSettings());
-        var service = new ApprovalWorkflowService(context, writer, clock, TestSupport.ProviderFor(db.Provider), new FixedActor(null), new NoPermissions(), resolver);
+        var service = new ApprovalWorkflowService(context, writer, clock, TestSupport.ProviderFor(db.Provider), new FixedActor(null), new NoPermissions(), resolver, new NoItemSource());
         await service.StartAsync(binding, ApprovalRoute.Create([stage]), Ct);
         return id;
     }

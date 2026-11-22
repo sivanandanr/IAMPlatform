@@ -222,7 +222,7 @@ public sealed partial class RequestItemParityTests
         return item;
     }
 
-    private async Task<bool> RunAsync(Guid item, IProvisioningTarget? target, TimeProvider? clock = null, int maxAttempts = 5, CancellationToken? cancellationToken = null, int? stepTimeoutSeconds = null, IProvisioningTargets? targets = null)
+    private async Task<bool> RunAsync(Guid item, IProvisioningTarget? target, TimeProvider? clock = null, int maxAttempts = 5, CancellationToken? cancellationToken = null, int? stepTimeoutSeconds = null, IProvisioningTargets? targets = null, IApprovalIntegrity? integrity = null)
     {
         const string actor = "system:provisioning";
         clock ??= TimeProvider.System;
@@ -232,7 +232,7 @@ public sealed partial class RequestItemParityTests
             new AuditActionCatalog(ProvisioningAuditActions.All.Select(a => new AuditActionRegistration(a))));
         // The runner decides again before it runs (DL-096), with the binding the item was planned with.
         var application = (await context.Items.AsNoTracking().SingleAsync(i => i.Id == item, Ct)).ApplicationId ?? Guid.CreateVersion7();
-        var (decider, contexts) = Decider([ConnectorBinding.Create(application, "mock-ad", AccountContainer, GroupContainer)], clock);
+        var (decider, contexts) = Decider([ConnectorBinding.Create(application, "mock-ad", AccountContainer, GroupContainer)], clock, integrity);
         try
         {
             var runner = new ProvisioningRunner(
@@ -291,15 +291,26 @@ public sealed partial class RequestItemParityTests
 
             return status == StepStatus.Unknown
                 ? throw new TimeoutException("The call broke off.")
-                : new StepResult(status, status.ToString());
+                : new StepResult(status, status == StepStatus.Done && DoneCode is not null ? DoneCode : status.ToString());
         }
 
-        public Task<bool> VerifyAsync(TargetStep operation, CancellationToken cancellationToken) => Task.FromResult(Matches);
+        /// <summary>The code a done step reports (the connector's Applied or AlreadyInState); else "Done".</summary>
+        public string? DoneCode { get; init; }
+
+        /// <summary>Per-step answers to a read of the target, overriding <see cref="Matches"/>.</summary>
+        public Func<TargetStep, bool>? MatchesStep { get; init; }
+
+        /// <summary>Whether reads of the target fail (an unreachable directory).</summary>
+        public bool ReadsFail { get; init; }
+
+        public Task<bool> VerifyAsync(TargetStep operation, CancellationToken cancellationToken) =>
+            ReadsFail ? throw new TimeoutException("The read broke off.") : Task.FromResult(MatchesStep?.Invoke(operation) ?? Matches);
 
         /// <summary>Whether objects are on the target (an existing account is read before anything is granted to it).</summary>
         public bool Exists { get; init; } = true;
 
-        public Task<bool> ExistsAsync(string objectType, string id, CancellationToken cancellationToken) => Task.FromResult(Exists);
+        public Task<bool> ExistsAsync(string objectType, string id, CancellationToken cancellationToken) =>
+            ReadsFail ? throw new TimeoutException("The read broke off.") : Task.FromResult(Exists);
     }
 
     private sealed class MovingClock(DateTimeOffset start) : TimeProvider

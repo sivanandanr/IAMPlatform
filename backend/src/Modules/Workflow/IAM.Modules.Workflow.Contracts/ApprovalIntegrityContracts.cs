@@ -36,6 +36,12 @@ public sealed record ApprovedStage(
     int DeadlineHours,
     string OnTimeout);
 
+/// <summary>
+/// The account name an Action level stood behind when it was completed (DL-099): the request's name assignment (null for the
+/// naming rule's proposal) and the name's SHA-256. Ids and a hash only.
+/// </summary>
+public sealed record RecordedAccountName(Guid StageId, Guid? AssignmentId, string NameHash);
+
 /// <summary>The matrix evidence and route an approval was bound to, as replayed (DL-096).</summary>
 public sealed record ApprovedRoute(Guid MatrixVersionId, string MatrixContentHash, Guid MatchedRuleId, string PolicyMaker, IReadOnlyList<ApprovedStage> Stages);
 
@@ -43,8 +49,7 @@ public sealed record ApprovedRoute(Guid MatrixVersionId, string MatrixContentHas
 /// The outcome of checking one approval (DL-093). <see cref="Problem"/> is a code, never data. The people, the
 /// authorisation and <see cref="ActionsOpen"/> (an Action level that isn't finished yet, so provisioning must wait) are the
 /// replayed ones, and only meaningful when <see cref="Status"/> is <see cref="ApprovalIntegrityStatus.Verified"/>.
-/// <see cref="CompletedActions"/> says when each completed Action level was completed (DL-097): what was given on it after
-/// that was given too late.
+/// <see cref="AccountName"/> is the account name the last completed Action level recorded (DL-099), if any.
 /// </summary>
 public sealed record ApprovalIntegrityReport(
     Guid InstanceId,
@@ -57,7 +62,7 @@ public sealed record ApprovalIntegrityReport(
     bool ActionsOpen,
     int Actions,
     ApprovedRoute? Route = null,
-    IReadOnlyDictionary<Guid, DateTimeOffset>? CompletedActions = null)
+    RecordedAccountName? AccountName = null)
 {
     public static ApprovalIntegrityReport Failed(Guid instanceId, ApprovalIntegrityStatus status, string problem) =>
         new(instanceId, status, problem, Guid.Empty, null, null, ProvisioningAuthorized: false, ActionsOpen: false, Actions: 0);

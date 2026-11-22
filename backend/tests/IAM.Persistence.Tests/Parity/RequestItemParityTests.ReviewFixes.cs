@@ -220,7 +220,11 @@ public sealed partial class RequestItemParityTests
             return await inner.RunAsync(operation, cancellationToken);
         }
 
-        public Task<bool> VerifyAsync(TargetStep operation, CancellationToken cancellationToken) => inner.VerifyAsync(operation, cancellationToken);
+        /// <summary>Answers reads of the target instead of the inner target (it may throw, as a read that breaks off).</summary>
+        public Func<bool>? VerifyHook { get; init; }
+
+        public Task<bool> VerifyAsync(TargetStep operation, CancellationToken cancellationToken) =>
+            VerifyHook is null ? inner.VerifyAsync(operation, cancellationToken) : Task.FromResult(VerifyHook());
 
         public Task<bool> ExistsAsync(string objectType, string id, CancellationToken cancellationToken) => inner.ExistsAsync(objectType, id, cancellationToken);
     }

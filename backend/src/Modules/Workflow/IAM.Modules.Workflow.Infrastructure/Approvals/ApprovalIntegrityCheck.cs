@@ -164,10 +164,22 @@ public sealed class ApprovalIntegrityCheck(WorkflowDbContext db, IAuditTrail tra
                 binding.MatchedRuleId,
                 binding.PolicyMaker.Value,
                 [.. loaded.Stages.Select(Approved)]),
-            loaded.Instance.History
-                .Where(e => e is { Kind: ApprovalEventKind.ActionCompleted, StageId: not null })
-                .GroupBy(e => e.StageId!.Value)
-                .ToDictionary(g => g.Key, g => g.Min(e => e.AtUtc)));
+            RecordedName(actions));
+    }
+
+    /// <summary>The name the last completion that recorded one stood behind (DL-099); the log has replayed, so it reads.</summary>
+    private static RecordedAccountName? RecordedName(IEnumerable<ApprovalActionRow> actions)
+    {
+        RecordedAccountName? name = null;
+        foreach (var row in actions.Where(a => a.Kind == nameof(ApprovalActionKind.Completed)))
+        {
+            if (ApprovalActionLog.CompletionOf(new LoggedAction(ApprovalActionKind.Completed, row.Payload, row.AtUtc, row.Actor)) is { NameHash: { } hash } completion)
+            {
+                name = new RecordedAccountName(completion.StageId, completion.NameAssignmentId, hash);
+            }
+        }
+
+        return name;
     }
 
     private static ApprovedStage Approved(StageDefinition s) => new(

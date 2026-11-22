@@ -82,6 +82,13 @@ public static class ApprovalActionLog
     public static LoggedAction TimeoutsApplied(long expectedVersion, DateTimeOffset at) =>
         Log(ApprovalActionKind.TimeoutsApplied, new TimeoutsPayload(expectedVersion), at, null);
 
+    /// <summary>The completion a <see cref="ApprovalActionKind.Completed"/> action recorded, else null.</summary>
+    public static ActionCompletion? CompletionOf(LoggedAction action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        return action.Kind == ApprovalActionKind.Completed ? Read<ActionCompletion>(action.Payload) : null;
+    }
+
     /// <summary>Starts an instance from a <see cref="ApprovalActionKind.Bound"/> action.</summary>
     public static ApprovalInstance Start(LoggedAction action)
     {
@@ -131,6 +138,11 @@ public static class ApprovalActionLog
                 {
                     var p = Read<ActionCompletion>(action.Payload);
                     RequireActor(action, p.Actor);
+                    if (!p.NameIsWellFormed)
+                    {
+                        throw new InvalidDataException("A completion's recorded account name is malformed.");
+                    }
+
                     instance.CompleteAction(p, at);
                     break;
                 }

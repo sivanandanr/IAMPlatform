@@ -221,7 +221,7 @@ public sealed class WorkflowApiParityTests(ParityDatabase db) : IDisposable
             new ApplicationApproverDirectory(TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString)),
             new WorkgroupDirectory(TestSupport.CreateOrganization(db.Provider, db.OrganizationAppConnectionString)),
             new ApproverResolutionSettings());
-        var service = new ApprovalWorkflowService(context, writer, TimeProvider.System, TestSupport.ProviderFor(db.Provider), new FixedActor(null), new NoPermissions(), resolver);
+        var service = new ApprovalWorkflowService(context, writer, TimeProvider.System, TestSupport.ProviderFor(db.Provider), new FixedActor(null), new NoPermissions(), resolver, new NoItemSource());
         var route = ApprovalRoute.Create(stages);
         await service.StartAsync(binding, route, Ct);
         return (id, [.. route.Stages.Select(s => s.StageId)]);

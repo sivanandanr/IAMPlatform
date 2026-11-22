@@ -8,6 +8,7 @@ using IAM.BuildingBlocks.Persistence;
 using IAM.BuildingBlocks.Security;
 using IAM.Modules.Administration.Contracts;
 using IAM.Modules.Audit.Contracts;
+using IAM.Modules.Request.Contracts;
 using IAM.Modules.Workflow.Application.Approvals;
 using IAM.Modules.Workflow.Application.Approvers;
 using IAM.Modules.Workflow.Contracts;
@@ -64,7 +65,8 @@ public sealed class ApprovalWorkflowService(
     IIamDatabaseProvider databaseProvider,
     IAuditActorAccessor actorAccessor,
     IPermissionEvaluator permissions,
-    IApproverResolver resolver) : IApprovalWorkflow
+    IApproverResolver resolver,
+    IRequestItemSource items) : IApprovalWorkflow
 {
     /// <summary>Bounds on the inbox: at most 100 a page and 1,000 pages, so a request can't ask the database for everything.</summary>
     public const int MaxTaskPageSize = 100;
@@ -198,9 +200,19 @@ public sealed class ApprovalWorkflowService(
         ActAsync(instanceId, "decide", null, (actor, now) =>
             ApprovalActionLog.Decided(new ApprovalDecision(decisionId, stageId, actor, null, approve, reason, expectedVersion), now), cancellationToken);
 
-    public Task<ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, string? note, CancellationToken cancellationToken) =>
-        ActAsync(instanceId, "complete", null, (actor, now) =>
-            ApprovalActionLog.Completed(new ActionCompletion(completionId, stageId, actor, null, note, expectedVersion), now), cancellationToken);
+    /// <summary>
+    /// Completes an Action level. For a request item that asks for a new account, the account name as it stands now is recorded
+    /// with the completion (DL-099): provisioning uses exactly that name. The approval's instance id is the item id (DL-091). A
+    /// name given while this call runs is not the one recorded; it never counts, since the level is closed by this completion.
+    /// </summary>
+    public async Task<ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, string? note, CancellationToken cancellationToken)
+    {
+        var name = await items.CurrentAccountNameAsync(instanceId, cancellationToken).ConfigureAwait(false);
+        return await ActAsync(instanceId, "complete", null, (actor, now) =>
+            ApprovalActionLog.Completed(
+                new ActionCompletion(completionId, stageId, actor, null, note, expectedVersion, name?.AssignmentId, name is null ? null : AccountNameHash.Of(name.Name)),
+                now), cancellationToken).ConfigureAwait(false);
+    }
 
     public Task<ApprovalInstanceView> ReturnForChangesAsync(Guid instanceId, long expectedVersion, Guid stageId, string? reason, CancellationToken cancellationToken) =>
         ActAsync(instanceId, "return", null, (actor, now) => ApprovalActionLog.Returned(stageId, actor, null, reason, expectedVersion, now), cancellationToken);
@@ -606,18 +618,27 @@ public sealed class ApprovalWorkflowService(
     /// The audit record of one stored action: what it was and a hash of its row, keyed by sequence (DL-075a). The inputs stay
     /// in the append-only log, so no route, reason or list of people has to fit the audit's size or content rules.
     /// </summary>
-    private AuditEventRecord ActionRecord(ApprovalInstanceRow row, int sequence, LoggedAction action, long versionAfter) =>
-        Event(
-            WorkflowAuditActions.For(action.Kind),
-            row.Id,
-            AuditOutcome.Succeeded,
-            null,
+    private AuditEventRecord ActionRecord(ApprovalInstanceRow row, int sequence, LoggedAction action, long versionAfter)
+    {
+        List<AuditPayloadField> fields =
+        [
             Field("kind", action.Kind.ToString()),
             Field("sequence", sequence.ToString(CultureInfo.InvariantCulture)),
             Field("versionAfter", versionAfter.ToString(CultureInfo.InvariantCulture)),
             Field("state", row.State),
             Field("provisioningAuthorized", row.ProvisioningAuthorized ? "true" : "false"),
-            Field("actionHash", ApprovalActionLog.RowHash(row.Id, sequence, action, versionAfter)));
+            Field("actionHash", ApprovalActionLog.RowHash(row.Id, sequence, action, versionAfter)),
+        ];
+
+        // The account name a completed level stood behind (DL-099): its assignment and hash, never the name itself.
+        if (ApprovalActionLog.CompletionOf(action) is { NameHash: { } nameHash } completion)
+        {
+            fields.Add(Field("nameAssignmentId", completion.NameAssignmentId?.ToString("D") ?? "proposal"));
+            fields.Add(Field("nameHash", nameHash));
+        }
+
+        return Event(WorkflowAuditActions.For(action.Kind), row.Id, AuditOutcome.Succeeded, null, [.. fields]);
+    }
 
     /// <summary>
     /// The participant view, and with <paramref name="oversight"/> the full history and evidence (DL-073a). Participants

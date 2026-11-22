@@ -125,15 +125,28 @@ public sealed record ApprovalDecision(
     public override string ToString() => $"{nameof(ApprovalDecision)} {DecisionId}";
 }
 
-/// <summary>An action level's task, reported done. <see cref="Actor"/> and <see cref="OnBehalfOf"/> are for the calling layer to verify, as for a decision.</summary>
+/// <summary>
+/// An action level's task, reported done. <see cref="Actor"/> and <see cref="OnBehalfOf"/> are for the calling layer to verify, as
+/// for a decision. For an item that asks for a new account, <see cref="NameAssignmentId"/> and <see cref="NameHash"/> are the
+/// account name as it stood when the level was completed (DL-099): the assignment (null for the naming rule's proposal) and the
+/// SHA-256 of the name. Provisioning uses exactly that name; one given later never counts. Older logs have neither.
+/// </summary>
 public sealed record ActionCompletion(
     Guid CompletionId,
     Guid StageId,
     PersonId Actor,
     PersonId? OnBehalfOf,
     string? Note,
-    long ExpectedVersion)
+    long ExpectedVersion,
+    Guid? NameAssignmentId = null,
+    string? NameHash = null)
 {
+    /// <summary>Whether the recorded name is well formed: no assignment without a hash, and a hash is 64 lower-case hex digits.</summary>
+    public bool NameIsWellFormed =>
+        NameHash is null
+            ? NameAssignmentId is null
+            : NameHash.Length == 64 && NameHash.All(c => c is (>= '0' and <= '9') or (>= 'a' and <= 'f')) && NameAssignmentId != Guid.Empty;
+
     /// <summary>The id only: logging this object must not expose a person or a note.</summary>
     public override string ToString() => $"{nameof(ActionCompletion)} {CompletionId}";
 }

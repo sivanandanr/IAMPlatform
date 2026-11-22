@@ -122,21 +122,47 @@ public static partial class ProvisioningPlanner
         return new ProvisioningPlan(item, [ProvisioningOperation.Planned(itemId, 1, EntitlementAdd, AccountObject, accountTargetId, EntitlementObject, technicalName, "{}")]);
     }
 
+    /// <summary>The result code of a step that changed the target itself (the connector's Applied), as against one already in state.</summary>
+    public const string Applied = "Applied";
+
     /// <summary>
-    /// Undoes a new account's access when it can't be recorded after its steps ran (DL-096): the entitlement is removed, then
-    /// the account is disabled, under fixed operation ids (steps 11 and 12) like any other step. The account itself stays, for
-    /// a person to look at; nothing is deleted.
+    /// What undoes an item that fails after its steps ran (DL-096, DL-099), under fixed operation ids (steps 11 and 12), from the
+    /// plan's stored states alone, so a run that stops half-way works out the same undo again:
+    /// <list type="bullet">
+    /// <item>A new account this item created: its entitlement is removed, then it is disabled. It stays, for a person to look at;
+    /// nothing is deleted. A create that didn't succeed may have met someone else's object, which is never touched.</item>
+    /// <item>An existing account: the entitlement is removed only if this item's step added it (<see cref="Applied"/>); access the
+    /// person already had is never taken away.</item>
+    /// </list>
     /// </summary>
-    public static IReadOnlyList<ProvisioningOperation> UndoNewAccount(Guid itemId, IReadOnlyList<ProvisioningOperation> plan)
+    public static IReadOnlyList<ProvisioningOperation> Undo(Guid itemId, IReadOnlyList<ProvisioningOperation> plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        var create = plan.SingleOrDefault(o => o.Action == AccountCreate) ?? throw new ArgumentException("Only a new account's plan is undone.", nameof(plan));
-        var add = plan.Single(o => o.Action == EntitlementAdd);
-        return
-        [
-            ProvisioningOperation.Planned(itemId, MaxPlanSteps + 1, EntitlementRemove, AccountObject, create.TargetId, EntitlementObject, add.RelatedId, "{}"),
-            ProvisioningOperation.Planned(itemId, MaxPlanSteps + 2, AccountDisable, AccountObject, create.TargetId, null, null, "{}"),
-        ];
+
+        // A plan of any other shape was never one the planner made (a step added by SQL): the runner stops it before it runs
+        // a step (PlanMismatch), so there is nothing of it to undo.
+        var adds = plan.Where(o => o.Action == EntitlementAdd).ToList();
+        var creates = plan.Where(o => o.Action == AccountCreate).ToList();
+        if (adds.Count > 1 || creates.Count > 1)
+        {
+            return [];
+        }
+
+        var add = adds.SingleOrDefault();
+        if (creates.SingleOrDefault() is { } create)
+        {
+            return create.State != ProvisioningState.Succeeded || add is null
+                ? []
+                :
+                [
+                    ProvisioningOperation.Planned(itemId, MaxPlanSteps + 1, EntitlementRemove, AccountObject, create.TargetId, EntitlementObject, add.RelatedId, "{}"),
+                    ProvisioningOperation.Planned(itemId, MaxPlanSteps + 2, AccountDisable, AccountObject, create.TargetId, null, null, "{}"),
+                ];
+        }
+
+        return add is { State: ProvisioningState.Succeeded, ResultCode: Applied }
+            ? [ProvisioningOperation.Planned(itemId, MaxPlanSteps + 1, EntitlementRemove, AccountObject, add.TargetId, EntitlementObject, add.RelatedId, "{}")]
+            : [];
     }
 
     /// <summary>Whether two plans are the same steps: ids, actions, objects and attributes (DL-096). Undo steps don't count.</summary>

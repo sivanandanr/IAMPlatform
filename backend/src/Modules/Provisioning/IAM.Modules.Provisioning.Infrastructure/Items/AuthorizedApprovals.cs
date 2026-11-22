@@ -65,7 +65,7 @@ public sealed class AuthorizedApprovals(
     public async Task<MessageOutcome> HandleAsync(MessageEnvelope envelope, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
-        var (itemId, instanceId, sequence, closed) = envelope.Type == ApprovalClosed.MessageType
+        var (itemId, instanceId, sequence) = envelope.Type == ApprovalClosed.MessageType
             ? Read(MessageEnvelopes.Read<ApprovalClosed>(envelope))
             : Read(MessageEnvelopes.Read<ApprovalAuthorized>(envelope));
 
@@ -81,16 +81,19 @@ public sealed class AuthorizedApprovals(
         }
 
         var now = UtcMicrosecondConverter.TruncateToMicroseconds(clock.GetUtcNow());
-        var decision = await decider.DecideAsync(itemId, sequence, closed, now, cancellationToken).ConfigureAwait(false);
+        var decision = await decider.DecideAsync(itemId, sequence, now, cancellationToken).ConfigureAwait(false);
         if (decision is null)
         {
             // Nothing to plan yet (an Action level is open, or the event is early or forged) or ever (closed without
-            // authorisation): the message is only noted, and blocks nothing (DL-096).
-            return await db.ReceiveOnceAsync(provider, ConsumerName, envelope, now, () => { }, cancellationToken).ConfigureAwait(false);
+            // authorisation). Nothing is stored, not even an inbox row (DL-099): a forged event can't use up the genuine one's key.
+            return MessageOutcome.Processed;
         }
 
-        // The request's correlation id, carried on to everything the runner does for this item (DL-094).
-        decision.Item.Correlate(MessageCorrelation.IsTraceId(envelope.CorrelationId) ? envelope.CorrelationId : MessageCorrelation.Current());
+        // The request item's correlation id (the decider's, DL-099); only an integrity block, which read no item, takes the event's.
+        if (decision.Item.CorrelationId is null)
+        {
+            decision.Item.Correlate(MessageCorrelation.IsTraceId(envelope.CorrelationId) ? envelope.CorrelationId : MessageCorrelation.Current());
+        }
         return await db.ReceiveOnceAsync(
             provider,
             ConsumerName,
@@ -105,10 +108,10 @@ public sealed class AuthorizedApprovals(
             (tx, ct) => AuditAsync(tx, decision, now, ct)).ConfigureAwait(false);
     }
 
-    /// <summary>The item, the approval, the least action count the message implies, and whether it is the closed event.</summary>
-    private static (Guid Item, Guid Instance, int Sequence, bool Closed) Read(ApprovalAuthorized m) => (m.RequestItemId, m.InstanceId, m.ActionSequence, false);
+    /// <summary>The item, the approval, and the least action count the message implies.</summary>
+    private static (Guid Item, Guid Instance, int Sequence) Read(ApprovalAuthorized m) => (m.RequestItemId, m.InstanceId, m.ActionSequence);
 
-    private static (Guid Item, Guid Instance, int Sequence, bool Closed) Read(ApprovalClosed m) => (m.RequestItemId, m.InstanceId, 1, true);
+    private static (Guid Item, Guid Instance, int Sequence) Read(ApprovalClosed m) => (m.RequestItemId, m.InstanceId, 1);
 
     private async Task AuditAsync(IDbContextTransaction tx, ProvisioningPlan decision, DateTimeOffset now, CancellationToken cancellationToken)
     {

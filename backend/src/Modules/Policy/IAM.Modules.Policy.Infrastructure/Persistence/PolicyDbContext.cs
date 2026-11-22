@@ -43,7 +43,7 @@ public sealed class PolicyDbContext(DbContextOptions<PolicyDbContext> options) :
         version.Property(x => x.ContentHash).IsRequired().IsCode(64).IsFixedLength();
         version.Property(x => x.CompiledHash).IsRequired().IsCode(64).IsFixedLength();
         version.Property(x => x.EditedBy).IsRequired().IsCode(AuditColumns.ActorMaxLength);
-        version.Property(x => x.Editors).HasMaxLength(4100);
+        version.Property(x => x.Editors).HasMaxLength(4100).IsRequired();
         version.HasOne<MatrixChangeRequestRow>().WithMany().HasForeignKey(x => x.ActivatedByRequestId).OnDelete(DeleteBehavior.Restrict);
 
         var request = modelBuilder.Entity<MatrixChangeRequestRow>();

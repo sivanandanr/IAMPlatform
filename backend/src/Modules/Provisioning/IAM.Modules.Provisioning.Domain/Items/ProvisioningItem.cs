@@ -51,6 +51,9 @@ public enum BlockReason
 
     /// <summary>The entitlement's group isn't in the application's allowed group container (DL-098).</summary>
     EntitlementOutOfScope = 11,
+
+    /// <summary>The new account's name isn't the one the approval recorded when its Action level was completed (DL-099).</summary>
+    NameNotApproved = 12,
 }
 
 /// <summary>The account and entitlement a planned item acts on (DL-093). For a new account, the account fields are its name.</summary>
@@ -171,6 +174,18 @@ public sealed class ProvisioningItem
     {
         RequireRunning();
         LeaseUntilUtc = now + lease;
+    }
+
+    /// <summary>
+    /// Back to planned, not before <paramref name="next"/>, without counting an attempt: nothing was tried, because the approval
+    /// was still being written when it was checked (DL-099).
+    /// </summary>
+    public void Postpone(DateTimeOffset next)
+    {
+        RequireRunning();
+        State = ProvisioningState.Planned;
+        NextAttemptAtUtc = next;
+        LeaseUntilUtc = null;
     }
 
     /// <summary>A temporary failure: back to planned, not before <paramref name="next"/>.</summary>

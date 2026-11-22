@@ -432,7 +432,7 @@ public sealed partial class RequestItemParityTests
     }
 
     /// <summary>The decider with each module's own login (DL-096), and the contexts to dispose.</summary>
-    private (ProvisioningDecider Decider, IAsyncDisposable[] Contexts) Decider(IEnumerable<ConnectorBinding> bindings, TimeProvider? clock = null)
+    private (ProvisioningDecider Decider, IAsyncDisposable[] Contexts) Decider(IEnumerable<ConnectorBinding> bindings, TimeProvider? clock = null, IApprovalIntegrity? integrity = null)
     {
         var workflow = TestSupport.CreateWorkflow(db.Provider, db.WorkflowAppConnectionString);
         var audit = TestSupport.CreateAudit(db.Provider, db.AuditAppConnectionString);
@@ -440,7 +440,7 @@ public sealed partial class RequestItemParityTests
         var catalog = TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString);
         var accounts = TestSupport.CreateAccount(db.Provider, db.AccountAppConnectionString);
         var decider = new ProvisioningDecider(
-            new ApprovalIntegrityCheck(workflow, new AuditTrail(audit)),
+            integrity ?? new ApprovalIntegrityCheck(workflow, new AuditTrail(audit)),
             new RequestItemSource(request),
             new EntitlementDirectory(catalog),
             new AccountDirectory(accounts),
