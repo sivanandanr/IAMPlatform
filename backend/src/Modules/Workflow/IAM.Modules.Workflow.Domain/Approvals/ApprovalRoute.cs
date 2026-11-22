@@ -108,6 +108,9 @@ public enum ApprovalRefusal
 
     /// <summary>The person doesn't hold <c>workflow.instances.cancel</c> (DL-072e). Checked by the calling layer, before the engine.</summary>
     CancelPermissionMissing = 54,
+
+    /// <summary>The account name isn't the one the person completing the level saw (DL-100): they must look again.</summary>
+    AccountNameChanged = 55,
 }
 
 /// <summary>An action was refused. The message gives the code only, never a person, reason text or other value.</summary>

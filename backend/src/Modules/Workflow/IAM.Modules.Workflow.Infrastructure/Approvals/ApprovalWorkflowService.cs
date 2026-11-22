@@ -205,11 +205,13 @@ public sealed class ApprovalWorkflowService(
     /// with the completion (DL-099): provisioning uses exactly that name. The approval's instance id is the item id (DL-091). A
     /// name given while this call runs is not the one recorded; it never counts, since the level is closed by this completion.
     /// </summary>
-    public async Task<ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, string? note, CancellationToken cancellationToken)
+    public async Task<ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, string? note, CancellationToken cancellationToken, string? expectedAccountName = null)
     {
         var name = await items.CurrentAccountNameAsync(instanceId, cancellationToken).ConfigureAwait(false);
         return await ActAsync(instanceId, "complete", null, (actor, now) =>
-            ApprovalActionLog.Completed(
+            expectedAccountName is not null && !string.Equals(name?.Name, expectedAccountName, StringComparison.Ordinal)
+                ? throw new ApprovalRefusedException(ApprovalRefusal.AccountNameChanged)
+                : ApprovalActionLog.Completed(
                 new ActionCompletion(completionId, stageId, actor, null, note, expectedVersion, name?.AssignmentId, name is null ? null : AccountNameHash.Of(name.Name)),
                 now), cancellationToken).ConfigureAwait(false);
     }

@@ -41,11 +41,14 @@ public interface IProvisioningTarget
 {
     Task<StepResult> RunAsync(TargetStep operation, CancellationToken cancellationToken);
 
-    /// <summary>Whether the target now matches what the operation asked for, by reading it.</summary>
-    Task<bool> VerifyAsync(TargetStep operation, CancellationToken cancellationToken);
+    /// <summary>
+    /// Whether the target now matches what the operation asked for, by reading it; null if it couldn't be read (DL-100): a read
+    /// that fails proves nothing either way.
+    /// </summary>
+    Task<bool?> VerifyAsync(TargetStep operation, CancellationToken cancellationToken);
 
-    /// <summary>Whether an object is there on the target now (DL-098), read before anything is granted to an existing account.</summary>
-    Task<bool> ExistsAsync(string objectType, string id, CancellationToken cancellationToken);
+    /// <summary>Whether an object is there on the target now (DL-098); null if it couldn't be read (DL-100).</summary>
+    Task<bool?> ExistsAsync(string objectType, string id, CancellationToken cancellationToken);
 }
 
 /// <summary>The targets by connector key; null for a key that isn't configured.</summary>
@@ -57,7 +60,7 @@ public interface IProvisioningTargets
 /// <summary>The runner's settings (DL-094), all bounded.</summary>
 public sealed record ProvisioningRunnerSettings
 {
-    public ProvisioningRunnerSettings(int? intervalSeconds = null, int? batchSize = null, int? leaseSeconds = null, int? maxAttempts = null, int? retryDelaySeconds = null, int? stepTimeoutSeconds = null)
+    public ProvisioningRunnerSettings(int? intervalSeconds = null, int? batchSize = null, int? leaseSeconds = null, int? maxAttempts = null, int? retryDelaySeconds = null, int? stepTimeoutSeconds = null, int? undoMaxAttempts = null, int? maxPostponements = null)
     {
         Interval = TimeSpan.FromSeconds(Bounded(intervalSeconds ?? 10, 1, 3600, nameof(intervalSeconds)));
         BatchSize = Bounded(batchSize ?? 20, 1, 500, nameof(batchSize));
@@ -65,9 +68,17 @@ public sealed record ProvisioningRunnerSettings
         MaxAttempts = Bounded(maxAttempts ?? 5, 1, 50, nameof(maxAttempts));
         RetryDelay = TimeSpan.FromSeconds(Bounded(retryDelaySeconds ?? 30, 1, 3600, nameof(retryDelaySeconds)));
 
-        // A call to the target never outlasts half the lease, so the lease is renewed before another runner may take over.
+        // A call to the target never outlasts half the lease; the lease is renewed before every call (DL-100).
         StepTimeout = TimeSpan.FromSeconds(Bounded(stepTimeoutSeconds ?? Math.Min(60, (int)Lease.TotalSeconds / 2), 1, (int)Lease.TotalSeconds / 2, nameof(stepTimeoutSeconds)));
+        UndoMaxAttempts = Bounded(undoMaxAttempts ?? 10, 1, 100, nameof(undoMaxAttempts));
+        MaxPostponements = Bounded(maxPostponements ?? 20, 1, 1000, nameof(maxPostponements));
     }
+
+    /// <summary>Undo passes allowed before an item fails UndoFailed (DL-100).</summary>
+    public int UndoMaxAttempts { get; }
+
+    /// <summary>Runs put off for an approval still being written before each further one counts an attempt (DL-100).</summary>
+    public int MaxPostponements { get; }
 
     public const string Section = "Provisioning:Runner";
 

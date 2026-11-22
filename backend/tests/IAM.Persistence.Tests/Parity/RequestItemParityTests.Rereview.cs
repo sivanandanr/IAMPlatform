@@ -116,7 +116,7 @@ public sealed partial class RequestItemParityTests
         var next = new ConnectorTarget(mock);
         (await RunAsync(item, next, clock)).ShouldBeTrue();
         var (failed, steps) = await PlannedAsync(item);
-        failed.ShouldSatisfyAllConditions(i => i.State.ShouldBe(ProvisioningState.Failed), i => i.Problem.ShouldBe("Interrupted"));
+        failed.ShouldSatisfyAllConditions(i => i.State.ShouldBe(ProvisioningState.Failed), i => i.Problem.ShouldBe("Refused", "the reason the undo started for (DL-100)"));
         steps.Where(s => s.Step > 10).ShouldAllBe(s => s.State == ProvisioningState.Succeeded);
         steps.Single(s => s.Action == ProvisioningPlanner.AccountEnable).State.ShouldBe(ProvisioningState.Failed);
         var account = (await mock.ReadAsync(new ObjectRef(ObjectTypes.Account, $"CN={name},{AccountContainer}"), Ct)).ShouldNotBeNull();
@@ -220,9 +220,9 @@ public sealed partial class RequestItemParityTests
         public Task<StepResult> RunAsync(TargetStep operation, CancellationToken cancellationToken) =>
             operation.Action == action ? Task.FromResult(new StepResult(StepStatus.Rejected, "Refused")) : inner.RunAsync(operation, cancellationToken);
 
-        public Task<bool> VerifyAsync(TargetStep operation, CancellationToken cancellationToken) => inner.VerifyAsync(operation, cancellationToken);
+        public Task<bool?> VerifyAsync(TargetStep operation, CancellationToken cancellationToken) => inner.VerifyAsync(operation, cancellationToken);
 
-        public Task<bool> ExistsAsync(string objectType, string id, CancellationToken cancellationToken) => inner.ExistsAsync(objectType, id, cancellationToken);
+        public Task<bool?> ExistsAsync(string objectType, string id, CancellationToken cancellationToken) => inner.ExistsAsync(objectType, id, cancellationToken);
     }
 
     /// <summary>An approval that keeps changing while it is checked.</summary>

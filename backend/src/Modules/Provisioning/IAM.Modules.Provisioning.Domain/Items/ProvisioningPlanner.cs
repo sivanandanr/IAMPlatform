@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -163,6 +165,17 @@ public static partial class ProvisioningPlanner
         return add is { State: ProvisioningState.Succeeded, ResultCode: Applied }
             ? [ProvisioningOperation.Planned(itemId, MaxPlanSteps + 1, EntitlementRemove, AccountObject, add.TargetId, EntitlementObject, add.RelatedId, "{}")]
             : [];
+    }
+
+    /// <summary>
+    /// A step's fingerprint (DL-100): the SHA-256 of its id, action and objects. The audit record of a finished step carries
+    /// it, so an undo can check that a stored step is the one that ran, without the audit holding the target's name.
+    /// </summary>
+    public static string Fingerprint(ProvisioningOperation operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        var text = string.Join('\u001f', operation.Id.ToString("D"), operation.Action, operation.TargetType, operation.TargetId, operation.RelatedType ?? "-", operation.RelatedId ?? "-");
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
     }
 
     /// <summary>Whether two plans are the same steps: ids, actions, objects and attributes (DL-096). Undo steps don't count.</summary>

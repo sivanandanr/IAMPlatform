@@ -137,3 +137,24 @@ public static partial class MessageEnvelopes
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._:\-]*\z", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
     private static partial Regex KeyPattern();
 }
+
+/// <summary>
+/// The handler can't decide yet (what it reads is still being written, DL-100): the message is tried again later without
+/// counting towards the delivery limit, a bounded number of times, then counted like any failure.
+/// </summary>
+public sealed class MessageDeferredException : Exception
+{
+    public MessageDeferredException()
+    {
+    }
+
+    public MessageDeferredException(string message)
+        : base(message)
+    {
+    }
+
+    public MessageDeferredException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
+}

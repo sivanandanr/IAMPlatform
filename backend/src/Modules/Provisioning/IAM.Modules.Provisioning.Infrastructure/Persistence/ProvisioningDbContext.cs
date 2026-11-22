@@ -24,6 +24,8 @@ public sealed class ProvisioningDbContext(DbContextOptions<ProvisioningDbContext
 
     public DbSet<InboxMessageRow> Inbox => Set<InboxMessageRow>();
 
+    public DbSet<GrantLock> GrantLocks => Set<GrantLock>();
+
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         var item = modelBuilder.Entity<ProvisioningItem>();
@@ -38,7 +40,9 @@ public sealed class ProvisioningDbContext(DbContextOptions<ProvisioningDbContext
         item.Property(x => x.AccountName).IsCode(256);
         item.Property(x => x.ConnectorKey).IsCode(32);
         item.Property(x => x.CorrelationId).IsCode(32).IsFixedLength();
+        item.Property(x => x.UndoReason).IsCode(32);
         item.HasIndex(x => new { x.State, x.ReceivedAtUtc });
+        item.HasIndex(x => new { x.AccountId, x.EntitlementId });
 
         var operation = modelBuilder.Entity<ProvisioningOperation>();
         operation.ToTable("ProvisioningOperation", t => t.HasTrigger("TR_ProvisioningOperation_Guarded"));
@@ -63,6 +67,10 @@ public sealed class ProvisioningDbContext(DbContextOptions<ProvisioningDbContext
         ledger.Property(x => x.Fingerprint).IsRequired().IsCode(OperationLedgerRecord.FingerprintLength).IsFixedLength();
         ledger.Property(x => x.Status).IsRequired().IsCode(OperationLedgerRecord.StatusMaxLength);
         ledger.Property(x => x.Code).IsCode(OperationLedgerRecord.CodeMaxLength);
+
+        var grantLock = modelBuilder.Entity<GrantLock>();
+        grantLock.ToTable("GrantLock");
+        grantLock.HasKey(x => new { x.AccountId, x.EntitlementId });
 
         modelBuilder.ConfigureInbox("TR_InboxMessage_AppendOnly");
     }

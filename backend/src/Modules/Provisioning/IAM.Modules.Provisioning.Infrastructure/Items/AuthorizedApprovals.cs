@@ -81,7 +81,18 @@ public sealed class AuthorizedApprovals(
         }
 
         var now = UtcMicrosecondConverter.TruncateToMicroseconds(clock.GetUtcNow());
-        var decision = await decider.DecideAsync(itemId, sequence, now, cancellationToken).ConfigureAwait(false);
+        ProvisioningPlan? decision;
+        try
+        {
+            decision = await decider.DecideAsync(itemId, sequence, now, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ApprovalChangingException ex)
+        {
+            // The approval is still being written: the message comes back later without counting towards its delivery limit
+            // (DL-100), so the genuine authorisation isn't dead-lettered while it settles.
+            throw new MessageDeferredException("The approval is still being written.", ex);
+        }
+
         if (decision is null)
         {
             // Nothing to plan yet (an Action level is open, or the event is early or forged) or ever (closed without
@@ -137,7 +148,7 @@ public sealed class AuthorizedApprovals(
                     Field("entitlementVersionId", item.EntitlementVersionId?.ToString() ?? "none"),
                     Field("accountId", item.AccountId?.ToString() ?? "none"),
                     Field("newAccountType", item.NewAccountType ?? "none"),
-                    Field("accountName", item.AccountName ?? "none"),
+                    Field("accountNameHash", item.AccountName is { } name ? AccountNameHash.Of(name) : "none"),
                 ],
             },
             cancellationToken).ConfigureAwait(false);

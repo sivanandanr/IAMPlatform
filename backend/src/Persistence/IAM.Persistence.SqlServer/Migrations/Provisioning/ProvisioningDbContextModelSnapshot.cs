@@ -82,6 +82,48 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                         .HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("IAM.Modules.Provisioning.Domain.Items.GrantLock", b =>
+                {
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("EntitlementId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<Guid>("HeldBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("ModifiedAtUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<string>("ModifiedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTimeOffset>("UntilUtc")
+                        .HasPrecision(6)
+                        .HasColumnType("datetimeoffset(6)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("AccountId", "EntitlementId");
+
+                    b.ToTable("GrantLock", "provisioning");
+                });
+
             modelBuilder.Entity("IAM.Modules.Provisioning.Domain.Items.OperationLedgerRecord", b =>
                 {
                     b.Property<Guid>("OperationId")
@@ -220,6 +262,9 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                         .HasPrecision(6)
                         .HasColumnType("datetimeoffset(6)");
 
+                    b.Property<int>("Postponements")
+                        .HasColumnType("int");
+
                     b.Property<string>("Problem")
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)")
@@ -240,11 +285,22 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                         .UseCollation("Latin1_General_100_BIN2")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<int>("UndoAttempts")
+                        .HasColumnType("int");
+
+                    b.Property<string>("UndoReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
                     b.Property<long>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AccountId", "EntitlementId");
 
                     b.HasIndex("State", "ReceivedAtUtc");
 
@@ -267,6 +323,8 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                             t.HasCheckConstraint("CK_ProvisioningItem_Problem_Code", "DATALENGTH([Problem]) > 0 AND DATALENGTH([Problem]) = DATALENGTH(LTRIM(RTRIM([Problem])))");
 
                             t.HasCheckConstraint("CK_ProvisioningItem_State_Code", "DATALENGTH([State]) > 0 AND DATALENGTH([State]) = DATALENGTH(LTRIM(RTRIM([State])))");
+
+                            t.HasCheckConstraint("CK_ProvisioningItem_UndoReason_Code", "DATALENGTH([UndoReason]) > 0 AND DATALENGTH([UndoReason]) = DATALENGTH(LTRIM(RTRIM([UndoReason])))");
                         });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);

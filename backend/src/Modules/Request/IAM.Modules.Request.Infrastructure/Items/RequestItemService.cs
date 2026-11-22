@@ -171,7 +171,7 @@ public sealed class RequestItemService(
         var ids = items.Select(i => i.Id).ToList();
         var names = (await db.AccountNames.AsNoTracking().Where(n => ids.Contains(n.ItemId)).ToListAsync(cancellationToken).ConfigureAwait(false))
             .GroupBy(n => n.ItemId)
-            .ToDictionary(g => g.Key, g => g.OrderBy(n => n.SetAtUtc).ThenBy(n => n.Id).Last().Name);
+            .ToDictionary(g => g.Key, g => g.OrderBy(n => n.Seq).Last().Name);
         return [.. items.Select(i => View(i, names.GetValueOrDefault(i.Id) ?? i.NewAccountName))];
     }
 
@@ -239,9 +239,9 @@ public sealed class RequestItemService(
                 [
                     Field("stageId", stageId.ToString()),
                     Field("newAccountType", item.NewAccountType ?? "none"),
-                    Field("proposedName", item.NewAccountName ?? "none"),
-                    Field("previousName", given.PreviousName ?? "none"),
-                    Field("name", given.Name),
+                    Field("proposedNameHash", Hash(item.NewAccountName)),
+                    Field("previousNameHash", Hash(given.PreviousName)),
+                    Field("nameHash", Hash(given.Name)),
                 ],
             },
             cancellationToken).ConfigureAwait(false);
@@ -253,7 +253,7 @@ public sealed class RequestItemService(
     private async Task<string?> CurrentNameAsync(RequestItem item, CancellationToken cancellationToken) =>
         await db.AccountNames.AsNoTracking()
             .Where(n => n.ItemId == item.Id)
-            .OrderByDescending(n => n.SetAtUtc).ThenByDescending(n => n.Id)
+            .OrderByDescending(n => n.Seq)
             .Select(n => n.Name)
             .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false)
@@ -451,6 +451,9 @@ public sealed class RequestItemService(
     };
 
     private static AuditPayloadField Field(string name, string value) => new(name, value, AuditFieldClass.Plain);
+
+    /// <summary>A name in the audit as its hash (DL-100), as Workflow records it; never the login itself.</summary>
+    private static string Hash(string? name) => name is null ? "none" : AccountNameHash.Of(name);
 
     private static RequestItemView View(RequestItem i, string? accountName = null) => new(
         i.Id, i.Requester, i.Beneficiary, i.ApplicationId, i.EntitlementId, i.EntitlementVersionId, i.AccountId, i.NewAccountType, i.NewAccountName,

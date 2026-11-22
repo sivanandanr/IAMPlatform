@@ -451,7 +451,7 @@ public sealed partial class RequestItemParityTests(ParityDatabase db, RabbitMqBr
             context, catalog);
     }
 
-    private (ApprovalWorkflowService Service, IAsyncDisposable Context) Workflow(string actor = "system:workflow")
+    private (ApprovalWorkflowService Service, IAsyncDisposable Context) Workflow(string actor = "system:workflow", IRequestItemSource? items = null)
     {
         var context = TestSupport.CreateWorkflow(db.Provider, db.WorkflowAppConnectionString, new AuditingSaveChangesInterceptor(TimeProvider.System, new FixedActor(actor)));
         var writer = new AuditWriter(TestSupport.ProviderFor(db.Provider), TimeProvider.System, new FixedActor(actor),
@@ -462,7 +462,7 @@ public sealed partial class RequestItemParityTests(ParityDatabase db, RabbitMqBr
             new ApproverResolutionSettings(),
             new EntitlementDirectory(TestSupport.CreateCatalog(db.Provider, db.CatalogAppConnectionString)));
         return (new ApprovalWorkflowService(context, writer, TimeProvider.System, TestSupport.ProviderFor(db.Provider), new FixedActor(actor), new Grants((actor, AccessActions.ApprovalsAct)), resolver,
-            ItemSource()), context);
+            items ?? ItemSource()), context);
     }
 
     /// <summary>Frozen items read with the request login, for a completion to record the account name (DL-099); disposed with the test.</summary>

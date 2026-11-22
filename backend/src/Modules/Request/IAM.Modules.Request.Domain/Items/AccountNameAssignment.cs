@@ -17,6 +17,9 @@ public sealed class AccountNameAssignment
 
     public Guid Id { get; private set; }
 
+    /// <summary>The database's insertion order (DL-100): the latest name is the last one written, never by any host's clock.</summary>
+    public long Seq { get; private set; }
+
     public Guid ItemId { get; private set; }
 
     public Guid StageId { get; private set; }

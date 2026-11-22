@@ -129,6 +129,15 @@ public sealed class ProvisioningItem
 
     public DateTimeOffset? FinishedAtUtc { get; private set; }
 
+    /// <summary>How many times an undo of this item was started or resumed (DL-100); it stops as UndoFailed at the limit.</summary>
+    public int UndoAttempts { get; private set; }
+
+    /// <summary>Why this item is being undone (DL-100): the failure it ends with once the undo is confirmed.</summary>
+    public string? UndoReason { get; private set; }
+
+    /// <summary>How many times a run was put off because the approval was still being written (DL-100).</summary>
+    public int Postponements { get; private set; }
+
     /// <summary>A code to store as the problem: the connector's if it is one, else <paramref name="fallback"/>.</summary>
     public static string ProblemCode(string? code, string fallback) =>
         code is { Length: > 0 and <= 32 } && code.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-') ? code : fallback;
@@ -181,6 +190,24 @@ public sealed class ProvisioningItem
     /// was still being written when it was checked (DL-099).
     /// </summary>
     public void Postpone(DateTimeOffset next)
+    {
+        RequireRunning();
+        Postponements++;
+        State = ProvisioningState.Planned;
+        NextAttemptAtUtc = next;
+        LeaseUntilUtc = null;
+    }
+
+    /// <summary>Starts (or resumes) an undo for <paramref name="reason"/> (DL-100); the first reason is kept. Counts one undo pass.</summary>
+    public void BeginUndoPass(string reason)
+    {
+        RequireRunning();
+        UndoReason ??= ProblemCode(reason, "Undo");
+        UndoAttempts++;
+    }
+
+    /// <summary>An undo that failed for now (DL-100): back to planned, not before <paramref name="next"/>; the next run resumes it.</summary>
+    public void RetryUndoAt(DateTimeOffset next)
     {
         RequireRunning();
         State = ProvisioningState.Planned;

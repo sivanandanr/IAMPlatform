@@ -38,6 +38,28 @@ public static class RabbitMqTopology
     /// <summary>Where the retry queue returns a message to the consumer's queue, routed by the queue's name.</summary>
     public static string ReturnExchangeFor(IMessageHandler handler) => QueueFor(handler) + ".return";
 
+    /// <summary>How many times a message was put off without counting (DL-100), at most <see cref="MaxDeferrals"/>.</summary>
+    public const string DeferralHeader = "iam-deferrals";
+
+    public const int MaxDeferrals = 20;
+
+    public static int DeferralsOf(IReadOnlyBasicProperties properties)
+    {
+        ArgumentNullException.ThrowIfNull(properties);
+        var text = HeaderText(properties, DeferralHeader);
+        return int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var deferrals) && deferrals >= 0 ? deferrals : 0;
+    }
+
+    private static string? HeaderText(IReadOnlyBasicProperties properties, string header) =>
+        properties.Headers?.TryGetValue(header, out var value) == true
+            ? value switch
+            {
+                byte[] bytes => System.Text.Encoding.UTF8.GetString(bytes),
+                string s => s,
+                _ => null,
+            }
+            : null;
+
     public static int AttemptOf(IReadOnlyBasicProperties properties)
     {
         ArgumentNullException.ThrowIfNull(properties);

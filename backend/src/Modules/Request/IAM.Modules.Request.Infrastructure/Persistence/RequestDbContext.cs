@@ -48,6 +48,8 @@ public sealed class RequestDbContext(DbContextOptions<RequestDbContext> options)
         name.Property(x => x.SetBy).IsRequired().IsCode(AuditColumns.ActorMaxLength);
         name.HasOne<RequestItem>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
         name.HasIndex(x => new { x.ItemId, x.SetAtUtc });
+        name.Property(x => x.Seq).ValueGeneratedOnAdd();
+        name.HasIndex(x => new { x.ItemId, x.Seq }).IsUnique();
 
         // One waiting item per person and entitlement: a filtered unique index, hand-written in the migrations.
         modelBuilder.ConfigureOutbox("TR_OutboxMessage_Guarded");
