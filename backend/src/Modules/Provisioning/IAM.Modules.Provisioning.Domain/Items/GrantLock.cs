@@ -18,15 +18,39 @@ public sealed class GrantLock
     /// <summary>The provisioning item holding it.</summary>
     public Guid HeldBy { get; private set; }
 
+    /// <summary>
+    /// The run of <see cref="HeldBy"/> that holds it (DL-101): a run that lost its lease can't renew or release the lock of the
+    /// run that took its item over.
+    /// </summary>
+    public Guid ClaimToken { get; private set; }
+
     public DateTimeOffset UntilUtc { get; private set; }
 
-    public static GrantLock Take(Guid accountId, Guid entitlementId, Guid itemId, DateTimeOffset untilUtc)
+    public static GrantLock Take(Guid accountId, Guid entitlementId, Guid itemId, Guid claimToken, DateTimeOffset untilUtc)
     {
-        if (accountId == Guid.Empty || entitlementId == Guid.Empty || itemId == Guid.Empty)
+        if (accountId == Guid.Empty || entitlementId == Guid.Empty)
         {
-            throw new ArgumentException("A grant lock names an account, an entitlement and its holder.", nameof(accountId));
+            throw new ArgumentException("A grant lock names an account and an entitlement.", nameof(accountId));
         }
 
-        return new GrantLock { AccountId = accountId, EntitlementId = entitlementId, HeldBy = itemId, UntilUtc = untilUtc };
+        var taken = new GrantLock { AccountId = accountId, EntitlementId = entitlementId };
+        taken.Hold(itemId, claimToken, untilUtc);
+        return taken;
     }
+
+    /// <summary>Held by this run until <paramref name="untilUtc"/> (taken, renewed, or released with a time already past).</summary>
+    public void Hold(Guid itemId, Guid claimToken, DateTimeOffset untilUtc)
+    {
+        if (itemId == Guid.Empty || claimToken == Guid.Empty)
+        {
+            throw new ArgumentException("A grant lock names its holder and the holder's run.", nameof(itemId));
+        }
+
+        HeldBy = itemId;
+        ClaimToken = claimToken;
+        UntilUtc = untilUtc;
+    }
+
+    /// <summary>Whether this run holds it now.</summary>
+    public bool IsHeldBy(Guid itemId, Guid claimToken, DateTimeOffset now) => HeldBy == itemId && ClaimToken == claimToken && UntilUtc >= now;
 }

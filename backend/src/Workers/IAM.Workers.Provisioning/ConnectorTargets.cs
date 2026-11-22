@@ -24,15 +24,31 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
     }
 
     /// <summary>
-    /// The connector reports a read it couldn't make as "no match" with a code (DL-100): that proves nothing, so it is null here,
-    /// and only a clean read answers yes or no.
+    /// The connector reports a read it couldn't make as "no match" with a code (DL-100): a failure worth retrying proves nothing,
+    /// so it is null here. A read the connector refuses outright (the step itself is invalid) never succeeds later, so it is no
+    /// match, and fails at once rather than after every retry (DL-101). Only a clean read answers yes.
     /// </summary>
     public async Task<bool?> VerifyAsync(TargetStep operation, CancellationToken cancellationToken)
     {
         var result = await connector.VerifyAsync(ToOperation(operation), cancellationToken).ConfigureAwait(false);
-        return result.Code is null ? result.Matches : null;
+        return result.Code switch
+        {
+            null => result.Matches,
+            { } code when RetryableReadCodes.Contains(code) => null,
+            _ => false,
+        };
     }
 
+    /// <summary>The connector codes of a read that failed for now (its transient faults), as against one it refused.</summary>
+    public static readonly IReadOnlySet<string> RetryableReadCodes = new HashSet<string>(StringComparer.Ordinal)
+    {
+        ResultCodes.ConnectorError, ResultCodes.InvalidResponse, ResultCodes.TargetUnavailable, ResultCodes.Throttled, ResultCodes.TimedOut,
+    };
+
+    /// <summary>
+    /// Whether the object is there. A read that fails for now throws (the runner takes it as unknown); a reference the connector
+    /// can't read at all is "not there", which fails closed (AccountNotOnTarget) before anything is granted (DL-101).
+    /// </summary>
     public async Task<bool?> ExistsAsync(string objectType, string id, CancellationToken cancellationToken) =>
         await connector.ReadAsync(new ObjectRef(objectType, id), cancellationToken).ConfigureAwait(false) is not null;
 

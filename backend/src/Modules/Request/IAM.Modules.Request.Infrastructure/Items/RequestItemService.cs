@@ -441,7 +441,8 @@ public sealed class RequestItemService(
             Field("entitlementContentHash", item.EntitlementContentHash),
             Field("accountId", item.AccountId?.ToString() ?? "none"),
             Field("newAccountType", item.NewAccountType ?? "none"),
-            Field("newAccountName", item.NewAccountName ?? "none"),
+            // The proposed name as a hash only (DL-101): no audit record holds a login.
+            Field("newAccountNameHash", Hash(item.NewAccountName)),
             Field("durationDays", item.DurationDays?.ToString(CultureInfo.InvariantCulture) ?? "none"),
             Field("matrixVersionId", item.MatrixVersionId.ToString()),
             Field("matrixContentHash", item.MatrixContentHash),

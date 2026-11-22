@@ -204,16 +204,32 @@ public sealed class ApprovalWorkflowService(
     /// Completes an Action level. For a request item that asks for a new account, the account name as it stands now is recorded
     /// with the completion (DL-099): provisioning uses exactly that name. The approval's instance id is the item id (DL-091). A
     /// name given while this call runs is not the one recorded; it never counts, since the level is closed by this completion.
+    /// Since DL-101 the person must state the name they saw (<paramref name="expectedAccountName"/>) whenever there is one, and it
+    /// is compared only after the engine accepted the person for the level, so the answer tells no one else what the name is.
     /// </summary>
     public async Task<ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, string? note, CancellationToken cancellationToken, string? expectedAccountName = null)
     {
         var name = await items.CurrentAccountNameAsync(instanceId, cancellationToken).ConfigureAwait(false);
-        return await ActAsync(instanceId, "complete", null, (actor, now) =>
-            expectedAccountName is not null && !string.Equals(name?.Name, expectedAccountName, StringComparison.Ordinal)
-                ? throw new ApprovalRefusedException(ApprovalRefusal.AccountNameChanged)
-                : ApprovalActionLog.Completed(
+        return await ActAsync(
+            instanceId,
+            "complete",
+            null,
+            (actor, now) => ApprovalActionLog.Completed(
                 new ActionCompletion(completionId, stageId, actor, null, note, expectedVersion, name?.AssignmentId, name is null ? null : AccountNameHash.Of(name.Name)),
-                now), cancellationToken).ConfigureAwait(false);
+                now),
+            cancellationToken,
+            accepted: () =>
+            {
+                if (name is not null && expectedAccountName is null)
+                {
+                    throw new ApprovalRefusedException(ApprovalRefusal.AccountNameNotConfirmed);
+                }
+
+                if (expectedAccountName is not null && !string.Equals(name?.Name, expectedAccountName, StringComparison.Ordinal))
+                {
+                    throw new ApprovalRefusedException(ApprovalRefusal.AccountNameChanged);
+                }
+            }).ConfigureAwait(false);
     }
 
     public Task<ApprovalInstanceView> ReturnForChangesAsync(Guid instanceId, long expectedVersion, Guid stageId, string? reason, CancellationToken cancellationToken) =>
@@ -246,7 +262,8 @@ public sealed class ApprovalWorkflowService(
         string? permission,
         Func<PersonId, DateTimeOffset, LoggedAction> build,
         CancellationToken cancellationToken,
-        bool needsPerson = true)
+        bool needsPerson = true,
+        Action? accepted = null)
     {
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var row = await db.Instances.SingleOrDefaultAsync(i => i.Id == instanceId, cancellationToken).ConfigureAwait(false)
@@ -296,6 +313,9 @@ public sealed class ApprovalWorkflowService(
 
             action = build(actor, now);
             ApprovalActionLog.Apply(loaded.Instance, action);
+
+            // Checks that may only answer someone the engine accepted for the action (DL-101).
+            accepted?.Invoke();
         }
         catch (ApprovalRefusedException refusal)
         {

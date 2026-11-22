@@ -98,6 +98,10 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                         .HasColumnType("uuid")
                         .HasColumnName("entitlement_id");
 
+                    b.Property<Guid>("ClaimToken")
+                        .HasColumnType("uuid")
+                        .HasColumnName("claim_token");
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasPrecision(6)
                         .HasColumnType("timestamp(6) with time zone")

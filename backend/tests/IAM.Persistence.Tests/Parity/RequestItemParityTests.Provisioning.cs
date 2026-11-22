@@ -354,7 +354,7 @@ public sealed partial class RequestItemParityTests
                 (await scope.Service.GiveAccountNameAsync(itemId, stage.StageId, name, Ct)).AccountName.ShouldBe(name);
             }
 
-            (await workflow.CompleteAsync(itemId, instance.Version, Guid.CreateVersion7(), stage.StageId, "Done", Ct)).State.ShouldBe("Approved");
+            (await workflow.CompleteAsync(itemId, instance.Version, Guid.CreateVersion7(), stage.StageId, "Done", Ct, await SeenNameAsync(itemId))).State.ShouldBe("Approved");
         }
     }
 

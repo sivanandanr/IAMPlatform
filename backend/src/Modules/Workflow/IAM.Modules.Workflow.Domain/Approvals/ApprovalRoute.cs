@@ -111,6 +111,9 @@ public enum ApprovalRefusal
 
     /// <summary>The account name isn't the one the person completing the level saw (DL-100): they must look again.</summary>
     AccountNameChanged = 55,
+
+    /// <summary>The item has a new account's name and the person completing the level didn't state the one they saw (DL-101).</summary>
+    AccountNameNotConfirmed = 56,
 }
 
 /// <summary>An action was refused. The message gives the code only, never a person, reason text or other value.</summary>

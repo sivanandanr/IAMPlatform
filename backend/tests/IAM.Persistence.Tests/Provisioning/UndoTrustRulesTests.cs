@@ -35,6 +35,9 @@ public sealed class UndoTrustRulesTests
     [InlineData("CN=Ben;OU=Users;DC=corp;DC=test")]
     [InlineData("2.5.4.3=Ben,OU=Users,DC=corp,DC=test")]
     [InlineData("3cn=Ben,OU=Users,DC=corp,DC=test")]
+    [InlineData("commonName=Ben,OU=Users,DC=corp,DC=test")]
+    [InlineData("CN=Ben,organizationalUnitName=Users,DC=corp,DC=test")]
+    [InlineData("CN=Ben,OU=Users,domainComponent=corp,DC=test")]
     [InlineData("CN=#04024869,OU=Users,DC=corp,DC=test")]
     [InlineData("CN=Ben+UID=ben,OU=Users,DC=corp,DC=test")]
     [InlineData("{8b1e43a5-2f6c-4d7e-9a10-0c3d5e7f9a1b}")]
@@ -50,6 +53,32 @@ public sealed class UndoTrustRulesTests
     [InlineData("8b1e43a5-2f6c-4d7e-9a10-0c3d5e7f9a1b")]
     public void APlainDistinguishedNameOrGuidIsAccepted(string targetId) =>
         Should.NotThrow(() => AccountRules.ValidateTargetId(targetId));
+
+    [Theory]
+    [InlineData("CN=Ben  Smith,OU=Users,DC=corp,DC=test", "CN=Ben Smith,OU=Users,DC=corp,DC=test")]
+    [InlineData("cn=Ben    Smith,ou=Users,dc=corp,dc=test", "CN=Ben Smith,OU=Users,DC=corp,DC=test")]
+    public void RunsOfSpacesInAValueAreOneSpace(string spaced, string plain) =>
+        AccountRules.TargetIdKey(spaced).ShouldBe(AccountRules.TargetIdKey(plain));
+
+    [Fact]
+    public void AGrantLockIsHeldOnlyByTheRunThatTookIt()
+    {
+        var (item, mine, theirs, now) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+        var held = GrantLock.Take(Guid.CreateVersion7(), Guid.CreateVersion7(), item, mine, now.AddMinutes(1));
+        held.IsHeldBy(item, mine, now).ShouldBeTrue();
+        held.IsHeldBy(item, theirs, now).ShouldBeFalse("a run that lost its lease is another run");
+        held.IsHeldBy(item, mine, now.AddMinutes(2)).ShouldBeFalse("it ran out");
+    }
+
+    [Fact]
+    public async Task AReadTheConnectorRefusesIsNoMatchNotUnknown()
+    {
+        // A step the connector refuses outright (an action it doesn't know) never reads differently later (DL-101).
+        var mock = new MockActiveDirectoryConnector(ConnectorSettings.Default, new InMemoryOperationLedger(), "DC=corp,DC=test");
+        var users = mock.AddContainer("Users");
+        var step = new TargetStep(Guid.CreateVersion7(), "account.unheard.of", ObjectTypes.Account, $"CN=ben,{users.Id}", null, null, new Dictionary<string, string?>());
+        (await new ConnectorTarget(mock).VerifyAsync(step, CancellationToken.None)).ShouldBe(false);
+    }
 
     [Fact]
     public void AnUndoKeepsItsFirstReasonAndCountsItsPasses()

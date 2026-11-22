@@ -29,6 +29,37 @@ public sealed class ProvisioningDecider(
     IAccountProvisioning accountRules,
     ConnectorBindings bindings)
 {
+    /// <summary>
+    /// The new account's name the item's approval stands behind (DL-101), whether or not it still authorises anything: an undo
+    /// checks the runner's stored name against it, so a forged row can't point a disable at another account. Null if the
+    /// approval isn't verified, or the name isn't the one it recorded; throws <see cref="ApprovalChangingException"/> while the
+    /// approval is still being written.
+    /// </summary>
+    public async Task<string?> RecordedAccountNameAsync(Guid itemId, CancellationToken cancellationToken)
+    {
+        var report = await integrity.CheckAsync(itemId, cancellationToken).ConfigureAwait(false);
+        if (report.Status == ApprovalIntegrityStatus.Changing)
+        {
+            throw new ApprovalChangingException();
+        }
+
+        if (report.Status != ApprovalIntegrityStatus.Verified || report.RequestItemId != itemId)
+        {
+            return null;
+        }
+
+        var approvedName = report.AccountName is { } recorded ? new ApprovedAccountName(recorded.AssignmentId, recorded.NameHash) : null;
+        if (await items.FindAsync(itemId, approvedName, cancellationToken).ConfigureAwait(false) is not { AccountName: { } name } item)
+        {
+            return null;
+        }
+
+        var stands = approvedName is null
+            ? !item.NameGiven
+            : string.Equals(AccountNameHash.Of(name), approvedName.NameHash, StringComparison.Ordinal);
+        return stands ? name : null;
+    }
+
     /// <summary>The plan or block for the item, or null when there is nothing to do now.</summary>
     public async Task<ProvisioningPlan?> DecideAsync(Guid itemId, int sequence, DateTimeOffset now, CancellationToken cancellationToken)
     {
