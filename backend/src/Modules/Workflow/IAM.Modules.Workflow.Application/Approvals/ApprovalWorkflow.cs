@@ -160,7 +160,8 @@ public interface IApprovalWorkflow
 
     /// <summary>
     /// Completes an Action level. With <paramref name="expectedAccountName"/>, the account name must still be the one the person
-    /// saw, else <see cref="ApprovalRefusal.AccountNameChanged"/> (DL-100).
+    /// saw, else <see cref="ApprovalRefusal.AccountNameChanged"/> (DL-100). When the item has a new account's name it must be
+    /// given, else <see cref="ApprovalRefusal.AccountNameNotConfirmed"/>; both are checked only for a person the level accepts (DL-101).
     /// </summary>
     Task<ApprovalInstanceView> CompleteAsync(Guid instanceId, long expectedVersion, Guid completionId, Guid stageId, string? note, CancellationToken cancellationToken, string? expectedAccountName = null);
 

@@ -149,6 +149,9 @@ public static partial class AccountRules
         }
     }
 
+    /// <summary>The attribute types a target id's DN may use, by their short names (DL-101); compared ignoring case.</summary>
+    public static readonly IReadOnlySet<string> DnTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "CN", "OU", "DC", "O", "C", "L", "ST", "UID" };
+
     /// <summary>The form names are compared in: lower case (invariant), so another spelling of a name is the same name.</summary>
     public static string NameKey(string name) => name.ToLowerInvariant();
 
@@ -177,7 +180,7 @@ public static partial class AccountRules
         // One spelling per object (DL-100): a distinguished name this can write one way, or a GUID in its plain form.
         if (targetId.Contains('=', StringComparison.Ordinal) ? CanonicalDn(targetId) is null : !Guid.TryParseExact(targetId, "D", out _))
         {
-            throw new AccountRejectedException("TargetId", "must be a distinguished name of named attributes (no quotes, ';', '+' or BER values) or a GUID in the form 00000000-0000-0000-0000-000000000000");
+            throw new AccountRejectedException("TargetId", "must be a distinguished name of CN, OU, DC, O, C, L, ST or UID components (no quotes, ';', '+' or BER values) or a GUID in the form 00000000-0000-0000-0000-000000000000");
         }
     }
 
@@ -287,8 +290,9 @@ public static partial class AccountRules
         static string? Component(StringBuilder typeText, List<(char Char, bool Escaped)> chars)
         {
             var name = typeText.ToString().Trim(' ');
-            // A type by name only (DL-100): an OID such as 2.5.4.3 would be another spelling of CN.
-            if (name.Length == 0 || !char.IsAsciiLetter(name[0]) || !name.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'))
+            // A type by its short name only (DL-100, DL-101): an OID such as 2.5.4.3, or a long name such as commonName, would be
+            // another spelling of CN.
+            if (!DnTypes.Contains(name))
             {
                 return null;
             }
@@ -314,6 +318,12 @@ public static partial class AccountRules
             var written = new StringBuilder(name).Append('=');
             for (var k = start; k < end; k++)
             {
+                // A run of unescaped spaces inside a value is one space (DL-101): a directory compares them as one.
+                if (k > start && chars[k] is (' ', false) && chars[k - 1] is (' ', false))
+                {
+                    continue;
+                }
+
                 var ch = chars[k].Char;
                 var special = ch is ',' or '+' or '"' or '\\' or '<' or '>' or ';' or '='
                     || (k == start && ch is '#' or ' ')

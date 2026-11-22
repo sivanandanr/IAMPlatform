@@ -20,6 +20,12 @@ public interface IAccountDirectory
 
     /// <summary>Whether a live (not closed) account of the application has this name, compared ignoring case (DL-089).</summary>
     Task<bool> IsNameInUseAsync(Guid applicationId, string name, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Whether any recorded account of the application, closed or not, has this target id as its key compares it (DL-101): an
+    /// undo never disables an object an account was recorded for.
+    /// </summary>
+    Task<bool> IsTargetRecordedAsync(Guid applicationId, string targetId, CancellationToken cancellationToken);
 }
 
 /// <summary>A proposed account name with the naming rule version it came from (evidence), or why there is none.</summary>

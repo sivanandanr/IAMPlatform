@@ -35,6 +35,13 @@ namespace IAM.Modules.Provisioning.Infrastructure.Items;
 /// own limit. Every target read is three-way (matches, doesn't, unknown); an unknown read is never taken as an answer. The
 /// lease is renewed before every call to the target, and a call that runs out of time is cancelled before it is abandoned.
 /// </para>
+/// <para>
+/// Since DL-101 an undo waits for another item still running on the same access, and keeps access only for one that
+/// succeeded; a new account's undo needs only its own audited create (everything on it is this item's), and never touches an
+/// object an account was recorded for or a name the approval doesn't stand behind. A create or an entitlement add is never
+/// settled by a read: it runs again under its operation id. A step whose outcome stayed unknown is undone on a new account,
+/// and on an existing account fails <c>OutcomeUnknown</c> for a person, with nothing removed.
+/// </para>
 /// </summary>
 public sealed partial class ProvisioningRunner(
     ProvisioningDbContext db,
@@ -51,6 +58,9 @@ public sealed partial class ProvisioningRunner(
 {
     /// <summary>The code of a removal skipped because another item still holds the access (DL-100).</summary>
     public const string KeptForOtherItem = "KeptForOtherItem";
+
+    /// <summary>The problem of an item whose create or entitlement add has an unknown outcome on an account it didn't create (DL-101).</summary>
+    public const string OutcomeUnknown = "OutcomeUnknown";
 
     /// <summary>The most audit records read for one item's undo check.</summary>
     public const int MaxAuditRecords = 1_000;
@@ -83,7 +93,9 @@ public sealed partial class ProvisioningRunner(
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 // One item's failure doesn't stop the batch (DL-097). It stays running until its lease runs out; taking it over
-                // counts as an attempt (or an undo pass), so it ends for a person rather than being retried for ever.
+                // counts as an attempt (or an undo pass), so it ends for a person rather than being retried for ever. Logged by
+                // the error's type only (DL-101).
+                LogItemRunFailed(logger, id, ex.GetType().Name);
                 db.ChangeTracker.Clear();
             }
         }
@@ -135,9 +147,25 @@ public sealed partial class ProvisioningRunner(
         var plan = operations.Where(o => o.Step <= ProvisioningPlanner.MaxPlanSteps).ToList();
         var undoing = item.UndoReason is not null || operations.Any(o => o.Step > ProvisioningPlanner.MaxPlanSteps);
 
+        var lastAttempt = takeover && item.Attempts >= settings.MaxAttempts;
+
         // A new account recorded by a run that stopped before finishing is done (DL-096), even on its last attempt (DL-099);
-        // but not if its access was being undone meanwhile: the record and the target disagree, for a person (DL-100).
-        if (item.NewAccountType is not null && await accounts.FindRecordedAsync(item.Id, cancellationToken).ConfigureAwait(false) is { } already)
+        // but not if its access was being undone meanwhile: the record and the target disagree, for a person (DL-100). A read
+        // that keeps failing ends on the last attempt (DL-101), for a person, who also looks at anything its steps did.
+        Guid? already;
+        try
+        {
+            already = item.NewAccountType is null ? null : await accounts.FindRecordedAsync(item.Id, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (lastAttempt && ex is not OperationCanceledException)
+        {
+            var needed = undoing || ProvisioningPlanner.Undo(item.Id, plan).Count > 0;
+            item.Fail(needed ? "UndoFailed" : "RunnerError", Now());
+            await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, null, cancellationToken, "RunnerError").ConfigureAwait(false);
+            return;
+        }
+
+        if (already is { } recordedAccount)
         {
             if (undoing)
             {
@@ -146,12 +174,11 @@ public sealed partial class ProvisioningRunner(
                 return;
             }
 
-            item.Succeed(already, Now());
+            item.Succeed(recordedAccount, Now());
             await SaveAuditedAsync(item, ProvisioningAuditActions.Succeeded, AuditOutcome.Succeeded, null, cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        var lastAttempt = takeover && item.Attempts >= settings.MaxAttempts;
         IProvisioningTarget? found;
         try
         {
@@ -243,7 +270,7 @@ public sealed partial class ProvisioningRunner(
         {
             // An entitlement on an existing account is changed by one item at a time (DL-100).
             var locked = operation.Action == ProvisioningPlanner.EntitlementAdd && item.AccountId is not null;
-            if (locked && !await TakeGrantLockAsync(item, cancellationToken).ConfigureAwait(false))
+            if (locked && !await TakeGrantLockAsync(run, cancellationToken).ConfigureAwait(false))
             {
                 await RetryOrFailAsync(run, null, "GrantBusy", cancellationToken).ConfigureAwait(false);
                 return;
@@ -260,7 +287,7 @@ public sealed partial class ProvisioningRunner(
             {
                 if (locked)
                 {
-                    await ReleaseGrantLockAsync(item).ConfigureAwait(false);
+                    await ReleaseGrantLockAsync(run).ConfigureAwait(false);
                 }
             }
         }
@@ -324,14 +351,16 @@ public sealed partial class ProvisioningRunner(
         operation.Start();
 
         // A step its runner was in the middle of may already be done: the target is read before it runs again. Not for a
-        // create: an object being there doesn't prove this operation made it (DL-096), so the create runs again under its
-        // operation id and the connector's ledger answers.
-        var result = interrupted && !creates && await VerifyAsync(run, step, cancellationToken).ConfigureAwait(false) == true
+        // create or an entitlement add: an object or a membership being there doesn't prove this operation made it (DL-096,
+        // DL-101), so it runs again under its operation id and the connector's ledger answers (Applied if it was this one).
+        var ledgered = creates || operation.Action == ProvisioningPlanner.EntitlementAdd;
+        var result = interrupted && !ledgered && await VerifyAsync(run, step, cancellationToken).ConfigureAwait(false) == true
             ? new StepResult(StepStatus.Done, "AlreadyInState")
             : await RunStepAsync(run, step, cancellationToken).ConfigureAwait(false);
-        if (result.Status == StepStatus.Unknown)
+        var unsettled = result.Status == StepStatus.Unknown;
+        if (unsettled)
         {
-            result = !creates && await VerifyAsync(run, step, cancellationToken).ConfigureAwait(false) == true
+            result = !ledgered && await VerifyAsync(run, step, cancellationToken).ConfigureAwait(false) == true
                 ? new StepResult(StepStatus.Done, result.Code)
                 : new StepResult(StepStatus.Retry, result.Code ?? "Unknown");
         }
@@ -350,7 +379,7 @@ public sealed partial class ProvisioningRunner(
                 return true;
 
             case StepStatus.Retry:
-                await RetryOrFailAsync(run, operation, result.Code, cancellationToken).ConfigureAwait(false);
+                await RetryOrFailAsync(run, operation, result.Code, cancellationToken, unsettled && ledgered).ConfigureAwait(false);
                 return false;
 
             default:
@@ -361,8 +390,21 @@ public sealed partial class ProvisioningRunner(
         }
     }
 
-    /// <summary>One run's item, target and stored steps.</summary>
-    private sealed record Run(ProvisioningItem Item, IProvisioningTarget Target, List<ProvisioningOperation> Plan, List<ProvisioningOperation> Operations);
+    /// <summary>One run's item, target and stored steps; its own claim token and the grant lock it holds now (DL-101).</summary>
+    private sealed record Run(ProvisioningItem Item, IProvisioningTarget Target, List<ProvisioningOperation> Plan, List<ProvisioningOperation> Operations)
+    {
+        public Guid Token { get; } = Guid.CreateVersion7();
+
+        public GrantLock? Lock { get; set; }
+    }
+
+    /// <summary>Whether another item still needs the access an undo would remove (DL-101).</summary>
+    private enum Holder
+    {
+        None = 0,
+        Succeeded = 1,
+        Settling = 2,
+    }
 
     private enum UndoOutcome
     {
@@ -387,7 +429,7 @@ public sealed partial class ProvisioningRunner(
     }
 
     /// <summary>A temporary failure: back to planned with a growing delay, or failed (and undone) once the attempts run out.</summary>
-    private async Task RetryOrFailAsync(Run run, ProvisioningOperation? operation, string? code, CancellationToken cancellationToken)
+    private async Task RetryOrFailAsync(Run run, ProvisioningOperation? operation, string? code, CancellationToken cancellationToken, bool unknown = false)
     {
         if (run.Item.Attempts + 1 < settings.MaxAttempts)
         {
@@ -397,7 +439,8 @@ public sealed partial class ProvisioningRunner(
             return;
         }
 
-        operation?.Fail(code, Now());
+        // A create or add whose last call broke off: whether it changed the target is unknown, and says so (DL-101).
+        operation?.Fail(unknown ? OutcomeUnknown : code, Now());
         await UndoAndFailAsync(run, "RetriesExhausted", operation, code, cancellationToken).ConfigureAwait(false);
     }
 
@@ -410,7 +453,19 @@ public sealed partial class ProvisioningRunner(
     {
         var item = run.Item;
         var undo = ProvisioningPlanner.Undo(item.Id, run.Plan);
-        if (undo.Count == 0 && item.UndoReason is null && !run.Operations.Any(o => o.Step > ProvisioningPlanner.MaxPlanSteps))
+        var started = item.UndoReason is not null || run.Operations.Any(o => o.Step > ProvisioningPlanner.MaxPlanSteps);
+
+        // A create, or an add on an account this item didn't create, whose outcome is unknown (DL-101): nobody can tell what it
+        // changed or whether the access was there before, so nothing is called and a person reconciles it. An add on an account
+        // this item created is undone below whatever it did: everything on that account is this item's.
+        if (!started && UnknownOutcome(run.Plan))
+        {
+            item.Fail(OutcomeUnknown, Now());
+            await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, operation, cancellationToken, reason).ConfigureAwait(false);
+            return;
+        }
+
+        if (undo.Count == 0 && !started)
         {
             item.Fail(reason, Now());
             await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, operation, cancellationToken, code).ConfigureAwait(false);
@@ -432,6 +487,16 @@ public sealed partial class ProvisioningRunner(
                 await SaveAuditedAsync(item, ProvisioningAuditActions.Failed, AuditOutcome.Failed, operation, cancellationToken, item.UndoReason ?? reason).ConfigureAwait(false);
                 break;
         }
+    }
+
+    /// <summary>Whether a create, or an add on an account this item didn't create, has an unknown outcome (DL-101).</summary>
+    private static bool UnknownOutcome(IReadOnlyList<ProvisioningOperation> plan)
+    {
+        var create = plan.FirstOrDefault(o => o.Action == ProvisioningPlanner.AccountCreate);
+        var add = plan.FirstOrDefault(o => o.Action == ProvisioningPlanner.EntitlementAdd);
+        return create is not null ? Unknown(create) : add is not null && Unknown(add);
+
+        static bool Unknown(ProvisioningOperation o) => o.State == ProvisioningState.Running || o.ResultCode == OutcomeUnknown;
     }
 
     /// <summary>
@@ -463,7 +528,23 @@ public sealed partial class ProvisioningRunner(
         item.Renew(Now(), settings.Lease);
         await SaveAuditedAsync(item, ProvisioningAuditActions.StepUndone, AuditOutcome.Failed, null, cancellationToken, item.UndoReason).ConfigureAwait(false);
 
-        if (stored.Count == 0 || !await TrustedAsync(run, stored, cancellationToken).ConfigureAwait(false))
+        if (stored.Count == 0)
+        {
+            return UndoOutcome.Failed;
+        }
+
+        bool trusted;
+        try
+        {
+            trusted = await TrustedAsync(run, stored, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ApprovalChangingException)
+        {
+            // The approval whose name the undo checks is being written: tried again later (DL-101).
+            return UndoOutcome.Later;
+        }
+
+        if (!trusted)
         {
             return UndoOutcome.Failed;
         }
@@ -476,16 +557,24 @@ public sealed partial class ProvisioningRunner(
             }
 
             var removes = operation.Action == ProvisioningPlanner.EntitlementRemove && item.AccountId is not null;
-            if (removes && !await TakeGrantLockAsync(item, cancellationToken).ConfigureAwait(false))
+            if (removes && !await TakeGrantLockAsync(run, cancellationToken).ConfigureAwait(false))
             {
                 return UndoOutcome.Later;
             }
 
             try
             {
-                if (removes && await HeldElsewhereAsync(item, cancellationToken).ConfigureAwait(false))
+                var holder = removes ? await OtherHolderAsync(run, operation, cancellationToken).ConfigureAwait(false) : Holder.None;
+                if (holder == Holder.Settling)
                 {
-                    // Another item granted the same access and still holds it: it stays (DL-100).
+                    // Another item on the same access hasn't finished: it may yet hold it, or fail with nothing of its own to
+                    // undo. Wait for it (DL-101); the lock is released, so it can finish.
+                    return UndoOutcome.Later;
+                }
+
+                if (holder == Holder.Succeeded)
+                {
+                    // Another item succeeded with the same access: it stays (DL-100, DL-101).
                     operation.Start();
                     await RenewOrStopAsync(item, cancellationToken).ConfigureAwait(false);
                     operation.Complete(KeptForOtherItem, Now());
@@ -522,7 +611,7 @@ public sealed partial class ProvisioningRunner(
             {
                 if (removes)
                 {
-                    await ReleaseGrantLockAsync(item).ConfigureAwait(false);
+                    await ReleaseGrantLockAsync(run).ConfigureAwait(false);
                 }
             }
         }
@@ -548,6 +637,8 @@ public sealed partial class ProvisioningRunner(
     /// with its operation id, fingerprint and code Applied, and none of its records is damaged; a new account is the item's own
     /// account in the application's account container; an existing account is the Account module's target id for the item's
     /// account; the group is in the application's group container; and each undo step names exactly those objects.
+    /// Since DL-101 a new account's undo reverses its create only (everything on the account is this item's, whatever the add
+    /// did), the name must be the one the approval stands behind, and no account may have been recorded for the object.
     /// </summary>
     private async Task<bool> TrustedAsync(Run run, List<ProvisioningOperation> undo, CancellationToken cancellationToken)
     {
@@ -574,8 +665,14 @@ public sealed partial class ProvisioningRunner(
                 return false;
             }
 
+            if (!string.Equals(await decider.RecordedAccountNameAsync(item.Id, cancellationToken).ConfigureAwait(false), item.AccountName, StringComparison.Ordinal)
+                || await accountDirectory.IsTargetRecordedAsync(applicationId, create[0].TargetId, cancellationToken).ConfigureAwait(false))
+            {
+                return false;
+            }
+
             account = create[0].TargetId;
-            reversed = [create[0], add[0]];
+            reversed = [create[0]];
         }
         else
         {
@@ -616,63 +713,94 @@ public sealed partial class ProvisioningRunner(
             entry.Payload.TryGetValue(field, out var text) && string.Equals(text, value, StringComparison.Ordinal);
     }
 
-    /// <summary>Whether another item still holds the item's entitlement on its account: succeeded, or running and not being undone.</summary>
-    private Task<bool> HeldElsewhereAsync(ProvisioningItem item, CancellationToken cancellationToken) =>
-        db.Items.AsNoTracking().AnyAsync(
-            i => i.Id != item.Id && i.AccountId == item.AccountId && i.EntitlementId == item.EntitlementId
-                && (i.State == ProvisioningState.Succeeded || (i.State == ProvisioningState.Running && i.UndoReason == null)),
-            cancellationToken);
-
-    /// <summary>Takes the item's account and entitlement for one change (DL-100); false if another item holds them now.</summary>
-    private async Task<bool> TakeGrantLockAsync(ProvisioningItem item, CancellationToken cancellationToken)
+    /// <summary>
+    /// Whether another item needs the access a removal would take (DL-101), by the account and the group the removal names:
+    /// one that succeeded with its add holds it; one planned or running, and not being undone itself, hasn't settled yet.
+    /// </summary>
+    private async Task<Holder> OtherHolderAsync(Run run, ProvisioningOperation removal, CancellationToken cancellationToken)
     {
+        var item = run.Item;
+        var account = removal.TargetId;
+        var group = removal.RelatedId;
+        var others = db.Operations.AsNoTracking()
+            .Where(o => o.ItemId != item.Id && o.Action == ProvisioningPlanner.EntitlementAdd && o.TargetId == account && o.RelatedId == group)
+            .Join(db.Items.AsNoTracking().Where(i => i.AccountId == item.AccountId), o => o.ItemId, i => i.Id, (o, i) => new { i.State, i.UndoReason, Step = o.State });
+        if (await others.AnyAsync(x => (x.State == ProvisioningState.Planned || x.State == ProvisioningState.Running) && x.UndoReason == null, cancellationToken).ConfigureAwait(false))
+        {
+            return Holder.Settling;
+        }
+
+        return await others.AnyAsync(x => x.State == ProvisioningState.Succeeded && x.Step == ProvisioningState.Succeeded, cancellationToken).ConfigureAwait(false)
+            ? Holder.Succeeded
+            : Holder.None;
+    }
+
+    /// <summary>
+    /// Takes the item's account and entitlement for one change (DL-100) for this run (DL-101); false if another item or run holds
+    /// them now. Saved through the change tracker, so the row's audit columns and version move with it.
+    /// </summary>
+    private async Task<bool> TakeGrantLockAsync(Run run, CancellationToken cancellationToken)
+    {
+        var item = run.Item;
         if (item.AccountId is not { } account || item.EntitlementId is not { } entitlement)
         {
             return false;
         }
 
+        // Anything pending is the item's own and saved first, so a conflict below can only be the lock's.
+        await RenewOrStopAsync(item, cancellationToken).ConfigureAwait(false);
         var now = Now();
         var until = now + settings.Lease;
-        var holder = item.Id;
-        var taken = await db.GrantLocks
-            .Where(l => l.AccountId == account && l.EntitlementId == entitlement && (l.HeldBy == holder || l.UntilUtc < now))
-            .ExecuteUpdateAsync(s => s.SetProperty(l => l.HeldBy, holder).SetProperty(l => l.UntilUtc, until), cancellationToken)
-            .ConfigureAwait(false);
-        if (taken == 1)
+        var row = await db.GrantLocks.SingleOrDefaultAsync(l => l.AccountId == account && l.EntitlementId == entitlement, cancellationToken).ConfigureAwait(false);
+        if (row is null)
         {
-            return true;
+            row = GrantLock.Take(account, entitlement, item.Id, run.Token, until);
+            db.GrantLocks.Add(row);
         }
-
-        if (await db.GrantLocks.AnyAsync(l => l.AccountId == account && l.EntitlementId == entitlement, cancellationToken).ConfigureAwait(false))
+        else if (row.IsHeldBy(item.Id, run.Token, now) || row.UntilUtc < now)
         {
+            row.Hold(item.Id, run.Token, until);
+        }
+        else
+        {
+            db.Entry(row).State = EntityState.Detached;
             return false;
         }
 
-        var row = GrantLock.Take(account, entitlement, holder, until);
-        db.GrantLocks.Add(row);
         try
         {
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            run.Lock = row;
             return true;
         }
-        catch (DbUpdateException ex) when (ex is not DbUpdateConcurrencyException)
+        catch (DbUpdateException)
         {
-            // Another item took it first.
-            return false;
-        }
-        finally
-        {
+            // Another item or run took it first.
             db.Entry(row).State = EntityState.Detached;
+            return false;
         }
     }
 
-    private async Task ReleaseGrantLockAsync(ProvisioningItem item)
+    /// <summary>Ends this run's hold (DL-101): a lock another run has taken meanwhile is left as it is.</summary>
+    private async Task ReleaseGrantLockAsync(Run run)
     {
+        if (run.Lock is not { } row)
+        {
+            return;
+        }
+
+        run.Lock = null;
         var released = Now().AddSeconds(-1);
-        var holder = item.Id;
+        var item = run.Item;
+        var token = run.Token;
+        db.Entry(row).State = EntityState.Detached;
         await db.GrantLocks
-            .Where(l => l.AccountId == item.AccountId && l.EntitlementId == item.EntitlementId && l.HeldBy == holder)
-            .ExecuteUpdateAsync(s => s.SetProperty(l => l.UntilUtc, released), CancellationToken.None)
+            .Where(l => l.AccountId == row.AccountId && l.EntitlementId == row.EntitlementId && l.HeldBy == item.Id && l.ClaimToken == token)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(l => l.UntilUtc, released)
+                    .SetProperty(l => EF.Property<DateTimeOffset>(l, AuditColumns.ModifiedAtUtc), Now())
+                    .SetProperty(l => EF.Property<long>(l, AuditColumns.Version), l => EF.Property<long>(l, AuditColumns.Version) + 1),
+                CancellationToken.None)
             .ConfigureAwait(false);
     }
 
@@ -681,6 +809,16 @@ public sealed partial class ProvisioningRunner(
     {
         item.Renew(Now(), settings.Lease);
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Before a call to the target: the lease, and the grant lock this run holds, are extended together (DL-100, DL-101). A lock
+    /// another run took meanwhile (its version moved) stops this run like a lost lease.
+    /// </summary>
+    private async Task RenewForCallAsync(Run run, CancellationToken cancellationToken)
+    {
+        run.Lock?.Hold(run.Item.Id, run.Token, Now() + settings.Lease);
+        await RenewOrStopAsync(run.Item, cancellationToken).ConfigureAwait(false);
     }
 
     private static TargetStep Step(ProvisioningOperation o) => new(
@@ -693,12 +831,12 @@ public sealed partial class ProvisioningRunner(
         JsonSerializer.Deserialize<Dictionary<string, string?>>(o.Attributes) ?? []);
 
     /// <summary>
-    /// A connector call within the step time limit (DL-097), after renewing the lease (DL-100). The limit is a hard one: a call
-    /// that runs out of time is cancelled and abandoned, and any later fault of it is logged rather than lost.
+    /// A connector call within the step time limit (DL-097). The limit is a hard one: a call that runs out of time is cancelled
+    /// and abandoned, and any later fault of it is logged rather than lost. The lease is renewed by the caller first, outside
+    /// the call's error handling (DL-101), so a database error is never taken for the target's.
     /// </summary>
     private async Task<T> CallAsync<T>(ProvisioningItem item, Func<CancellationToken, Task<T>> call, CancellationToken cancellationToken)
     {
-        await RenewOrStopAsync(item, cancellationToken).ConfigureAwait(false);
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         limit.CancelAfter(settings.StepTimeout);
         var task = call(limit.Token);
@@ -706,7 +844,7 @@ public sealed partial class ProvisioningRunner(
         {
             return await task.WaitAsync(settings.StepTimeout, cancellationToken).ConfigureAwait(false);
         }
-        catch (TimeoutException)
+        catch (TimeoutException) when (!task.IsCompleted)
         {
             await limit.CancelAsync().ConfigureAwait(false);
             var itemId = item.Id;
@@ -722,11 +860,12 @@ public sealed partial class ProvisioningRunner(
     /// <summary>Runs a step; a call that breaks off or runs out of time (not shutdown) has an unknown outcome.</summary>
     private async Task<StepResult> RunStepAsync(Run run, TargetStep step, CancellationToken cancellationToken)
     {
+        await RenewForCallAsync(run, cancellationToken).ConfigureAwait(false);
         try
         {
             return await CallAsync(run.Item, ct => run.Target.RunAsync(step, ct), cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is not DbUpdateConcurrencyException && (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested))
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return new StepResult(StepStatus.Unknown, "CallFailed");
         }
@@ -735,11 +874,12 @@ public sealed partial class ProvisioningRunner(
     /// <summary>Whether an object is on the target; null if the read failed (it proves nothing).</summary>
     private async Task<bool?> ExistsAsync(Run run, string objectType, string id, CancellationToken cancellationToken)
     {
+        await RenewForCallAsync(run, cancellationToken).ConfigureAwait(false);
         try
         {
             return await CallAsync(run.Item, ct => run.Target.ExistsAsync(objectType, id, ct), cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is not DbUpdateConcurrencyException && (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested))
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return null;
         }
@@ -748,11 +888,12 @@ public sealed partial class ProvisioningRunner(
     /// <summary>Whether the target matches a step; null if the read failed (it proves nothing).</summary>
     private async Task<bool?> VerifyAsync(Run run, TargetStep step, CancellationToken cancellationToken)
     {
+        await RenewForCallAsync(run, cancellationToken).ConfigureAwait(false);
         try
         {
             return await CallAsync(run.Item, ct => run.Target.VerifyAsync(step, ct), cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is not DbUpdateConcurrencyException && (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested))
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return null;
         }
@@ -813,6 +954,9 @@ public sealed partial class ProvisioningRunner(
     private DateTimeOffset Now() => UtcMicrosecondConverter.TruncateToMicroseconds(clock.GetUtcNow());
 
     private static AuditPayloadField Field(string name, string value) => new(name, value, AuditFieldClass.Plain);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Running provisioning item {ItemId} failed ({ErrorType}); it is taken over when its lease runs out.")]
+    private static partial void LogItemRunFailed(ILogger logger, Guid itemId, string errorType);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "A target call abandoned at its time limit for item {ItemId} later failed ({ErrorType}).")]
     private static partial void LogAbandonedCallFailed(ILogger logger, Guid itemId, string errorType);

@@ -76,17 +76,18 @@ public sealed partial class RequestItemParityTests
     }
 
     [Fact]
-    public async Task AnUnknownOutcomeOrAnInterruptedStepIsSettledByReadingTheTarget()
+    public async Task AnUnknownOutcomeOrAnInterruptedAddRunsAgainUnderItsOperationId()
     {
-        // The call broke off, but the change was made: the read says so, and the step is done without running again.
+        // The call broke off. The membership may be there, but a read can't say this operation made it (DL-101): the add is
+        // tried again later under its operation id, and the connector's ledger answers.
         var unknown = await PlannedExistingAsync();
         var target = new ScriptedTarget(StepStatus.Unknown) { Matches = true };
         (await RunAsync(unknown, target)).ShouldBeTrue();
-        (await PlannedAsync(unknown)).Item.State.ShouldBe(ProvisioningState.Succeeded);
+        (await PlannedAsync(unknown)).Item.State.ShouldBe(ProvisioningState.Planned);
         target.Runs.ShouldBe(1);
 
-        // A runner stopped in the middle of a step (here: shut down): the item stays running until its lease expires, then the
-        // next runner reads the target first and doesn't run the step again.
+        // A runner stopped in the middle of the add (here: shut down): the item stays running until its lease expires, then the
+        // next runner runs it again under the same operation id rather than reading the target (DL-101).
         var interrupted = await PlannedExistingAsync();
         var clock = new MovingClock(DateTimeOffset.UtcNow);
         using (var stop = new CancellationTokenSource())
@@ -98,12 +99,14 @@ public sealed partial class RequestItemParityTests
         var (running, steps) = await PlannedAsync(interrupted);
         running.State.ShouldBe(ProvisioningState.Running);
         steps.Single().State.ShouldBe(ProvisioningState.Running);
-        var next = new ScriptedTarget(StepStatus.Rejected) { Matches = true };
+        var next = new ScriptedTarget(StepStatus.Done) { DoneCode = "Applied", Matches = true };
         (await RunAsync(interrupted, next, clock)).ShouldBeFalse("its lease hasn't expired");
         clock.Advance(TimeSpan.FromMinutes(10));
         (await RunAsync(interrupted, next, clock)).ShouldBeTrue();
-        (await PlannedAsync(interrupted)).Item.State.ShouldBe(ProvisioningState.Succeeded);
-        next.Runs.ShouldBe(0, "the target already had the change");
+        var (done, doneSteps) = await PlannedAsync(interrupted);
+        done.State.ShouldBe(ProvisioningState.Succeeded);
+        doneSteps.Single().ResultCode.ShouldBe(ProvisioningPlanner.Applied, "the ledger's answer, not a read's");
+        next.Runs.ShouldBe(1, "run again under its operation id");
     }
 
     [Fact]

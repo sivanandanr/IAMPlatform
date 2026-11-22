@@ -35,6 +35,7 @@ public sealed partial class RequestItemParityTests
         (await RunAsync(item, target)).ShouldBeTrue();
         var (failed, steps) = await PlannedAsync(item);
         failed.ShouldSatisfyAllConditions(i => i.State.ShouldBe(ProvisioningState.Failed), i => i.Problem.ShouldBe("UndoFailed"), i => i.UndoReason.ShouldBe("VerifyMismatch"));
+        steps.Where(s => s.Step > 10).Count().ShouldBe(1, "the removal is stored");
         steps.Where(s => s.Step > 10).ShouldAllBe(s => s.State == ProvisioningState.Planned, "stored, never run");
         target.Runs.ShouldBe(0, "nothing was called on the target");
     }
@@ -54,6 +55,13 @@ public sealed partial class RequestItemParityTests
         (await RunAsync(item, target, clock, groupContainer: "OU=Other Groups,DC=corp,DC=test")).ShouldBeTrue();
         (await PlannedAsync(item)).Item.ShouldSatisfyAllConditions(i => i.State.ShouldBe(ProvisioningState.Failed), i => i.Problem.ShouldBe("UndoFailed"));
         target.Runs.ShouldBe(1, "only the add ran");
+
+        // The same steps and audit in the application's own scope are undone (DL-101): only the scope refused the one above.
+        var control = await PlannedExistingAsync();
+        var controlTarget = new ScriptedTarget(StepStatus.Done) { DoneCode = "Applied", MatchesStep = s => s.Action == ProvisioningPlanner.EntitlementRemove };
+        (await RunAsync(control, controlTarget, clock)).ShouldBeTrue();
+        (await PlannedAsync(control)).Item.Problem.ShouldBe("VerifyMismatch");
+        controlTarget.Runs.ShouldBe(2, "the add, then its removal");
     }
 
     [Fact]
@@ -62,17 +70,7 @@ public sealed partial class RequestItemParityTests
         // Another item already granted the same entitlement on the same account and succeeded. (One waiting request per person
         // and entitlement means this can't come from two requests today; the check is for when requests can be made again.)
         var second = await PlannedExistingAsync();
-        var (planned, _) = await PlannedAsync(second);
-        await using (var context = TestSupport.CreateProvisioning(db.Provider, db.ProvisioningAppConnectionString, new AuditingSaveChangesInterceptor(TimeProvider.System, new FixedActor("system:provisioning"))))
-        {
-            var now = DateTimeOffset.UtcNow;
-            var holder = ProvisioningItem.Plan(Guid.CreateVersion7(), 1,
-                new ItemDetails(planned.Beneficiary!, planned.ApplicationId!.Value, planned.EntitlementId!.Value, planned.EntitlementVersionId!.Value, planned.AccountId, null, null), "mock-ad", now);
-            holder.Claim(now, TimeSpan.FromMinutes(1));
-            holder.Succeed(null, now);
-            context.Items.Add(holder);
-            await context.SaveChangesAsync(Ct);
-        }
+        await HolderAsync(second, succeeded: true);
 
         // This item's run fails after its add: its undo keeps what the other item holds.
         var target = new ScriptedTarget(StepStatus.Done) { DoneCode = "Applied", MatchesStep = s => s.Action == ProvisioningPlanner.EntitlementRemove };

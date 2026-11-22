@@ -226,7 +226,7 @@ public sealed partial class RequestItemParityTests(ParityDatabase db, RabbitMqBr
         await using (ownerContext)
         {
             var instance = (await ownerWorkflow.FindAsync(item.Id, Ct)).ShouldNotBeNull();
-            await ownerWorkflow.CompleteAsync(item.Id, instance.Version, Guid.CreateVersion7(), nameStage, "Named", Ct);
+            await ownerWorkflow.CompleteAsync(item.Id, instance.Version, Guid.CreateVersion7(), nameStage, "Named", Ct, await SeenNameAsync(item.Id));
         }
 
         await Refused(world.EntitlementOwner, nameStage, "adm.later", RequestRefusal.NotOnStage);
@@ -472,6 +472,9 @@ public sealed partial class RequestItemParityTests(ParityDatabase db, RabbitMqBr
         _disposables.Add(request);
         return new RequestItemSource(request);
     }
+
+    /// <summary>The name the item has now, as the person completing its level sees it and must confirm (DL-101).</summary>
+    private async Task<string?> SeenNameAsync(Guid itemId) => (await ItemSource().CurrentAccountNameAsync(itemId, Ct))?.Name;
 
     private async Task<MessageEnvelope> OutboxEnvelopeAsync(Guid itemId)
     {

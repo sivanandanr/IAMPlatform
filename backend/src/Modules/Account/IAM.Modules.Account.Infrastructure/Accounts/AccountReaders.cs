@@ -34,6 +34,13 @@ public sealed class AccountDirectory(AccountDbContext db) : IAccountDirectory
         return db.Accounts.AnyAsync(a => a.ApplicationId == applicationId && a.NameKey == key && a.Status != AccountStatus.Closed, cancellationToken);
     }
 
+    public Task<bool> IsTargetRecordedAsync(Guid applicationId, string targetId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(targetId);
+        var key = AccountRules.TargetIdKey(targetId);
+        return db.Accounts.AnyAsync(a => a.ApplicationId == applicationId && a.TargetIdKey == key, cancellationToken);
+    }
+
     private static AccountRecord Record(AccountEntity a) => new(a.Id, a.ApplicationId, a.Type.ToString(), a.Name, a.TargetId, a.Owner, a.Status.ToString(), a.Verified);
 }
 

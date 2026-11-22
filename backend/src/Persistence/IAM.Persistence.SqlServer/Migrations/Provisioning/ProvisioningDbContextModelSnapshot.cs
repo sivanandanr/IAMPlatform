@@ -90,6 +90,9 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                     b.Property<Guid>("EntitlementId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid>("ClaimToken")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasPrecision(6)
                         .HasColumnType("datetimeoffset(6)");

@@ -82,7 +82,7 @@ public sealed partial class RequestItemParityTests
             using (new Activity("test.complete").Start())
             {
                 instance = (await workflow.FindAsync(item.Id, Ct)).ShouldNotBeNull();
-                (await workflow.CompleteAsync(item.Id, instance.Version, Guid.CreateVersion7(), action, "Created", Ct)).State.ShouldBe("Approved");
+                (await workflow.CompleteAsync(item.Id, instance.Version, Guid.CreateVersion7(), action, "Created", Ct, await SeenNameAsync(item.Id))).State.ShouldBe("Approved");
             }
         }
 

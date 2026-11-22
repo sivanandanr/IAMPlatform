@@ -182,6 +182,13 @@ public sealed class ProvisioningRulesTests
             host.Services.GetRequiredService<IOperationLedger>().ShouldBeOfType<DurableOperationLedger>();
         }
 
+        // The undo and postponement limits come from configuration too (DL-101).
+        using (var host = ProvisioningWorkerHost.Build([], [.. Complete, new("Provisioning:Runner:UndoMaxAttempts", "3"), new("Provisioning:Runner:MaxPostponements", "7")]))
+        {
+            var settings = host.Services.GetRequiredService<ProvisioningRunnerSettings>();
+            settings.ShouldSatisfyAllConditions(s => s.UndoMaxAttempts.ShouldBe(3), s => s.MaxPostponements.ShouldBe(7));
+        }
+
         foreach (var schema in new[] { "provisioning", "workflow", "audit", "request", "catalog", "account" })
         {
             Should.Throw<InvalidOperationException>(() => ProvisioningWorkerHost.Build([], Complete.Where(s => s.Key != $"ConnectionStrings:{schema}")), schema)
