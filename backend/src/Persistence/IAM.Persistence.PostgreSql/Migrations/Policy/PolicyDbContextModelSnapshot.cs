@@ -131,6 +131,11 @@ namespace IAM.Persistence.PostgreSql.Migrations.Policy
                         .UseCollation("C")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<string>("Editors")
+                        .HasMaxLength(4100)
+                        .HasColumnType("character varying(4100)")
+                        .HasColumnName("editors");
+
                     b.Property<Guid>("MatrixId")
                         .HasColumnType("uuid")
                         .HasColumnName("matrix_id");

@@ -32,6 +32,9 @@ public sealed class Account
     /// <summary>The target's own identifier for the account; none until it is known.</summary>
     public string? TargetId { get; private set; }
 
+    /// <summary><see cref="TargetId"/> in lower case (DL-098): one directory object is one account, whatever its spelling.</summary>
+    public string? TargetIdKey { get; private set; }
+
     /// <summary>The person the account belongs to: its holder (Primary, Secondary) or owner (Service, Shared).</summary>
     public string Owner { get; private set; }
 
@@ -71,6 +74,7 @@ public sealed class Account
             Name = name,
             NameKey = AccountRules.NameKey(name),
             TargetId = targetId,
+            TargetIdKey = AccountRules.TargetIdKey(targetId),
             Owner = owner,
             Status = AccountStatus.Active,
             Origin = AccountOrigin.Created,
@@ -88,6 +92,7 @@ public sealed class Account
         Name = request.Name,
         NameKey = AccountRules.NameKey(request.Name),
         TargetId = request.TargetId,
+        TargetIdKey = AccountRules.TargetIdKey(request.TargetId),
         Owner = request.Owner,
         Status = AccountStatus.Active,
         Origin = AccountOrigin.Linked,

@@ -430,9 +430,11 @@ public sealed class ApprovalMatrixService(
         {
             analysis = (await compiler.CompileAsync(version.Id, version.ToDocument(), cancellationToken).ConfigureAwait(false)).Analysis;
         }
-        catch (MatrixRefusedException ex) when (ex.Refusal == MatrixRefusal.UnknownAttribute)
+        catch (Exception ex) when (ex is MatrixRefusedException or MatrixRejectedException)
         {
-            // An attribute was retired since: shown without the check, and approval refuses it.
+            // The version no longer compiles against today's catalog (an attribute retired, or its new version no longer allows
+            // an operator a condition uses), or its stored record doesn't read: it is shown without the check, and approval
+            // refuses it (DL-098). Reading it, or the draft just saved, never fails for that reason.
         }
 
         return new MatrixVersionView(

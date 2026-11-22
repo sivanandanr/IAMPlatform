@@ -371,6 +371,13 @@ public sealed class EntitlementCatalogAdministrationService(
             }
 
             await RequireApplicationActiveAsync(entitlement, cancellationToken).ConfigureAwait(false);
+
+            // Approvals in one application take turns (DL-098): the application's row is locked until this commits, so a second
+            // approval waits and then sees this one's technical name. Without it, two could both find their name free.
+            await db.Applications
+                .Where(a => a.Id == entitlement.ApplicationId)
+                .ExecuteUpdateAsync(s => s.SetProperty(a => EF.Property<long>(a, AuditColumns.Version), a => EF.Property<long>(a, AuditColumns.Version)), cancellationToken)
+                .ConfigureAwait(false);
             await RequireTechnicalNameFreeAsync(entitlement, cancellationToken).ConfigureAwait(false);
             request.Approve(actor, reason, entitlement, member, Now());
         }

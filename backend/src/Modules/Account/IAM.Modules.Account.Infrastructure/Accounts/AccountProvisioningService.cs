@@ -133,7 +133,7 @@ public sealed class AccountProvisioningService(AccountDbContext db, IAuditWriter
             return "NameInUse";
         }
 
-        if (await live.AnyAsync(a => a.TargetId == created.TargetId, cancellationToken).ConfigureAwait(false))
+        if (await live.AnyAsync(a => a.TargetIdKey == created.TargetIdKey, cancellationToken).ConfigureAwait(false))
         {
             return "TargetInUse";
         }
@@ -145,7 +145,7 @@ public sealed class AccountProvisioningService(AccountDbContext db, IAuditWriter
 
     private static bool Same(AccountEntity a, AccountEntity b) =>
         a.ApplicationId == b.ApplicationId && a.Type == b.Type && a.NameKey == b.NameKey
-        && string.Equals(a.TargetId, b.TargetId, StringComparison.Ordinal) && string.Equals(a.Owner, b.Owner, StringComparison.Ordinal);
+        && string.Equals(a.TargetIdKey, b.TargetIdKey, StringComparison.Ordinal) && string.Equals(a.Owner, b.Owner, StringComparison.Ordinal);
 
     private static AuditPayloadField Field(string name, string value) => new(name, value, AuditFieldClass.Plain);
 }

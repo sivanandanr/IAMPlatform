@@ -31,6 +31,7 @@ namespace IAM.Persistence.Tests.Parity;
 public sealed partial class RequestItemParityTests
 {
     private const string AccountContainer = "OU=Users,DC=corp,DC=test";
+    private const string GroupContainer = "OU=Groups,DC=corp,DC=test";
 
     [Fact]
     public async Task AVerifiedApprovalForAnExistingAccountIsPlannedOnce()
@@ -301,7 +302,7 @@ public sealed partial class RequestItemParityTests
 
     // ---- Provisioning helpers ----------------------------------------------------------------------------------------------
 
-    private static ConnectorBinding[] Bound(World world) => [ConnectorBinding.Create(world.Application, "mock-ad", AccountContainer)];
+    private static ConnectorBinding[] Bound(World world) => [ConnectorBinding.Create(world.Application, "mock-ad", AccountContainer, GroupContainer)];
 
     private static MessageEnvelope Authorized(Guid id, int sequence) => MessageEnvelopes.Create(
         new ApprovalAuthorized(id, id, sequence, 1), WorkflowEvents.Source, Guid.NewGuid().ToString("N"), null, $"test.authorized:{Guid.NewGuid():N}", DateTimeOffset.UtcNow);

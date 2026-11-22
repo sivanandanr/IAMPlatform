@@ -181,6 +181,34 @@ public sealed class ApprovalMatrixTests
     }
 
     [Fact]
+    public void NoOneWhoWroteTheDraftApprovesItAndRecompilingWritesNothing()
+    {
+        var document = MatrixDocuments.Parse(Standard());
+        var hash = MatrixDocuments.Compile(Guid.Empty, document, Facts).Policy.ContentHash;
+        var matrix = ApprovalMatrix.Create(document, hash, "author");
+
+        // The same rules saved again by someone else, only recompiled against newer attributes: the author stays the writer.
+        var recompiled = new string('e', 64);
+        matrix.SetDraft(document, recompiled, 1, "resaver").ShouldBeTrue();
+        matrix.CurrentDraft!.EditedBy.ShouldBe("author");
+        matrix.CurrentDraft.WasWrittenBy("resaver").ShouldBeFalse();
+
+        // A real edit by someone, then another back by the author: both wrote it, and neither can approve it.
+        var faster = MatrixDocuments.Parse(Standard().Replace("\"deadlineHours\":72", "\"deadlineHours\":48", StringComparison.Ordinal));
+        matrix.SetDraft(faster, recompiled, 2, "middle").ShouldBeTrue();
+        matrix.SetDraft(document, recompiled, 3, "author").ShouldBeTrue();
+        matrix.CurrentDraft.EditedBy.ShouldBe("author");
+        var request = MatrixChangeRequest.Propose(Guid.CreateVersion7(), matrix, true, "maker", "Ready", Now);
+        foreach (var writer in new[] { "author", "middle" })
+        {
+            Should.Throw<MatrixRefusedException>(() => request.Approve(writer, null, matrix, recompiled, Now)).Refusal.ShouldBe(MatrixRefusal.MakerCannotDecide, writer);
+        }
+
+        request.Approve("resaver", null, matrix, recompiled, Now);
+        matrix.CurrentActive.ShouldNotBeNull();
+    }
+
+    [Fact]
     public void AStoredDocumentThatIsNotCanonicalIsDamaged()
     {
         var document = MatrixDocuments.Parse(Standard());

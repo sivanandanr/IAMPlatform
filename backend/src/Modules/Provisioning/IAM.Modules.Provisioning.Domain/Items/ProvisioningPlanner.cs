@@ -4,16 +4,17 @@ using System.Text.RegularExpressions;
 namespace IAM.Modules.Provisioning.Domain.Items;
 
 /// <summary>
-/// Which connector serves an application, and where its new accounts go (DL-093). From the reviewed deployment allowlist,
-/// not from data a person can change at run time; an application without one is manual work.
+/// Which connector serves an application, where its new accounts go (DL-093), and the only container its entitlements' groups
+/// may be in (DL-098). From the reviewed deployment allowlist, not from data a person can change at run time; an application
+/// without one is manual work.
 /// </summary>
-public sealed record ConnectorBinding(Guid ApplicationId, string ConnectorKey, string AccountContainer)
+public sealed record ConnectorBinding(Guid ApplicationId, string ConnectorKey, string AccountContainer, string GroupContainer)
 {
     /// <summary>The connectors this release can run. Only the mock AD connector, which is never production-ready (rule 10).</summary>
     public static readonly IReadOnlySet<string> KnownConnectors = new HashSet<string>(StringComparer.Ordinal) { "mock-ad" };
 
     /// <summary>The binding if it is well formed, else an exception naming the field (never the value).</summary>
-    public static ConnectorBinding Create(Guid applicationId, string? connectorKey, string? accountContainer)
+    public static ConnectorBinding Create(Guid applicationId, string? connectorKey, string? accountContainer, string? groupContainer)
     {
         if (applicationId == Guid.Empty)
         {
@@ -30,7 +31,12 @@ public sealed record ConnectorBinding(Guid ApplicationId, string ConnectorKey, s
             throw new ArgumentException("A connector binding's account container must be an OU path under DC components.", nameof(accountContainer));
         }
 
-        return new ConnectorBinding(applicationId, connectorKey, accountContainer);
+        if (groupContainer is null || groupContainer.Length > 512 || !ProvisioningPlanner.ContainerPattern().IsMatch(groupContainer))
+        {
+            throw new ArgumentException("A connector binding's group container must be an OU path under DC components.", nameof(groupContainer));
+        }
+
+        return new ConnectorBinding(applicationId, connectorKey, accountContainer, groupContainer);
     }
 }
 
@@ -78,6 +84,19 @@ public static partial class ProvisioningPlanner
             ProvisioningOperation.Planned(itemId, 2, EntitlementAdd, AccountObject, account, EntitlementObject, technicalName, "{}"),
             ProvisioningOperation.Planned(itemId, 3, AccountEnable, AccountObject, account, null, null, "{}"),
         ]);
+    }
+
+    /// <summary>
+    /// Whether an entitlement's technical name is a plain group directly in the application's allowed group container (DL-098):
+    /// a catalog maker can't point an entitlement at any group in the directory, such as an administrators' group elsewhere.
+    /// </summary>
+    public static bool IsInGroupContainer(string technicalName, ConnectorBinding binding)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        var suffix = "," + binding.GroupContainer;
+        return technicalName is { Length: <= 512 }
+            && technicalName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+            && GroupPattern().IsMatch(technicalName[..^suffix.Length]);
     }
 
     /// <summary>Where a new account goes: a CN in the application's account container.</summary>
@@ -133,6 +152,10 @@ public static partial class ProvisioningPlanner
     /// <summary>The account name rule (DL-089, DL-092), so a name can sit in a DN without escaping.</summary>
     [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
     private static partial Regex AccountNamePattern();
+
+    /// <summary>A group's own name: one CN with a plain name.</summary>
+    [GeneratedRegex("^CN=[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 100)]
+    private static partial Regex GroupPattern();
 
     /// <summary>One or more OU components, then one or more DC components, with plain names only.</summary>
     [GeneratedRegex("^(OU=[A-Za-z0-9][A-Za-z0-9 ._-]{0,63},)+(DC=[A-Za-z0-9][A-Za-z0-9-]{0,62},)*DC=[A-Za-z0-9][A-Za-z0-9-]{0,62}$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]

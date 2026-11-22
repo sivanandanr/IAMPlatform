@@ -37,6 +37,7 @@ public sealed class AccountDbContext(DbContextOptions<AccountDbContext> options)
         account.Property(x => x.Name).IsRequired().IsCode(AccountRules.NameMaxLength);
         account.Property(x => x.NameKey).IsRequired().IsCode(AccountRules.NameMaxLength);
         account.Property(x => x.TargetId).HasMaxLength(AccountRules.TargetIdMaxLength);
+        account.Property(x => x.TargetIdKey).IsCode(AccountRules.TargetIdMaxLength);
         account.Property(x => x.Owner).IsRequired().IsCode(AuditColumns.ActorMaxLength);
         account.Property(x => x.Status).HasConversion<string>().IsRequired().IsCode(16);
         account.Property(x => x.Origin).HasConversion<string>().IsRequired().IsCode(16);

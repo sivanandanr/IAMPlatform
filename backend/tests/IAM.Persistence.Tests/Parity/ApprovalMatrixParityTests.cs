@@ -41,7 +41,9 @@ public sealed class ApprovalMatrixParityTests(ParityDatabase db)
     [Fact]
     public async Task TheMatrixIsDraftedCheckedActivatedByASecondPersonAndSelectsRoutes()
     {
-        db.PolicyFirstRunApplied.ShouldHaveSingleItem().ShouldEndWith("_ApprovalMatrix");
+        db.PolicyFirstRunApplied.Count.ShouldBe(2);
+        db.PolicyFirstRunApplied[0].ShouldEndWith("_ApprovalMatrix");
+        db.PolicyFirstRunApplied[1].ShouldEndWith("_MatrixGuards");
         db.PolicySecondRunPending.ShouldBeEmpty();
         var catalog = new FakeAttributes();
 

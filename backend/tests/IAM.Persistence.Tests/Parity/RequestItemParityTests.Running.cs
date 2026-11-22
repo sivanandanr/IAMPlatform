@@ -193,7 +193,7 @@ public sealed partial class RequestItemParityTests
     {
         var world = await WorldAsync();
         var manual = await ApprovedAsync(world, new SubmitItem(world.Beneficiary, world.Standard, world.Primary, null, null, null));
-        await HandleAsync(world, await WorkflowEnvelopeAsync(manual, ApprovalAuthorized.MessageType), ConnectorBinding.Create(Guid.CreateVersion7(), "mock-ad", AccountContainer));
+        await HandleAsync(world, await WorkflowEnvelopeAsync(manual, ApprovalAuthorized.MessageType), ConnectorBinding.Create(Guid.CreateVersion7(), "mock-ad", AccountContainer, GroupContainer));
 
         await using (var context = TestSupport.CreateProvisioning(db.Provider, db.ProvisioningAppConnectionString))
         {
@@ -232,7 +232,7 @@ public sealed partial class RequestItemParityTests
             new AuditActionCatalog(ProvisioningAuditActions.All.Select(a => new AuditActionRegistration(a))));
         // The runner decides again before it runs (DL-096), with the binding the item was planned with.
         var application = (await context.Items.AsNoTracking().SingleAsync(i => i.Id == item, Ct)).ApplicationId ?? Guid.CreateVersion7();
-        var (decider, contexts) = Decider([ConnectorBinding.Create(application, "mock-ad", AccountContainer)], clock);
+        var (decider, contexts) = Decider([ConnectorBinding.Create(application, "mock-ad", AccountContainer, GroupContainer)], clock);
         try
         {
             var runner = new ProvisioningRunner(
@@ -295,6 +295,11 @@ public sealed partial class RequestItemParityTests
         }
 
         public Task<bool> VerifyAsync(TargetStep operation, CancellationToken cancellationToken) => Task.FromResult(Matches);
+
+        /// <summary>Whether objects are on the target (an existing account is read before anything is granted to it).</summary>
+        public bool Exists { get; init; } = true;
+
+        public Task<bool> ExistsAsync(string objectType, string id, CancellationToken cancellationToken) => Task.FromResult(Exists);
     }
 
     private sealed class MovingClock(DateTimeOffset start) : TimeProvider

@@ -94,6 +94,12 @@ namespace IAM.Persistence.SqlServer.Migrations.Account
                         .HasMaxLength(512)
                         .HasColumnType("nvarchar(512)");
 
+                    b.Property<string>("TargetIdKey")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)")
+                        .UseCollation("Latin1_General_100_BIN2")
+                        .HasAnnotation("Iam:Code", true);
+
                     b.Property<string>("Type")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -131,6 +137,8 @@ namespace IAM.Persistence.SqlServer.Migrations.Account
                             t.HasCheckConstraint("CK_Account_Owner_Code", "DATALENGTH([Owner]) > 0 AND DATALENGTH([Owner]) = DATALENGTH(LTRIM(RTRIM([Owner])))");
 
                             t.HasCheckConstraint("CK_Account_Status_Code", "DATALENGTH([Status]) > 0 AND DATALENGTH([Status]) = DATALENGTH(LTRIM(RTRIM([Status])))");
+
+                            t.HasCheckConstraint("CK_Account_TargetIdKey_Code", "DATALENGTH([TargetIdKey]) > 0 AND DATALENGTH([TargetIdKey]) = DATALENGTH(LTRIM(RTRIM([TargetIdKey])))");
 
                             t.HasCheckConstraint("CK_Account_Type_Code", "DATALENGTH([Type]) > 0 AND DATALENGTH([Type]) = DATALENGTH(LTRIM(RTRIM([Type])))");
                         });
