@@ -251,6 +251,7 @@ public sealed partial class RequestItemParityTests
                 new ConnectorBindings([binding]),
                 decider,
                 new ProvisioningRunnerSettings(batchSize: 10, leaseSeconds: 60, maxAttempts: maxAttempts, retryDelaySeconds: 30, stepTimeoutSeconds: stepTimeoutSeconds, undoMaxAttempts: undoMaxAttempts, maxPostponements: maxPostponements),
+                TestSupport.ProviderFor(db.Provider),
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<ProvisioningRunner>.Instance);
             return await runner.RunItemAsync(item, cancellationToken ?? Ct);
         }

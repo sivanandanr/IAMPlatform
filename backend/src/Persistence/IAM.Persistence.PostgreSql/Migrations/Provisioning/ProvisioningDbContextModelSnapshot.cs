@@ -479,6 +479,10 @@ namespace IAM.Persistence.PostgreSql.Migrations.Provisioning
                         .UseCollation("C")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<bool>("Unsettled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("unsettled");
+
                     b.Property<long>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint")

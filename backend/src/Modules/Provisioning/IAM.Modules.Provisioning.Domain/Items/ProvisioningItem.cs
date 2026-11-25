@@ -364,6 +364,20 @@ public sealed class ProvisioningOperation
         State = ProvisioningState.Planned;
     }
 
+    /// <summary>
+    /// Whether an earlier attempt of this step may have changed the target without anyone learning it (DL-102): its call broke
+    /// off, or the connector faulted. Once set it stays set (both engines refuse clearing it): a later "already there" may be
+    /// that attempt's own change, so it never proves the object or the access was someone else's.
+    /// </summary>
+    public bool Unsettled { get; private set; }
+
+    /// <summary>A temporary failure whose outcome is unknown: the step waits to run again, marked unsettled (DL-102).</summary>
+    public void ReleaseUnsettled()
+    {
+        Release();
+        Unsettled = true;
+    }
+
     private void Finish(ProvisioningState state, string? code, DateTimeOffset now)
     {
         RequireRunning();
