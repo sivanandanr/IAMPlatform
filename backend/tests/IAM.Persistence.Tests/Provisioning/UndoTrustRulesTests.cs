@@ -57,6 +57,9 @@ public sealed class UndoTrustRulesTests
     [Theory]
     [InlineData("CN=Ben  Smith,OU=Users,DC=corp,DC=test", "CN=Ben Smith,OU=Users,DC=corp,DC=test")]
     [InlineData("cn=Ben    Smith,ou=Users,dc=corp,dc=test", "CN=Ben Smith,OU=Users,DC=corp,DC=test")]
+    [InlineData(@"CN=Ben\20\20Smith,OU=Users,DC=corp,DC=test", "CN=Ben Smith,OU=Users,DC=corp,DC=test")]
+    [InlineData(@"CN=Ben \ Smith,OU=Users,DC=corp,DC=test", "CN=Ben Smith,OU=Users,DC=corp,DC=test")]
+    [InlineData(@"CN=Ben\ \ Smith,OU=Users,DC=corp,DC=test", "CN=Ben Smith,OU=Users,DC=corp,DC=test")]
     public void RunsOfSpacesInAValueAreOneSpace(string spaced, string plain) =>
         AccountRules.TargetIdKey(spaced).ShouldBe(AccountRules.TargetIdKey(plain));
 
@@ -78,6 +81,35 @@ public sealed class UndoTrustRulesTests
         var users = mock.AddContainer("Users");
         var step = new TargetStep(Guid.CreateVersion7(), "account.unheard.of", ObjectTypes.Account, $"CN=ben,{users.Id}", null, null, new Dictionary<string, string?>());
         (await new ConnectorTarget(mock).VerifyAsync(step, CancellationToken.None)).ShouldBe(false);
+    }
+
+    [Theory]
+    [InlineData("ConnectorError", StepStatus.Unknown)]
+    [InlineData("TimedOut", StepStatus.Unknown)]
+    [InlineData("InvalidResponse", StepStatus.Unknown)]
+    [InlineData("Throttled", StepStatus.Retry)]
+    public async Task AConnectorsOwnFaultOnAWriteHasAnUnknownOutcome(string code, StepStatus expected)
+    {
+        // DL-102: a fault may come after the write landed, and the connector's ledger keeps no failure.
+        var step = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, "CN=ben,OU=Users,DC=corp,DC=test", null, null, new Dictionary<string, string?>());
+        (await new ConnectorTarget(new FailingConnector(code)).RunAsync(step, CancellationToken.None)).Status.ShouldBe(expected);
+    }
+
+    /// <summary>A connector whose every write fails with one code.</summary>
+    private sealed class FailingConnector(string code) : IConnector
+    {
+        public ConnectorCapabilities Capabilities => throw new NotSupportedException();
+
+        public Task<ConnectorHealth> CheckHealthAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<ObjectSnapshot?> ReadAsync(ObjectRef target, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<OperationResult> ExecuteAsync(ConnectorOperation operation, CancellationToken cancellationToken) =>
+            Task.FromResult(OperationResult.Of(operation, OperationStatus.Failed, code));
+
+        public Task<VerificationResult> VerifyAsync(ConnectorOperation operation, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<ObjectPage> ListAsync(string objectType, string? continuation, int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     [Fact]

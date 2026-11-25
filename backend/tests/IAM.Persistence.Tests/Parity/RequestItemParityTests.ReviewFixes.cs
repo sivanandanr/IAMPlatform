@@ -116,13 +116,21 @@ public sealed partial class RequestItemParityTests
             p => p.Item.State.ShouldBe(ProvisioningState.Planned, "not done on a read"),
             p => p.Operations[0].State.ShouldBe(ProvisioningState.Planned));
 
-        // Run again under the same operation id: the connector refuses to take the object over, and a person looks at it.
+        // Run again under the same operation id: the object is never taken over, and a person looks at it. Since the earlier
+        // call broke off, whose the object is can't be told (DL-102): the outcome is unknown, not "someone else's".
         clock.Advance(TimeSpan.FromHours(1));
         (await RunAsync(item, new ConnectorTarget(mock), clock)).ShouldBeTrue();
-        (await PlannedAsync(item)).Item.ShouldSatisfyAllConditions(i => i.State.ShouldBe(ProvisioningState.Failed), i => i.Problem.ShouldBeOneOf("AlreadyExists", "TargetExists"));
+        (await PlannedAsync(item)).Item.ShouldSatisfyAllConditions(i => i.State.ShouldBe(ProvisioningState.Failed), i => i.Problem.ShouldBe(ProvisioningRunner.OutcomeUnknown));
         var existing = (await mock.ReadAsync(new ObjectRef(ObjectTypes.Account, dn), Ct)).ShouldNotBeNull();
         existing.Links.ShouldNotContain(l => string.Equals(l.Id, group, StringComparison.OrdinalIgnoreCase), "nothing was granted to it");
         existing.Enabled.ShouldBe(false, "nor was it enabled");
+
+        // A create whose call never broke off and meets someone else's object says so.
+        var (other, otherName, otherMock, _) = await PlannedNewAccountAsync();
+        (await otherMock.ExecuteAsync(new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountCreate, new ObjectRef(ObjectTypes.Account, $"CN={otherName},{AccountContainer}"),
+            new ObjectRef(ObjectTypes.Container, AccountContainer), new Dictionary<string, string?> { ["sAMAccountName"] = otherName }, null), Ct)).Status.ShouldBe(OperationStatus.Applied);
+        (await RunAsync(other, new ConnectorTarget(otherMock))).ShouldBeTrue();
+        (await PlannedAsync(other)).Item.Problem.ShouldBeOneOf("AlreadyExists", "TargetExists");
     }
 
     [Fact]

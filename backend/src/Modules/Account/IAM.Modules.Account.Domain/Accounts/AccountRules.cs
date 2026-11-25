@@ -315,19 +315,26 @@ public static partial class AccountRules
                 return null;
             }
 
-            var written = new StringBuilder(name).Append('=');
+            // A run of spaces inside a value is one space, written plainly, escaped or hex-escaped (DL-101, DL-102): a directory
+            // compares them as one.
+            var kept = new List<char>(end - start);
             for (var k = start; k < end; k++)
             {
-                // A run of unescaped spaces inside a value is one space (DL-101): a directory compares them as one.
-                if (k > start && chars[k] is (' ', false) && chars[k - 1] is (' ', false))
+                if (chars[k].Char == ' ' && kept.Count > 0 && kept[^1] == ' ')
                 {
                     continue;
                 }
 
-                var ch = chars[k].Char;
+                kept.Add(chars[k].Char);
+            }
+
+            var written = new StringBuilder(name).Append('=');
+            for (var k = 0; k < kept.Count; k++)
+            {
+                var ch = kept[k];
                 var special = ch is ',' or '+' or '"' or '\\' or '<' or '>' or ';' or '='
-                    || (k == start && ch is '#' or ' ')
-                    || (k == end - 1 && ch == ' ');
+                    || (k == 0 && ch is '#' or ' ')
+                    || (k == kept.Count - 1 && ch == ' ');
                 if (special)
                 {
                     written.Append('\\');

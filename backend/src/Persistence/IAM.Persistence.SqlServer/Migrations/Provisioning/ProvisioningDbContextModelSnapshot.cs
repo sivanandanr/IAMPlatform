@@ -413,6 +413,9 @@ namespace IAM.Persistence.SqlServer.Migrations.Provisioning
                         .UseCollation("Latin1_General_100_BIN2")
                         .HasAnnotation("Iam:Code", true);
 
+                    b.Property<bool>("Unsettled")
+                        .HasColumnType("bit");
+
                     b.Property<long>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");

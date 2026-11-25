@@ -17,11 +17,21 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
             result.Status switch
             {
                 OperationStatus.Applied or OperationStatus.AlreadyInState => StepStatus.Done,
+
+                // The connector's own fault, a time-out or a garbled answer may come after the write landed, and the connector's
+                // ledger keeps no failure: whether the target changed is unknown (DL-102), never "not done".
+                OperationStatus.Failed when result.Code is { } code && UnknownWriteCodes.Contains(code) => StepStatus.Unknown,
                 OperationStatus.Failed => StepStatus.Retry,
                 _ => StepStatus.Rejected,
             },
             result.Code ?? result.Status.ToString());
     }
+
+    /// <summary>The connector codes of a failed write that may still have changed the target (DL-102).</summary>
+    public static readonly IReadOnlySet<string> UnknownWriteCodes = new HashSet<string>(StringComparer.Ordinal)
+    {
+        ResultCodes.ConnectorError, ResultCodes.TimedOut, ResultCodes.InvalidResponse,
+    };
 
     /// <summary>
     /// The connector reports a read it couldn't make as "no match" with a code (DL-100): a failure worth retrying proves nothing,
