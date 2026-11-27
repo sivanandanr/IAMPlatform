@@ -167,8 +167,11 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
 
         if (result.Code == ResultCodes.RateLimited)
         {
-            // The connector ran, so it may have written: it can't claim the SDK's "nothing was written" (DL-104).
-            result = result with { Code = ResultCodes.ConnectorError };
+            // The connector ran, so it may have written: it can't claim the SDK's "nothing was written" (DL-104). A success that
+            // says so contradicts itself: whether it changed the target is unknown, and it is never remembered (DL-105).
+            result = result.Status == OperationStatus.Failed
+                ? result with { Code = ResultCodes.ConnectorError }
+                : OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.InvalidResponse);
         }
 
         if (result.Status != OperationStatus.Failed && !(result.Code is { } code && TimingCodes.Contains(code)))
@@ -195,7 +198,8 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
         }
         catch (ConnectorTransientException ex)
         {
-            return new VerificationResult(false, ex.Code);
+            // Only the SDK says RateLimited (DL-104); a connector's own is a fault worth retrying, like any other (DL-105).
+            return new VerificationResult(false, ex.Code == ResultCodes.RateLimited ? ResultCodes.ConnectorError : ex.Code);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {

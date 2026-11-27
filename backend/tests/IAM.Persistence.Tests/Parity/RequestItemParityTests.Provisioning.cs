@@ -298,6 +298,11 @@ public sealed partial class RequestItemParityTests
         // The first record stands.
         await ledger.RecordAsync(new LedgerEntry(operation.OperationId, new string('b', 64), new OperationResult(operation.OperationId, OperationStatus.Rejected, "X")), Ct);
         (await ledger.FindAsync(operation.OperationId, Ct))!.Result.Status.ShouldBe(OperationStatus.Applied);
+
+        // A stored failure is damage (DL-105): the SDK never records one, and replaying it would say a write was never made.
+        var failed = Guid.CreateVersion7();
+        await ledger.RecordAsync(new LedgerEntry(failed, new string('c', 64), new OperationResult(failed, OperationStatus.Failed, ResultCodes.RateLimited)), Ct);
+        await Should.ThrowAsync<InvalidDataException>(() => ledger.FindAsync(failed, Ct));
     }
 
     // ---- Provisioning helpers ----------------------------------------------------------------------------------------------
