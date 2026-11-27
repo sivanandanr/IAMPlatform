@@ -20,7 +20,7 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
 
                 // A failed write may have landed before the fault (a dropped connection, a time-out, a garbled answer), and the
                 // connector's ledger keeps no failure: whether the target changed is unknown (DL-102, DL-103), never "not done".
-                // Only a throttle is known to come before any write.
+                // Only the SDK's speed limit is known to come before any write (DL-104).
                 OperationStatus.Failed when !BeforeWriteCodes.Contains(result.Code ?? string.Empty) => StepStatus.Unknown,
                 OperationStatus.Failed => StepStatus.Retry,
                 _ => StepStatus.Rejected,
@@ -30,11 +30,12 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
 
     /// <summary>
     /// The connector codes of a failed write known to come before anything was written (DL-103): the SDK's rate limiter refuses
-    /// before the connector is called. Every other failed write may have changed the target.
+    /// before the connector is called, with a code no connector can report (DL-104). Every other failed write, a connector's own
+    /// <c>Throttled</c> included, may have changed the target.
     /// </summary>
     public static readonly IReadOnlySet<string> BeforeWriteCodes = new HashSet<string>(StringComparer.Ordinal)
     {
-        ResultCodes.Throttled,
+        ResultCodes.RateLimited,
     };
 
     /// <summary>

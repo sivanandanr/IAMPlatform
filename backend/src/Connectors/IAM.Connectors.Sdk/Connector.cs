@@ -143,10 +143,11 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
                 : OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.OperationIdReused);
         }
 
-        // Only work that reaches the target counts against the speed limit; a throttled operation is retried later.
+        // Only work that reaches the target counts against the speed limit; a limited operation is retried later. Refused before
+        // the connector is called, so nothing was written: the one code that says so is the SDK's alone (DL-104).
         if (!RateLimiter.TryAcquire())
         {
-            return OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.Throttled);
+            return OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.RateLimited);
         }
 
         OperationResult result;
@@ -162,6 +163,12 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
         {
             // A connector's own fault: reported, never thrown, and retried like any failure.
             result = OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.ConnectorError);
+        }
+
+        if (result.Code == ResultCodes.RateLimited)
+        {
+            // The connector ran, so it may have written: it can't claim the SDK's "nothing was written" (DL-104).
+            result = result with { Code = ResultCodes.ConnectorError };
         }
 
         if (result.Status != OperationStatus.Failed && !(result.Code is { } code && TimingCodes.Contains(code)))
