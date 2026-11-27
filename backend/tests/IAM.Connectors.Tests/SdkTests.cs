@@ -146,6 +146,18 @@ public sealed class SdkTests
         (await connector.VerifyAsync(operation, TestContext.Current.CancellationToken)).Matches.ShouldBeTrue();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OnlyTheSdkSaysAWriteWasRateLimited(bool returns)
+    {
+        // DL-104: RateLimited means "refused before the connector ran"; a connector that ran may have written, so it can't claim
+        // it, whether it throws it or returns it.
+        var connector = new FlakyConnector(ResultCodes.RateLimited, returns);
+        var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountDisable, FlakyConnector.Account, null, new Dictionary<string, string?>(), null);
+        (await connector.ExecuteAsync(operation, TestContext.Current.CancellationToken)).ShouldBe(new OperationResult(operation.OperationId, OperationStatus.Failed, ResultCodes.ConnectorError));
+    }
+
     [Fact]
     public async Task AConnectorsOwnErrorIsReportedNeverThrown()
     {
@@ -216,8 +228,8 @@ public sealed class SdkTests
             Task.FromResult(new ObjectPage([], null));
     }
 
-    /// <summary>Throttled once, then fine.</summary>
-    private sealed class FlakyConnector() : ConnectorBase(ConnectorSettings.Default, new InMemoryOperationLedger())
+    /// <summary>Fails once with a code (thrown, or returned), then fine.</summary>
+    private sealed class FlakyConnector(string code = ResultCodes.Throttled, bool returns = false) : ConnectorBase(ConnectorSettings.Default, new InMemoryOperationLedger())
     {
         public static readonly ObjectRef Account = new(ObjectTypes.Account, "flaky");
         private bool _failed;
@@ -237,7 +249,9 @@ public sealed class SdkTests
             if (!_failed)
             {
                 _failed = true;
-                throw new ConnectorTransientException(ResultCodes.Throttled);
+                return returns
+                    ? Task.FromResult(OperationResult.Of(operation, OperationStatus.Failed, code))
+                    : throw new ConnectorTransientException(code);
             }
 
             _enabled = false;

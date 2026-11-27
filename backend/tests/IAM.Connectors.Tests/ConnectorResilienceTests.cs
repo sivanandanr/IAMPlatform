@@ -55,7 +55,7 @@ public sealed class ConnectorResilienceTests
         }
 
         results.Count(r => r.Status == OperationStatus.Applied).ShouldBe(3);
-        results.Where(r => r.Status == OperationStatus.Failed).ShouldAllBe(r => r.Code == ResultCodes.Throttled);
+        results.Where(r => r.Status == OperationStatus.Failed).ShouldAllBe(r => r.Code == ResultCodes.RateLimited, "the SDK's own code: nothing was written (DL-104)");
         (await directory.ReadAsync(operations[4].Target, Ct)).ShouldBeNull("a throttled operation changes nothing");
 
         // A repeat of a finished operation is answered from the ledger and costs nothing, even with no capacity left.

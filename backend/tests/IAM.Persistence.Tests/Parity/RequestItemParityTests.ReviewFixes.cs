@@ -121,6 +121,14 @@ public sealed partial class RequestItemParityTests
         clock.Advance(TimeSpan.FromHours(1));
         (await RunAsync(item, new ConnectorTarget(mock), clock)).ShouldBeTrue();
         (await PlannedAsync(item)).Item.ShouldSatisfyAllConditions(i => i.State.ShouldBe(ProvisioningState.Failed), i => i.Problem.ShouldBe(ProvisioningRunner.OutcomeUnknown));
+
+        // The SDK's AlreadyExists is itself taken as unknown (DL-103(d)), not passed on as the reason (DL-104 re-review).
+        await using (var audit = TestSupport.CreateAudit(db.Provider, db.AuditAppConnectionString))
+        {
+            (await new IAM.Modules.Audit.Infrastructure.AuditTrail(audit).ForTargetAsync(ProvisioningAuditActions.Target, item.ToString(), 100, Ct))
+                .ShouldNotContain(e => e.Payload.ContainsKey("code") && e.Payload["code"] == ResultCodes.AlreadyExists);
+        }
+
         var existing = (await mock.ReadAsync(new ObjectRef(ObjectTypes.Account, dn), Ct)).ShouldNotBeNull();
         existing.Links.ShouldNotContain(l => string.Equals(l.Id, group, StringComparison.OrdinalIgnoreCase), "nothing was granted to it");
         existing.Enabled.ShouldBe(false, "nor was it enabled");

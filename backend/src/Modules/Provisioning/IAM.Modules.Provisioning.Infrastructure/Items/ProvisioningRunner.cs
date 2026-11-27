@@ -236,14 +236,7 @@ public sealed partial class ProvisioningRunner(
         catch (ApprovalChangingException)
         {
             // The approval is being written: nothing was tried, so no attempt is counted (DL-099), up to a limit (DL-100).
-            if (item.Postponements >= settings.MaxPostponements)
-            {
-                await RetryOrFailAsync(run, null, "ApprovalChanging", cancellationToken).ConfigureAwait(false);
-                return;
-            }
-
-            item.Postpone(Now() + settings.RetryDelay);
-            await SaveAuditedAsync(item, ProvisioningAuditActions.StepRetry, AuditOutcome.Failed, null, cancellationToken, "ApprovalChanging").ConfigureAwait(false);
+            await PostponeOrRetryAsync(run, "ApprovalChanging", cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -278,10 +271,11 @@ public sealed partial class ProvisioningRunner(
         }
 
         // An entitlement on an existing account is changed by one item at a time (DL-100), and held from the add through the
-        // final read and the save (DL-103): no undo can remove it between this item's read and its success.
+        // final read and the save (DL-103): no undo can remove it between this item's read and its success. Waiting for another
+        // item tries nothing, so it counts no attempt, up to the same limit (DL-104).
         if (item.AccountId is not null && !await TakeGrantLockAsync(run, cancellationToken).ConfigureAwait(false))
         {
-            await RetryOrFailAsync(run, null, "GrantBusy", cancellationToken).ConfigureAwait(false);
+            await PostponeOrRetryAsync(run, "GrantBusy", cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -354,6 +348,10 @@ public sealed partial class ProvisioningRunner(
             }
         }
 
+        // The grant lock is renewed in the success's own transaction (DL-104): if it ran out during the final read and another
+        // run took it meanwhile (an undo that may have removed the access), its version moved, the save conflicts and nothing
+        // is recorded; the item is decided again, and its final read then fails it for a person.
+        run.Lock?.Hold(item.Id, run.Token, Now() + settings.Lease);
         item.Succeed(recorded, Now());
         await SaveAuditedAsync(item, ProvisioningAuditActions.Succeeded, AuditOutcome.Succeeded, null, cancellationToken).ConfigureAwait(false);
     }
@@ -455,6 +453,23 @@ public sealed partial class ProvisioningRunner(
             && string.Equals(stored.NewAccountType, fresh.NewAccountType, StringComparison.Ordinal)
             && string.Equals(stored.AccountName, fresh.AccountName, StringComparison.Ordinal)
             && string.Equals(stored.ConnectorKey, fresh.ConnectorKey, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Nothing was tried yet (the approval was being written, or another item held the grant): back to planned without counting an
+    /// attempt (DL-099, DL-104), up to a limit (DL-100); past it, an attempt like any other failure.
+    /// </summary>
+    private async Task PostponeOrRetryAsync(Run run, string code, CancellationToken cancellationToken)
+    {
+        var item = run.Item;
+        if (item.Postponements >= settings.MaxPostponements)
+        {
+            await RetryOrFailAsync(run, null, code, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        item.Postpone(Now() + settings.RetryDelay);
+        await SaveAuditedAsync(item, ProvisioningAuditActions.StepRetry, AuditOutcome.Failed, null, cancellationToken, code).ConfigureAwait(false);
     }
 
     /// <summary>A temporary failure: back to planned with a growing delay, or failed (and undone) once the attempts run out.</summary>
@@ -607,6 +622,10 @@ public sealed partial class ProvisioningRunner(
             }
 
             var removes = operation.Action == ProvisioningPlanner.EntitlementRemove && item.AccountId is not null;
+
+            // An undo started inside a run that already holds the lock keeps it until that run saves its ending (DL-104); only a
+            // lock the undo took itself is released after its step.
+            var tookLock = removes && run.Lock is null;
             if (removes && !await TakeGrantLockAsync(run, cancellationToken).ConfigureAwait(false))
             {
                 return UndoOutcome.Later;
@@ -660,7 +679,7 @@ public sealed partial class ProvisioningRunner(
             }
             finally
             {
-                if (removes)
+                if (tookLock)
                 {
                     await ReleaseGrantLockAsync(run).ConfigureAwait(false);
                 }

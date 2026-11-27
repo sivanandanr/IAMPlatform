@@ -104,6 +104,12 @@ public static class ResultCodes
     public const string InvalidResponse = "InvalidResponse";
     public const string TargetUnavailable = "TargetUnavailable";
     public const string Throttled = "Throttled";
+
+    /// <summary>
+    /// The SDK's own speed limit refused the operation before the connector was called (DL-104): nothing was written. Only the
+    /// SDK sets it; a connector reporting it is reported as <see cref="ConnectorError"/>.
+    /// </summary>
+    public const string RateLimited = "RateLimited";
     public const string TimedOut = "TimedOut";
 }
 

@@ -135,7 +135,10 @@ public sealed class ProvisioningItem
     /// <summary>Why this item is being undone (DL-100): the failure it ends with once the undo is confirmed.</summary>
     public string? UndoReason { get; private set; }
 
-    /// <summary>How many times a run was put off because the approval was still being written (DL-100).</summary>
+    /// <summary>
+    /// How many times a run was put off before trying anything: the approval was still being written (DL-100), or another item
+    /// held the grant (DL-104).
+    /// </summary>
     public int Postponements { get; private set; }
 
     /// <summary>A code to store as the problem: the connector's if it is one, else <paramref name="fallback"/>.</summary>
@@ -187,7 +190,7 @@ public sealed class ProvisioningItem
 
     /// <summary>
     /// Back to planned, not before <paramref name="next"/>, without counting an attempt: nothing was tried, because the approval
-    /// was still being written when it was checked (DL-099).
+    /// was still being written when it was checked (DL-099), or another item held the grant (DL-104).
     /// </summary>
     public void Postpone(DateTimeOffset next)
     {
