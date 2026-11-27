@@ -40,6 +40,13 @@ public sealed class DurableOperationLedger(IServiceScopeFactory scopes, TimeProv
             throw new ArgumentException("A ledger entry's result must be for its own operation.", nameof(entry));
         }
 
+        // A failure is never remembered (DL-105): the first record wins, so one would poison the operation id (DL-106). The
+        // database refuses it too.
+        if (entry.Result.Status == OperationStatus.Failed)
+        {
+            throw new ArgumentException("A failed operation is never recorded.", nameof(entry));
+        }
+
         var record = OperationLedgerRecord.Create(entry.OperationId, entry.Fingerprint, entry.Result.Status.ToString(), entry.Result.Code, clock.GetUtcNow());
         using var scope = scopes.CreateScope();
         await scope.ServiceProvider.GetRequiredService<IProvisioningLedger>().RecordAsync(record, cancellationToken).ConfigureAwait(false);

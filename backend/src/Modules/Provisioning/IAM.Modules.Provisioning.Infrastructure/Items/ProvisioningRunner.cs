@@ -73,6 +73,9 @@ public sealed partial class ProvisioningRunner(
     /// <summary>The problem of an item whose create or entitlement add has an unknown outcome on an account it didn't create (DL-101).</summary>
     public const string OutcomeUnknown = "OutcomeUnknown";
 
+    /// <summary>The code of a step whose target's stored record of it can't be trusted (DL-106): audited, its outcome unknown.</summary>
+    public const string LedgerDamaged = "LedgerDamaged";
+
     /// <summary>The most audit records read for one item's undo check.</summary>
     public const int MaxAuditRecords = 1_000;
 
@@ -354,8 +357,7 @@ public sealed partial class ProvisioningRunner(
         // if the clock hasn't moved since the last renewal and nothing in it changed, so its version is always checked (DL-105).
         if (run.Lock is { } held)
         {
-            held.Hold(item.Id, run.Token, Now() + settings.Lease);
-            db.Entry(held).Property(l => l.UntilUtc).IsModified = true;
+            HoldLock(run, held, Now() + settings.Lease);
         }
 
         item.Succeed(recorded, Now());
@@ -845,7 +847,8 @@ public sealed partial class ProvisioningRunner(
         }
         else if (row.IsHeldBy(item.Id, run.Token, now) || row.UntilUtc < now)
         {
-            row.Hold(item.Id, run.Token, until);
+            // A row this run already tracks isn't read again: written always, its version is checked (DL-106).
+            HoldLock(run, row, until);
         }
         else
         {
@@ -913,9 +916,24 @@ public sealed partial class ProvisioningRunner(
     private async Task RenewForCallAsync(Run run, CancellationToken cancellationToken)
     {
         var now = Now();
-        run.Lock?.Hold(run.Item.Id, run.Token, now + settings.Lease);
+        if (run.Lock is { } held)
+        {
+            HoldLock(run, held, now + settings.Lease);
+        }
+
         run.Item.Renew(now, settings.Lease);
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// This run holds <paramref name="row"/> until <paramref name="until"/>, and the row is always written, even if the clock hasn't
+    /// moved and nothing in it changed, so its version is checked on the next save: a lock another run took meanwhile stops this
+    /// one (DL-105, DL-106).
+    /// </summary>
+    private void HoldLock(Run run, GrantLock row, DateTimeOffset until)
+    {
+        row.Hold(run.Item.Id, run.Token, until);
+        db.Entry(row).Property(l => l.UntilUtc).IsModified = true;
     }
 
     private static TargetStep Step(ProvisioningOperation o) => new(
@@ -961,6 +979,13 @@ public sealed partial class ProvisioningRunner(
         try
         {
             return await CallAsync(run.Item, ct => run.Target.RunAsync(step, ct), cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidDataException ex)
+        {
+            // A stored record the target can't trust (a ledger row the SDK never writes): told apart from a fault in the call,
+            // logged and audited as such (DL-106). Whether the target changed is still unknown, so it fails closed.
+            LogLedgerDamaged(logger, run.Item.Id, ex.GetType().Name);
+            return new StepResult(StepStatus.Unknown, LedgerDamaged);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
@@ -1057,6 +1082,9 @@ public sealed partial class ProvisioningRunner(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Provisioning item {ItemId}: its grant lock wasn't released ({ErrorType}); it runs out with the lease.")]
     private static partial void LogLockReleaseFailed(ILogger logger, Guid itemId, string errorType);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Provisioning item {ItemId}: the target's stored record of this step is damaged ({ErrorType}); the step's outcome is unknown.")]
+    private static partial void LogLedgerDamaged(ILogger logger, Guid itemId, string errorType);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Provisioning item {ItemId}: this run stopped because another took over its lease or grant lock.")]
     private static partial void LogRunStopped(ILogger logger, Guid itemId);
