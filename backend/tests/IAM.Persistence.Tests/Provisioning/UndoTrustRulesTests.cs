@@ -90,13 +90,33 @@ public sealed class UndoTrustRulesTests
     [InlineData("TargetUnavailable", StepStatus.Unknown)]
     [InlineData("SomeConnectorsOwnCode", StepStatus.Unknown)]
     [InlineData("Throttled", StepStatus.Unknown)]
-    [InlineData("RateLimited", StepStatus.Retry)]
+    [InlineData("RateLimited", StepStatus.Unknown)]
     public async Task AConnectorsOwnFaultOnAWriteHasAnUnknownOutcome(string code, StepStatus expected)
     {
         // DL-102, DL-103, DL-104: a fault may come after the write landed, and the connector's ledger keeps no failure. A
-        // connector's own throttle may too; only the SDK's speed limit is known to come before any write.
+        // connector's own throttle may too; only the SDK's speed limit is known to come before any write. A connector not built
+        // on the SDK can't say so either, whatever code it reports (DL-105).
         var step = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, "CN=ben,OU=Users,DC=corp,DC=test", null, null, new Dictionary<string, string?>());
         (await new ConnectorTarget(new FailingConnector(code)).RunAsync(step, CancellationToken.None)).Status.ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task OnlyTheSdksOwnSpeedLimitIsAPlainRetry()
+    {
+        // DL-105: a connector on the SDK, with one operation a second and a clock that doesn't move: the second write is refused
+        // by the SDK before the connector runs, so nothing was written and it is retried plainly.
+        var mock = new MockActiveDirectoryConnector(ConnectorSettings.Default with { MaxOperationsPerSecond = 1 }, new InMemoryOperationLedger(), "DC=corp,DC=test", new StoppedClock());
+        var users = mock.AddContainer("Users");
+        TargetStep Disable() => new(Guid.CreateVersion7(), ActionCatalog.AccountDisable, ObjectTypes.Account, $"CN=ben,{users.Id}", null, null, new Dictionary<string, string?>());
+        var target = new ConnectorTarget(mock);
+        await target.RunAsync(Disable(), CancellationToken.None);
+        (await target.RunAsync(Disable(), CancellationToken.None)).ShouldBe(new StepResult(StepStatus.Retry, ResultCodes.RateLimited));
+    }
+
+    /// <summary>A clock whose timer never moves: a speed limit's capacity never comes back.</summary>
+    private sealed class StoppedClock : TimeProvider
+    {
+        public override long GetTimestamp() => 0;
     }
 
     /// <summary>A connector whose every write fails with one code.</summary>

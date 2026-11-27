@@ -10,6 +10,12 @@ namespace IAM.Workers.Provisioning;
 /// </summary>
 public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
 {
+    /// <summary>
+    /// Whether the connector runs on the SDK's pipeline (DL-105): only then is a before-write code the SDK's own word. A connector
+    /// written straight on <see cref="IConnector"/> (a proxy to a remote agent, say) could pass one on after a write.
+    /// </summary>
+    private readonly bool _sdk = connector is ConnectorBase;
+
     public async Task<StepResult> RunAsync(TargetStep operation, CancellationToken cancellationToken)
     {
         var result = await connector.ExecuteAsync(ToOperation(operation), cancellationToken).ConfigureAwait(false);
@@ -20,9 +26,9 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
 
                 // A failed write may have landed before the fault (a dropped connection, a time-out, a garbled answer), and the
                 // connector's ledger keeps no failure: whether the target changed is unknown (DL-102, DL-103), never "not done".
-                // Only the SDK's speed limit is known to come before any write (DL-104).
-                OperationStatus.Failed when !BeforeWriteCodes.Contains(result.Code ?? string.Empty) => StepStatus.Unknown,
-                OperationStatus.Failed => StepStatus.Retry,
+                // Only the SDK's speed limit is known to come before any write (DL-104), and only from the SDK (DL-105).
+                OperationStatus.Failed when _sdk && BeforeWriteCodes.Contains(result.Code ?? string.Empty) => StepStatus.Retry,
+                OperationStatus.Failed => StepStatus.Unknown,
                 _ => StepStatus.Rejected,
             },
             result.Code ?? result.Status.ToString());

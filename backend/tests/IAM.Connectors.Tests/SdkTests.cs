@@ -197,6 +197,25 @@ public sealed class SdkTests
         (await connector.ExecuteAsync(ops[0], TestContext.Current.CancellationToken)).Status.ShouldBe(OperationStatus.Applied, "nothing was left locked");
     }
 
+    [Fact]
+    public async Task ASuccessThatSaysRateLimitedIsAnInvalidResponseNeverRemembered()
+    {
+        // DL-105: a connector can't claim the SDK's code even on a success; whether it wrote is unknown, so it isn't kept.
+        var connector = new FlakyConnector(ResultCodes.RateLimited, returns: true, status: OperationStatus.Applied);
+        var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountDisable, FlakyConnector.Account, null, new Dictionary<string, string?>(), null);
+        (await connector.ExecuteAsync(operation, TestContext.Current.CancellationToken)).ShouldBe(new OperationResult(operation.OperationId, OperationStatus.Failed, ResultCodes.InvalidResponse));
+        (await connector.ExecuteAsync(operation, TestContext.Current.CancellationToken)).Status.ShouldBe(OperationStatus.Applied, "nothing was remembered, so the same id runs again");
+    }
+
+    [Fact]
+    public async Task AReadTheConnectorSaysWasRateLimitedIsItsOwnFault()
+    {
+        // DL-105: on a read too, RateLimited is the SDK's alone; a connector's own is a fault worth retrying.
+        var connector = new FlakyConnector(ResultCodes.RateLimited, readFails: true);
+        var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountDisable, FlakyConnector.Account, null, new Dictionary<string, string?>(), null);
+        (await connector.VerifyAsync(operation, TestContext.Current.CancellationToken)).ShouldBe(new VerificationResult(false, ResultCodes.ConnectorError));
+    }
+
     /// <summary>Throws from its writes, or returns snapshots with things it must not.</summary>
     private sealed class FaultyConnector(bool faultyRead) : ConnectorBase(ConnectorSettings.Default, new InMemoryOperationLedger())
     {
@@ -228,8 +247,12 @@ public sealed class SdkTests
             Task.FromResult(new ObjectPage([], null));
     }
 
-    /// <summary>Fails once with a code (thrown, or returned), then fine.</summary>
-    private sealed class FlakyConnector(string code = ResultCodes.Throttled, bool returns = false) : ConnectorBase(ConnectorSettings.Default, new InMemoryOperationLedger())
+    /// <summary>
+    /// Fails once with a code (thrown, or returned with a status), then fine. With <c>readFails</c>, its reads throw the code
+    /// instead.
+    /// </summary>
+    private sealed class FlakyConnector(string code = ResultCodes.Throttled, bool returns = false, OperationStatus status = OperationStatus.Failed, bool readFails = false)
+        : ConnectorBase(ConnectorSettings.Default, new InMemoryOperationLedger())
     {
         public static readonly ObjectRef Account = new(ObjectTypes.Account, "flaky");
         private bool _failed;
@@ -242,7 +265,9 @@ public sealed class SdkTests
             Task.FromResult(new ConnectorHealth(HealthStatus.Healthy, null, false));
 
         protected override Task<ObjectSnapshot?> ReadCoreAsync(ObjectRef target, CancellationToken cancellationToken) =>
-            Task.FromResult<ObjectSnapshot?>(target == Account ? new ObjectSnapshot(Account, _enabled, false, new Dictionary<string, string?>(), [], null) : null);
+            readFails
+                ? throw new ConnectorTransientException(code)
+                : Task.FromResult<ObjectSnapshot?>(target == Account ? new ObjectSnapshot(Account, _enabled, false, new Dictionary<string, string?>(), [], null) : null);
 
         protected override Task<OperationResult> ApplyAsync(ConnectorOperation operation, ObjectSnapshot? current, CancellationToken cancellationToken)
         {
@@ -250,7 +275,7 @@ public sealed class SdkTests
             {
                 _failed = true;
                 return returns
-                    ? Task.FromResult(OperationResult.Of(operation, OperationStatus.Failed, code))
+                    ? Task.FromResult(OperationResult.Of(operation, status, code))
                     : throw new ConnectorTransientException(code);
             }
 

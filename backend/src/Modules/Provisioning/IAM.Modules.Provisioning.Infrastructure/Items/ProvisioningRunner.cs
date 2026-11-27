@@ -350,8 +350,14 @@ public sealed partial class ProvisioningRunner(
 
         // The grant lock is renewed in the success's own transaction (DL-104): if it ran out during the final read and another
         // run took it meanwhile (an undo that may have removed the access), its version moved, the save conflicts and nothing
-        // is recorded; the item is decided again, and its final read then fails it for a person.
-        run.Lock?.Hold(item.Id, run.Token, Now() + settings.Lease);
+        // is recorded; the item is decided again, and its final read then fails it for a person. The row is always written, even
+        // if the clock hasn't moved since the last renewal and nothing in it changed, so its version is always checked (DL-105).
+        if (run.Lock is { } held)
+        {
+            held.Hold(item.Id, run.Token, Now() + settings.Lease);
+            db.Entry(held).Property(l => l.UntilUtc).IsModified = true;
+        }
+
         item.Succeed(recorded, Now());
         await SaveAuditedAsync(item, ProvisioningAuditActions.Succeeded, AuditOutcome.Succeeded, null, cancellationToken).ConfigureAwait(false);
     }
@@ -637,7 +643,8 @@ public sealed partial class ProvisioningRunner(
                 if (holder == Holder.Settling && item.UndoAttempts < settings.UndoMaxAttempts)
                 {
                     // Another item on the same access hasn't finished: it may yet hold it, or fail with nothing of its own to
-                    // undo. Wait for it (DL-101); the lock is released, so it can finish. Not past the undo's last pass (DL-102):
+                    // undo. Wait for it (DL-101); the lock is released (after this step if the undo took it, else when its run
+                    // saves this pass, DL-105), so it can finish. Not past the undo's last pass (DL-102):
                     // then the access is removed, and if that item still needs it, its own final read fails it for a person.
                     return UndoOutcome.Later;
                 }
@@ -812,9 +819,16 @@ public sealed partial class ProvisioningRunner(
     private async Task<bool> TakeGrantLockAsync(Run run, CancellationToken cancellationToken)
     {
         var item = run.Item;
-        if (item.AccountId is not { } account || item.EntitlementId is not { } entitlement)
+        if (item.AccountId is not { } account)
         {
             return false;
+        }
+
+        // An item with an account always names its entitlement (the item's shape check and its fixed facts, on both engines): one
+        // that doesn't is broken, never "busy" (DL-105). The run stops, and its item ends for a person when its attempts run out.
+        if (item.EntitlementId is not { } entitlement)
+        {
+            throw new InvalidOperationException("A provisioning item with an account must name its entitlement.");
         }
 
         // Anything pending is the item's own and saved first, so a conflict below can only be the lock's. The lock and the lease

@@ -21,10 +21,12 @@ public sealed class DurableOperationLedger(IServiceScopeFactory scopes, TimeProv
             return null;
         }
 
-        // A stored status the SDK doesn't know is damage: refuse it rather than guess what happened.
-        if (!Enum.TryParse<OperationStatus>(record.Status, ignoreCase: false, out var status) || !Enum.IsDefined(status) || status.ToString() != record.Status)
+        // A stored status the SDK doesn't know is damage: refuse it rather than guess what happened. So is a failure: the SDK never
+        // records one (DL-105), and a replayed failure would say a write that may have landed was never made.
+        if (!Enum.TryParse<OperationStatus>(record.Status, ignoreCase: false, out var status) || !Enum.IsDefined(status) || status.ToString() != record.Status
+            || status == OperationStatus.Failed)
         {
-            throw new InvalidDataException("A ledger record has an unknown status.");
+            throw new InvalidDataException("A ledger record has a status the SDK never records.");
         }
 
         return new LedgerEntry(record.OperationId, record.Fingerprint, new OperationResult(record.OperationId, status, record.Code));

@@ -36,13 +36,14 @@ public sealed partial class RequestItemParityTests
         steps.Single(s => s.Step == 1).ResultCode.ShouldBe(ProvisioningRunner.OutcomeUnknown);
         (await mock.ReadAsync(new ObjectRef(ObjectTypes.Account, $"CN={name},{AccountContainer}"), Ct)).ShouldNotBeNull("left for a person");
 
-        // The SDK's speed limit comes before any write: a plain retry, not unsettled (DL-104: its own code, RateLimited).
+        // Only the SDK's speed limit comes before any write (DL-104), and only from a connector on the SDK (DL-105): this wrapper
+        // isn't one, so its RateLimited proves nothing and the step is unsettled. The SDK's own case is in UndoTrustRulesTests.
         var (throttledItem, _, throttledMock, _) = await PlannedNewAccountAsync();
         var throttled = new FaultAfterWriteConnector(throttledMock, ActionCatalog.AccountCreate, ResultCodes.RateLimited, writes: false);
         (await RunAsync(throttledItem, new ConnectorTarget(throttled), clock)).ShouldBeTrue();
         (await PlannedAsync(throttledItem)).Operations.Single(o => o.Step == 1).ShouldSatisfyAllConditions(
             o => o.State.ShouldBe(ProvisioningState.Planned),
-            o => o.Unsettled.ShouldBeFalse());
+            o => o.Unsettled.ShouldBeTrue());
     }
 
     [Fact]
