@@ -48,6 +48,10 @@ namespace IAM.Modules.Provisioning.Infrastructure.Items;
 /// that mark. A later "already there", refusal or exhausted retry of an unsettled step is <c>OutcomeUnknown</c>, never proof
 /// that the object or the access was someone else's. An undo waits for another item only until its last pass.
 /// </para>
+/// <para>
+/// Since DL-103 every failed create or add but a throttle is unsettled, and an existing account's item holds its grant lock
+/// from the add through its final read and its save, so no undo can take the access away in between.
+/// </para>
 /// </summary>
 public sealed partial class ProvisioningRunner(
     ProvisioningDbContext db,
@@ -273,29 +277,34 @@ public sealed partial class ProvisioningRunner(
             }
         }
 
+        // An entitlement on an existing account is changed by one item at a time (DL-100), and held from the add through the
+        // final read and the save (DL-103): no undo can remove it between this item's read and its success.
+        if (item.AccountId is not null && !await TakeGrantLockAsync(run, cancellationToken).ConfigureAwait(false))
+        {
+            await RetryOrFailAsync(run, null, "GrantBusy", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            await RunHeldAsync(run, facts, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await ReleaseGrantLockAsync(run).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>The steps, the final read and the recording, with the grant lock held for an existing account (DL-103).</summary>
+    private async Task RunHeldAsync(Run run, ProvisioningItem facts, CancellationToken cancellationToken)
+    {
+        var item = run.Item;
+        var plan = run.Plan;
         foreach (var operation in plan.Where(o => o.State != ProvisioningState.Succeeded))
         {
-            // An entitlement on an existing account is changed by one item at a time (DL-100).
-            var locked = operation.Action == ProvisioningPlanner.EntitlementAdd && item.AccountId is not null;
-            if (locked && !await TakeGrantLockAsync(run, cancellationToken).ConfigureAwait(false))
+            if (!await RunPlanStepAsync(run, operation, cancellationToken).ConfigureAwait(false))
             {
-                await RetryOrFailAsync(run, null, "GrantBusy", cancellationToken).ConfigureAwait(false);
                 return;
-            }
-
-            try
-            {
-                if (!await RunPlanStepAsync(run, operation, cancellationToken).ConfigureAwait(false))
-                {
-                    return;
-                }
-            }
-            finally
-            {
-                if (locked)
-                {
-                    await ReleaseGrantLockAsync(run).ConfigureAwait(false);
-                }
             }
         }
 
@@ -383,8 +392,9 @@ public sealed partial class ProvisioningRunner(
         }
 
         // Unless an earlier attempt of this very step may have made it (DL-102): then whose it is is unknown. An add goes on
-        // (the access is approved) but is never taken as this item's to remove; a create stops for a person.
-        if (wasUnsettled && result is { Status: StepStatus.Done, Code: "AlreadyInState" } or { Status: StepStatus.Rejected, Code: "TargetExists" })
+        // (the access is approved) but is never taken as this item's to remove; a create stops for a person. The SDK answers a
+        // create that meets an object with AlreadyExists (DL-103).
+        if (wasUnsettled && result is { Status: StepStatus.Done, Code: "AlreadyInState" } or { Status: StepStatus.Rejected, Code: "TargetExists" or "AlreadyExists" })
         {
             result = creates ? new StepResult(StepStatus.Rejected, OutcomeUnknown) : new StepResult(StepStatus.Done, OutcomeUnknown);
         }
@@ -838,14 +848,22 @@ public sealed partial class ProvisioningRunner(
         var item = run.Item;
         var token = run.Token;
         db.Entry(row).State = EntityState.Detached;
-        await db.GrantLocks
-            .Where(l => l.AccountId == row.AccountId && l.EntitlementId == row.EntitlementId && l.HeldBy == item.Id && l.ClaimToken == token)
-            .ExecuteUpdateAsync(
-                s => s.SetProperty(l => l.UntilUtc, released)
-                    .SetProperty(l => EF.Property<DateTimeOffset>(l, AuditColumns.ModifiedAtUtc), Now())
-                    .SetProperty(l => EF.Property<long>(l, AuditColumns.Version), l => EF.Property<long>(l, AuditColumns.Version) + 1),
-                CancellationToken.None)
-            .ConfigureAwait(false);
+        try
+        {
+            await db.GrantLocks
+                .Where(l => l.AccountId == row.AccountId && l.EntitlementId == row.EntitlementId && l.HeldBy == item.Id && l.ClaimToken == token)
+                .ExecuteUpdateAsync(
+                    s => s.SetProperty(l => l.UntilUtc, released)
+                        .SetProperty(l => EF.Property<DateTimeOffset>(l, AuditColumns.ModifiedAtUtc), Now())
+                        .SetProperty(l => EF.Property<long>(l, AuditColumns.Version), l => EF.Property<long>(l, AuditColumns.Version) + 1),
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Released in a finally: a failure here never hides the error that ended the run (DL-103). The lock runs out.
+            LogLockReleaseFailed(logger, item.Id, ex.GetType().Name);
+        }
     }
 
     /// <summary>Extends the lease (and saves what is pending) under the item's row version; another runner's takeover stops this run.</summary>
@@ -966,6 +984,9 @@ public sealed partial class ProvisioningRunner(
 
             // Which objects the step names, as a hash (DL-100): an undo checks a stored step against it.
             payload.Add(Field("fingerprint", ProvisioningPlanner.Fingerprint(operation)));
+
+            // Whether an earlier attempt's outcome is unknown (DL-103).
+            payload.Add(Field("unsettled", operation.Unsettled ? "true" : "false"));
         }
 
         payload.Add(Field("code", ProvisioningItem.ProblemCode(code ?? operation?.ResultCode, "none")));
@@ -1000,6 +1021,9 @@ public sealed partial class ProvisioningRunner(
     private DateTimeOffset Now() => UtcMicrosecondConverter.TruncateToMicroseconds(clock.GetUtcNow());
 
     private static AuditPayloadField Field(string name, string value) => new(name, value, AuditFieldClass.Plain);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Provisioning item {ItemId}: its grant lock wasn't released ({ErrorType}); it runs out with the lease.")]
+    private static partial void LogLockReleaseFailed(ILogger logger, Guid itemId, string errorType);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Provisioning item {ItemId}: this run stopped because another took over its lease or grant lock.")]
     private static partial void LogRunStopped(ILogger logger, Guid itemId);
