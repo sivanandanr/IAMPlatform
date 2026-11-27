@@ -130,7 +130,7 @@ public sealed partial class RequestItemParityTests
         (await otherMock.ExecuteAsync(new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountCreate, new ObjectRef(ObjectTypes.Account, $"CN={otherName},{AccountContainer}"),
             new ObjectRef(ObjectTypes.Container, AccountContainer), new Dictionary<string, string?> { ["sAMAccountName"] = otherName }, null), Ct)).Status.ShouldBe(OperationStatus.Applied);
         (await RunAsync(other, new ConnectorTarget(otherMock))).ShouldBeTrue();
-        (await PlannedAsync(other)).Item.Problem.ShouldBeOneOf("AlreadyExists", "TargetExists");
+        (await PlannedAsync(other)).Item.Problem.ShouldBe("AlreadyExists", "the SDK's own code for an object that is already there");
     }
 
     [Fact]

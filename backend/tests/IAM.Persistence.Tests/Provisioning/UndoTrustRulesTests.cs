@@ -87,10 +87,13 @@ public sealed class UndoTrustRulesTests
     [InlineData("ConnectorError", StepStatus.Unknown)]
     [InlineData("TimedOut", StepStatus.Unknown)]
     [InlineData("InvalidResponse", StepStatus.Unknown)]
+    [InlineData("TargetUnavailable", StepStatus.Unknown)]
+    [InlineData("SomeConnectorsOwnCode", StepStatus.Unknown)]
     [InlineData("Throttled", StepStatus.Retry)]
     public async Task AConnectorsOwnFaultOnAWriteHasAnUnknownOutcome(string code, StepStatus expected)
     {
-        // DL-102: a fault may come after the write landed, and the connector's ledger keeps no failure.
+        // DL-102, DL-103: a fault may come after the write landed, and the connector's ledger keeps no failure; only a throttle
+        // is known to come before any write.
         var step = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, "CN=ben,OU=Users,DC=corp,DC=test", null, null, new Dictionary<string, string?>());
         (await new ConnectorTarget(new FailingConnector(code)).RunAsync(step, CancellationToken.None)).Status.ShouldBe(expected);
     }

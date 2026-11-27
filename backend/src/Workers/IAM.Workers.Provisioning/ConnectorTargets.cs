@@ -18,19 +18,23 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
             {
                 OperationStatus.Applied or OperationStatus.AlreadyInState => StepStatus.Done,
 
-                // The connector's own fault, a time-out or a garbled answer may come after the write landed, and the connector's
-                // ledger keeps no failure: whether the target changed is unknown (DL-102), never "not done".
-                OperationStatus.Failed when result.Code is { } code && UnknownWriteCodes.Contains(code) => StepStatus.Unknown,
+                // A failed write may have landed before the fault (a dropped connection, a time-out, a garbled answer), and the
+                // connector's ledger keeps no failure: whether the target changed is unknown (DL-102, DL-103), never "not done".
+                // Only a throttle is known to come before any write.
+                OperationStatus.Failed when !BeforeWriteCodes.Contains(result.Code ?? string.Empty) => StepStatus.Unknown,
                 OperationStatus.Failed => StepStatus.Retry,
                 _ => StepStatus.Rejected,
             },
             result.Code ?? result.Status.ToString());
     }
 
-    /// <summary>The connector codes of a failed write that may still have changed the target (DL-102).</summary>
-    public static readonly IReadOnlySet<string> UnknownWriteCodes = new HashSet<string>(StringComparer.Ordinal)
+    /// <summary>
+    /// The connector codes of a failed write known to come before anything was written (DL-103): the SDK's rate limiter refuses
+    /// before the connector is called. Every other failed write may have changed the target.
+    /// </summary>
+    public static readonly IReadOnlySet<string> BeforeWriteCodes = new HashSet<string>(StringComparer.Ordinal)
     {
-        ResultCodes.ConnectorError, ResultCodes.TimedOut, ResultCodes.InvalidResponse,
+        ResultCodes.Throttled,
     };
 
     /// <summary>

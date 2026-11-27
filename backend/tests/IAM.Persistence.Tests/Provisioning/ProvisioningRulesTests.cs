@@ -226,7 +226,7 @@ public sealed class ProvisioningRulesTests
     [Theory]
     [InlineData(OperationStatus.Applied, StepStatus.Done)]
     [InlineData(OperationStatus.AlreadyInState, StepStatus.Done)]
-    [InlineData(OperationStatus.Failed, StepStatus.Retry)]
+    [InlineData(OperationStatus.Failed, StepStatus.Unknown)] // DL-103: a failed write may have landed; only a throttle is a plain retry
     [InlineData(OperationStatus.Rejected, StepStatus.Rejected)]
     [InlineData(OperationStatus.Unsupported, StepStatus.Rejected)]
     public async Task AConnectorsOutcomeBecomesAStepStatus(OperationStatus outcome, StepStatus expected)

@@ -137,11 +137,8 @@ public sealed partial class RequestItemParityTests
     [Fact]
     public async Task NoLoginWritesTheNameSequenceOnPostgreSql()
     {
-        if (IsSqlServer)
-        {
-            // An identity there refuses a written value without IDENTITY_INSERT (ANameSequenceIsTheDatabasesAlone).
-            return;
-        }
+        // On SQL Server an identity refuses a written value without IDENTITY_INSERT (ANameSequenceIsTheDatabasesAlone).
+        Assert.SkipWhen(IsSqlServer, "PostgreSQL only: SQL Server's identity already refuses a written seq");
 
         var world = await WorldAsync();
         var route = new FixedMatrix(Route(Stage("EntitlementOwner"), Stage("EntitlementOwner", sequence: 2, kind: "Action", fields: ["AccountName"])));
