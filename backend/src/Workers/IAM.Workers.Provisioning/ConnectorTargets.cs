@@ -12,9 +12,27 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
 {
     /// <summary>
     /// Whether the connector runs on the SDK's pipeline (DL-105): only then is a before-write code the SDK's own word. A connector
-    /// written straight on <see cref="IConnector"/> (a proxy to a remote agent, say) could pass one on after a write.
+    /// written straight on <see cref="IConnector"/> (a proxy to a remote agent, say) could pass one on after a write, and so could
+    /// one built on <see cref="ConnectorBase"/> that implements <see cref="IConnector.ExecuteAsync"/> again itself (DL-106).
     /// </summary>
-    private readonly bool _sdk = connector is ConnectorBase;
+    private readonly bool _sdk = RunsSdkPipeline(connector.GetType());
+
+    /// <summary>
+    /// Whether a connector type's writes go through <see cref="ConnectorBase"/>'s own pipeline (DL-106): it derives from it, and
+    /// its <see cref="IConnector.ExecuteAsync"/> is still the SDK's, not one it implements again.
+    /// </summary>
+    public static bool RunsSdkPipeline(Type type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        if (!typeof(ConnectorBase).IsAssignableFrom(type))
+        {
+            return false;
+        }
+
+        var map = type.GetInterfaceMap(typeof(IConnector));
+        var execute = Array.IndexOf(map.InterfaceMethods, typeof(IConnector).GetMethod(nameof(IConnector.ExecuteAsync)));
+        return execute >= 0 && map.TargetMethods[execute].DeclaringType == typeof(ConnectorBase);
+    }
 
     public async Task<StepResult> RunAsync(TargetStep operation, CancellationToken cancellationToken)
     {
@@ -64,6 +82,9 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
     public static readonly IReadOnlySet<string> RetryableReadCodes = new HashSet<string>(StringComparer.Ordinal)
     {
         ResultCodes.ConnectorError, ResultCodes.InvalidResponse, ResultCodes.TargetUnavailable, ResultCodes.Throttled, ResultCodes.TimedOut,
+
+        // The SDK never answers a read with it (DL-105), but a connector not on the SDK may: busy, not a mismatch (DL-106).
+        ResultCodes.RateLimited,
     };
 
     /// <summary>

@@ -299,10 +299,21 @@ public sealed partial class RequestItemParityTests
         await ledger.RecordAsync(new LedgerEntry(operation.OperationId, new string('b', 64), new OperationResult(operation.OperationId, OperationStatus.Rejected, "X")), Ct);
         (await ledger.FindAsync(operation.OperationId, Ct))!.Result.Status.ShouldBe(OperationStatus.Applied);
 
-        // A stored failure is damage (DL-105): the SDK never records one, and replaying it would say a write was never made.
+        // A failure is never stored (DL-105, DL-106): the ledger refuses to write one, and so does the database itself, so no
+        // operation id can be poisoned with "never made".
         var failed = Guid.CreateVersion7();
-        await ledger.RecordAsync(new LedgerEntry(failed, new string('c', 64), new OperationResult(failed, OperationStatus.Failed, ResultCodes.RateLimited)), Ct);
-        await Should.ThrowAsync<InvalidDataException>(() => ledger.FindAsync(failed, Ct));
+        await Should.ThrowAsync<ArgumentException>(() => ledger.RecordAsync(new LedgerEntry(failed, new string('c', 64), new OperationResult(failed, OperationStatus.Failed, ResultCodes.RateLimited)), Ct));
+        using (var scope = services.CreateScope())
+        {
+            var store = scope.ServiceProvider.GetRequiredService<IProvisioningLedger>();
+            await Should.ThrowAsync<DbUpdateException>(() => store.RecordAsync(OperationLedgerRecord.Create(failed, new string('c', 64), "Failed", ResultCodes.RateLimited, DateTimeOffset.UtcNow), Ct));
+        }
+
+        (await ledger.FindAsync(failed, Ct)).ShouldBeNull();
+
+        // The upgrade's check (exactly the migration's statement) passes when no failure is stored.
+        await db.ExecuteAsync(db.ProvisioningAppConnectionString,
+            IsSqlServer ? IAM.Persistence.SqlServer.Migrations.Provisioning.LedgerNoFailed.Check : IAM.Persistence.PostgreSql.Migrations.Provisioning.LedgerNoFailed.Check, Ct);
     }
 
     // ---- Provisioning helpers ----------------------------------------------------------------------------------------------

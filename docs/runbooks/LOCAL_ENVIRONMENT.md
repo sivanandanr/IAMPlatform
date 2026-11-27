@@ -173,6 +173,8 @@ Since DL-104: only the SDK's speed limit (`RateLimited`) is retried as "nothing 
 
 Since DL-105: a connector not built on the SDK's `ConnectorBase` never gets a plain retry for a failed write; every failure from it is treated as unknown. A connector reporting `RateLimited` on a read is retried as `ConnectorError`. The worker refuses a ledger row stored as `Failed` (the SDK never writes one): treat it as tampering, find who wrote it, and reconcile the item by hand. A run that stops with `LogRunStopped` right after its final read lost its grant lock; the item is decided again after its lease runs out.
 
+Since DL-106: a connector built on `ConnectorBase` that implements `IConnector.ExecuteAsync` itself is treated like one not on the SDK (every failed write unknown); new connectors must leave `ExecuteAsync` to the SDK. A step audited with the code `LedgerDamaged` (and an error log naming the item) means the connector's ledger holds a record the SDK never writes: treat it as tampering, find who wrote it, and reconcile the item by hand. Upgrade note: migration `LedgerNoFailed` stops the upgrade if the operation ledger holds a `Failed` row (error 51002 on SQL Server); nothing is deleted, so investigate and resolve the row before upgrading again.
+
 Change topology only by changing `definitions.json` through review and importing it again; a queue's arguments can't change in place (the worker logs `BrokerPreconditionFailed` until the queue is recreated). Unprocessable messages are in `iam.notification.approval_tasks.dlq` (logged with id and type once validated); there is no replay tool yet. `iam.unrouted` keeps events no consumer takes for at most 7 days (100,000 messages, 100 MB, oldest dropped): it is not a source to replay from.
 
 ## 4. Stop / reset

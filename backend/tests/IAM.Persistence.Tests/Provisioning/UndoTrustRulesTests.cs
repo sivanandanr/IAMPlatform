@@ -131,9 +131,60 @@ public sealed class UndoTrustRulesTests
         public Task<OperationResult> ExecuteAsync(ConnectorOperation operation, CancellationToken cancellationToken) =>
             Task.FromResult(OperationResult.Of(operation, OperationStatus.Failed, code));
 
-        public Task<VerificationResult> VerifyAsync(ConnectorOperation operation, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<VerificationResult> VerifyAsync(ConnectorOperation operation, CancellationToken cancellationToken) =>
+            Task.FromResult(new VerificationResult(false, code));
 
         public Task<ObjectPage> ListAsync(string objectType, string? continuation, int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task AConnectorOnTheSdkThatImplementsExecuteAgainIsNotTrusted()
+    {
+        // DL-106: built on ConnectorBase, but its own ExecuteAsync skips the SDK's pipeline; its RateLimited may follow a write.
+        var step = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, "CN=ben,OU=Users,DC=corp,DC=test", null, null, new Dictionary<string, string?>());
+        ConnectorTarget.RunsSdkPipeline(typeof(ReimplementingConnector)).ShouldBeFalse();
+        (await new ConnectorTarget(new ReimplementingConnector()).RunAsync(step, CancellationToken.None)).Status.ShouldBe(StepStatus.Unknown);
+    }
+
+    [Fact]
+    public void EveryConnectorShippedRunsTheSdkPipeline()
+    {
+        // DL-106: no production connector implements IConnector.ExecuteAsync again, so its RateLimited is the SDK's own word.
+        var shipped = new[] { typeof(ConnectorBase).Assembly, typeof(MockActiveDirectoryConnector).Assembly, typeof(ConnectorTarget).Assembly }
+            .SelectMany(a => a.GetTypes())
+            .Where(t => !t.IsAbstract && typeof(IConnector).IsAssignableFrom(t))
+            .ToList();
+        shipped.ShouldNotBeEmpty();
+        shipped.ShouldAllBe(t => ConnectorTarget.RunsSdkPipeline(t));
+    }
+
+    [Fact]
+    public async Task AReadAConnectorNotOnTheSdkSaysWasRateLimitedIsTriedAgain()
+    {
+        // DL-106: busy, not a mismatch; the SDK itself never answers a read with it.
+        var step = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, "CN=ben,OU=Users,DC=corp,DC=test", null, null, new Dictionary<string, string?>());
+        (await new ConnectorTarget(new FailingConnector(ResultCodes.RateLimited)).VerifyAsync(step, CancellationToken.None)).ShouldBeNull();
+    }
+
+    /// <summary>On the SDK, but its writes skip the pipeline: each one "lands" and reports RateLimited.</summary>
+    private sealed class ReimplementingConnector() : ConnectorBase(ConnectorSettings.Default, new InMemoryOperationLedger()), IConnector
+    {
+        public override ConnectorCapabilities Capabilities { get; } = new(
+            "test.reimplementing", false, [ActionCatalog.AccountCreate], [new ObjectTypeCapability(ObjectTypes.Account, false, ["displayName"])], 10, 1);
+
+        public override Task<ConnectorHealth> CheckHealthAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new ConnectorHealth(HealthStatus.Healthy, null, false));
+
+        Task<OperationResult> IConnector.ExecuteAsync(ConnectorOperation operation, CancellationToken cancellationToken) =>
+            Task.FromResult(OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.RateLimited));
+
+        protected override Task<ObjectSnapshot?> ReadCoreAsync(ObjectRef target, CancellationToken cancellationToken) => Task.FromResult<ObjectSnapshot?>(null);
+
+        protected override Task<OperationResult> ApplyAsync(ConnectorOperation operation, ObjectSnapshot? current, CancellationToken cancellationToken) =>
+            Task.FromResult(OperationResult.Of(operation, OperationStatus.Applied));
+
+        protected override Task<ObjectPage> ListCoreAsync(string objectType, string? continuation, int pageSize, CancellationToken cancellationToken) =>
+            Task.FromResult(new ObjectPage([], null));
     }
 
     [Fact]

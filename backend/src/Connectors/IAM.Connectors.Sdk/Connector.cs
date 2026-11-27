@@ -52,6 +52,13 @@ public sealed class InMemoryOperationLedger : IOperationLedger
     public Task RecordAsync(LedgerEntry entry, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(entry);
+
+        // Like a lasting ledger (DL-106): a failure is never remembered, or it would poison the operation id.
+        if (entry.Result.Status == OperationStatus.Failed)
+        {
+            throw new ArgumentException("A failed operation is never recorded.", nameof(entry));
+        }
+
         _entries.TryAdd(entry.OperationId, entry);
         return Task.CompletedTask;
     }

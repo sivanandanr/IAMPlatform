@@ -208,6 +208,16 @@ public sealed class SdkTests
     }
 
     [Fact]
+    public async Task TheInMemoryLedgerNeverRecordsAFailure()
+    {
+        // DL-106: like a lasting ledger; a stored failure would poison the operation id.
+        var ledger = new InMemoryOperationLedger();
+        var id = Guid.CreateVersion7();
+        await Should.ThrowAsync<ArgumentException>(() => ledger.RecordAsync(new LedgerEntry(id, "a", new OperationResult(id, OperationStatus.Failed, ResultCodes.RateLimited)), TestContext.Current.CancellationToken));
+        ledger.Count.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task AReadTheConnectorSaysWasRateLimitedIsItsOwnFault()
     {
         // DL-105: on a read too, RateLimited is the SDK's alone; a connector's own is a fault worth retrying.

@@ -50,20 +50,22 @@ public sealed partial class RequestItemParityTests
     [Fact]
     public async Task ALockTakenAndReleasedDuringTheFinalReadStillStopsTheSuccess()
     {
-        // Another run takes the lock and releases it again before this run saves: the row looks free, but its version moved.
+        // Another run takes the lock and releases it again before this run saves: the row looks free, but its version moved. The
+        // runner's clock doesn't move, so only the forced version check (DL-105) can see it (DL-106 re-review).
         var item = await PlannedExistingAsync();
         var (planned, _) = await PlannedAsync(item);
+        var clock = new MovingClock(DateTimeOffset.UtcNow);
         var probe = new LockProbeTarget(async step =>
         {
             if (step.Action == ProvisioningPlanner.EntitlementAdd)
             {
-                await TakeOverLockAsync(planned, DateTimeOffset.UtcNow.AddHours(1));
-                await TakeOverLockAsync(planned, DateTimeOffset.UtcNow.AddSeconds(-1));
+                await TakeOverLockAsync(planned, clock.GetUtcNow().AddHours(1));
+                await TakeOverLockAsync(planned, clock.GetUtcNow().AddSeconds(-1));
             }
 
             return true;
         });
-        (await RunAsync(item, probe)).ShouldBeTrue();
+        (await RunAsync(item, probe, clock)).ShouldBeTrue();
         (await PlannedAsync(item)).Item.State.ShouldNotBe(ProvisioningState.Succeeded);
         (await AuditCountAsync(item.ToString(), ProvisioningAuditActions.Succeeded, "Succeeded")).ShouldBe(0);
     }
