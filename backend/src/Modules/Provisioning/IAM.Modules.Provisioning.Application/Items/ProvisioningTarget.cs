@@ -33,6 +33,16 @@ public enum StepStatus
 /// <summary>A step's outcome: a status and the target's short code, never message text.</summary>
 public sealed record StepResult(StepStatus Status, string? Code);
 
+/// <summary>Step codes a target gives that the runner acts on itself.</summary>
+public static class StepCodes
+{
+    /// <summary>
+    /// With <see cref="StepStatus.Unknown"/>: the target's stored record of this step can't be trusted (DL-106, DL-107). Whether
+    /// the change was made is unknown and no retry or read settles it: the item stops for a person.
+    /// </summary>
+    public const string LedgerDamaged = "LedgerDamaged";
+}
+
 /// <summary>
 /// A target system the runner can change (DL-094). The provisioning worker adapts each connector in the reviewed allowlist to
 /// this, so the module never depends on the connector SDK (ADR-0007).

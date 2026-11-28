@@ -73,8 +73,11 @@ public sealed partial class ProvisioningRunner(
     /// <summary>The problem of an item whose create or entitlement add has an unknown outcome on an account it didn't create (DL-101).</summary>
     public const string OutcomeUnknown = "OutcomeUnknown";
 
-    /// <summary>The code of a step whose target's stored record of it can't be trusted (DL-106): audited, its outcome unknown.</summary>
-    public const string LedgerDamaged = "LedgerDamaged";
+    /// <summary>
+    /// The code of a step whose target's stored record of it can't be trusted (DL-106), and the problem of its item: logged,
+    /// audited, never retried or settled by a read; the item stops for a person (DL-107).
+    /// </summary>
+    public const string LedgerDamaged = StepCodes.LedgerDamaged;
 
     /// <summary>The most audit records read for one item's undo check.</summary>
     public const int MaxAuditRecords = 1_000;
@@ -383,6 +386,16 @@ public sealed partial class ProvisioningRunner(
         var result = interrupted && !ledgered && await VerifyAsync(run, step, cancellationToken).ConfigureAwait(false) == true
             ? new StepResult(StepStatus.Done, "AlreadyInState")
             : await RunStepAsync(run, step, cancellationToken).ConfigureAwait(false);
+
+        // A damaged record of the step (DL-107): no retry or read settles what it did, so a person must look. What earlier steps
+        // did is undone as for a rejected step; this step's own change, if made, is left for that person.
+        if (Damaged(result))
+        {
+            operation.Fail(LedgerDamaged, Now());
+            await UndoAndFailAsync(run, LedgerDamaged, operation, LedgerDamaged, cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
         var unsettled = result.Status == StepStatus.Unknown;
         if (unsettled)
         {
@@ -572,6 +585,9 @@ public sealed partial class ProvisioningRunner(
             o.State == ProvisioningState.Running || o.ResultCode == OutcomeUnknown || (o.Unsettled && o.State == ProvisioningState.Planned);
     }
 
+    /// <summary>Whether a step's target says its stored record of the step is damaged (DL-107).</summary>
+    private static bool Damaged(StepResult result) => result is { Status: StepStatus.Unknown, Code: LedgerDamaged };
+
     /// <summary>
     /// Runs the undo steps (fixed operation ids), each audited, then reads the target to confirm. The steps are stored first,
     /// with the reason audited, so a run that stops half-way resumes them; steps already stored must be exactly the expected
@@ -664,7 +680,12 @@ public sealed partial class ProvisioningRunner(
                 var step = Step(operation);
                 operation.Start();
                 var result = await RunStepAsync(run, step, cancellationToken).ConfigureAwait(false);
-                if (result.Status == StepStatus.Unknown && await VerifyAsync(run, step, cancellationToken).ConfigureAwait(false) == true)
+                if (Damaged(result))
+                {
+                    // A damaged record of an undo step (DL-107): never retried or settled by a read; the undo fails for a person.
+                    result = new StepResult(StepStatus.Rejected, LedgerDamaged);
+                }
+                else if (result.Status == StepStatus.Unknown && await VerifyAsync(run, step, cancellationToken).ConfigureAwait(false) == true)
                 {
                     result = new StepResult(StepStatus.Done, result.Code);
                 }
@@ -978,14 +999,14 @@ public sealed partial class ProvisioningRunner(
         await RenewForCallAsync(run, cancellationToken).ConfigureAwait(false);
         try
         {
-            return await CallAsync(run.Item, ct => run.Target.RunAsync(step, ct), cancellationToken).ConfigureAwait(false);
-        }
-        catch (InvalidDataException ex)
-        {
-            // A stored record the target can't trust (a ledger row the SDK never writes): told apart from a fault in the call,
-            // logged and audited as such (DL-106). Whether the target changed is still unknown, so it fails closed.
-            LogLedgerDamaged(logger, run.Item.Id, ex.GetType().Name);
-            return new StepResult(StepStatus.Unknown, LedgerDamaged);
+            var result = await CallAsync(run.Item, ct => run.Target.RunAsync(step, ct), cancellationToken).ConfigureAwait(false);
+            if (Damaged(result))
+            {
+                // Only the target says so (DL-107): any exception here is a call that broke off, never taken for damage.
+                LogLedgerDamaged(logger, run.Item.Id);
+            }
+
+            return result;
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
@@ -1083,8 +1104,8 @@ public sealed partial class ProvisioningRunner(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Provisioning item {ItemId}: its grant lock wasn't released ({ErrorType}); it runs out with the lease.")]
     private static partial void LogLockReleaseFailed(ILogger logger, Guid itemId, string errorType);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Provisioning item {ItemId}: the target's stored record of this step is damaged ({ErrorType}); the step's outcome is unknown.")]
-    private static partial void LogLedgerDamaged(ILogger logger, Guid itemId, string errorType);
+    [LoggerMessage(Level = LogLevel.Error, Message = "Provisioning item {ItemId}: the target's stored record of this step is damaged; the step's outcome is unknown and the item stops for a person.")]
+    private static partial void LogLedgerDamaged(ILogger logger, Guid itemId);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Provisioning item {ItemId}: this run stopped because another took over its lease or grant lock.")]
     private static partial void LogRunStopped(ILogger logger, Guid itemId);

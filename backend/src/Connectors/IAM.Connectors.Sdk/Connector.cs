@@ -8,7 +8,7 @@ namespace IAM.Connectors.Sdk;
 /// <summary>
 /// The connector contract (ADR-0007, blueprint §10, DL-080): capabilities, health, read, execute (with read-before-write
 /// and idempotency), verify and paged listing for discovery and reconciliation. Executing never throws for a problem in
-/// the target or the request: it reports it as a result.
+/// the target or the request: it reports it as a result. A damaged ledger record is thrown (DL-107).
 /// </summary>
 public interface IConnector
 {
@@ -38,6 +38,13 @@ public interface IOperationLedger
 
     Task RecordAsync(LedgerEntry entry, CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// A ledger record the SDK can't trust (DL-107): a stored failure, a code only the SDK gives before a write, a status it never
+/// records, or a result for another operation. Whether the operation's change was made is unknown, so a person must look; it
+/// is thrown, never reported as a result, so no caller can take it for an ordinary failure.
+/// </summary>
+public sealed class LedgerRecordDamagedException(string message) : Exception(message);
 
 /// <summary>An in-memory ledger: for tests and mocks only, lost on restart (DL-080). A real connector keeps one that lasts.</summary>
 public sealed class InMemoryOperationLedger : IOperationLedger
@@ -72,7 +79,8 @@ public sealed class InMemoryOperationLedger : IOperationLedger
 /// entitlement is already gone is already done; the change itself is the connector's. Only finished outcomes are
 /// remembered, and not those that depend on timing, so a retry runs again under the same id. One operation id, and one
 /// operation per target name (compared the connector's way), runs at a time. What a connector returns is checked and
-/// filtered to the attributes it declares and may show. Executing never throws for a problem in the target or the request.
+/// filtered to the attributes it declares and may show. Executing never throws for a problem in the target or the request;
+/// a ledger record it can't trust is thrown as <see cref="LedgerRecordDamagedException"/> (DL-107).
 /// </summary>
 public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger ledger, TimeProvider? clock = null) : IConnector
 {
@@ -145,6 +153,15 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
 
         if (await ledger.FindAsync(operation.OperationId, cancellationToken).ConfigureAwait(false) is { } prior)
         {
+            // Whatever the ledger (DL-107): only a finished outcome of this very operation is ever recorded, so anything else is
+            // damage, never a result to replay. A replayed failure, or the SDK's own speed limit, would say a change that may
+            // have been made never was.
+            if (prior.OperationId != operation.OperationId || prior.Result is null || prior.Result.OperationId != operation.OperationId
+                || prior.Result.Status == OperationStatus.Failed || !Enum.IsDefined(prior.Result.Status) || prior.Result.Code == ResultCodes.RateLimited)
+            {
+                throw new LedgerRecordDamagedException("The operation ledger returned a record the SDK never records.");
+            }
+
             return string.Equals(prior.Fingerprint, fingerprint, StringComparison.Ordinal)
                 ? prior.Result
                 : OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.OperationIdReused);

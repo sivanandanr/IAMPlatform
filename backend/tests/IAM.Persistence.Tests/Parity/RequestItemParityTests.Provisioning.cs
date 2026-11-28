@@ -306,7 +306,7 @@ public sealed partial class RequestItemParityTests
         using (var scope = services.CreateScope())
         {
             var store = scope.ServiceProvider.GetRequiredService<IProvisioningLedger>();
-            await Should.ThrowAsync<DbUpdateException>(() => store.RecordAsync(OperationLedgerRecord.Create(failed, new string('c', 64), "Failed", ResultCodes.RateLimited, DateTimeOffset.UtcNow), Ct));
+            ShouldBeLedgerValuesCheck(await Should.ThrowAsync<DbUpdateException>(() => store.RecordAsync(OperationLedgerRecord.Create(failed, new string('c', 64), "Failed", ResultCodes.RateLimited, DateTimeOffset.UtcNow), Ct)));
         }
 
         (await ledger.FindAsync(failed, Ct)).ShouldBeNull();

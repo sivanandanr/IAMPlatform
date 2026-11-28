@@ -217,6 +217,35 @@ public sealed class SdkTests
         ledger.Count.ShouldBe(0);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    public async Task ALedgerRecordTheSdkNeverWritesIsDamageWhateverTheLedger(int lie)
+    {
+        // DL-107: the SDK checks what any ledger hands back, not only ours. A replayed failure, the SDK's own speed limit, a
+        // status it doesn't know, or a record of another operation would hide whether the change was made: it is thrown, never
+        // replayed, and the connector is never called.
+        var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountDisable, FlakyConnector.Account, null, new Dictionary<string, string?>(), null);
+        var id = operation.OperationId;
+        var other = Guid.CreateVersion7();
+        var entry = lie switch
+        {
+            0 => new LedgerEntry(id, "x", new OperationResult(id, OperationStatus.Failed, ResultCodes.RateLimited)),
+            1 => new LedgerEntry(id, "x", new OperationResult(id, OperationStatus.Failed, ResultCodes.ConnectorError)),
+            2 => new LedgerEntry(id, "x", new OperationResult(id, OperationStatus.Applied, ResultCodes.RateLimited)),
+            3 => new LedgerEntry(id, "x", new OperationResult(id, (OperationStatus)99, null)),
+            4 => new LedgerEntry(other, "x", new OperationResult(id, OperationStatus.Applied, null)),
+            _ => new LedgerEntry(id, "x", new OperationResult(other, OperationStatus.Applied, null)),
+        };
+        var connector = new FlakyConnector(returns: true, status: OperationStatus.Applied, ledger: new LyingLedger(entry));
+        await Should.ThrowAsync<LedgerRecordDamagedException>(() => connector.ExecuteAsync(operation, TestContext.Current.CancellationToken));
+        (await connector.ReadAsync(FlakyConnector.Account, TestContext.Current.CancellationToken))!.Enabled.ShouldBe(true, "the connector was never called");
+    }
+
     [Fact]
     public async Task AReadTheConnectorSaysWasRateLimitedIsItsOwnFault()
     {
@@ -224,6 +253,14 @@ public sealed class SdkTests
         var connector = new FlakyConnector(ResultCodes.RateLimited, readFails: true);
         var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountDisable, FlakyConnector.Account, null, new Dictionary<string, string?>(), null);
         (await connector.VerifyAsync(operation, TestContext.Current.CancellationToken)).ShouldBe(new VerificationResult(false, ResultCodes.ConnectorError));
+    }
+
+    /// <summary>A ledger that hands back one fixed entry for every operation and records nothing.</summary>
+    private sealed class LyingLedger(LedgerEntry entry) : IOperationLedger
+    {
+        public Task<LedgerEntry?> FindAsync(Guid operationId, CancellationToken cancellationToken) => Task.FromResult<LedgerEntry?>(entry);
+
+        public Task RecordAsync(LedgerEntry entry, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     /// <summary>Throws from its writes, or returns snapshots with things it must not.</summary>
@@ -261,8 +298,8 @@ public sealed class SdkTests
     /// Fails once with a code (thrown, or returned with a status), then fine. With <c>readFails</c>, its reads throw the code
     /// instead.
     /// </summary>
-    private sealed class FlakyConnector(string code = ResultCodes.Throttled, bool returns = false, OperationStatus status = OperationStatus.Failed, bool readFails = false)
-        : ConnectorBase(ConnectorSettings.Default, new InMemoryOperationLedger())
+    private sealed class FlakyConnector(string code = ResultCodes.Throttled, bool returns = false, OperationStatus status = OperationStatus.Failed, bool readFails = false, IOperationLedger? ledger = null)
+        : ConnectorBase(ConnectorSettings.Default, ledger ?? new InMemoryOperationLedger())
     {
         public static readonly ObjectRef Account = new(ObjectTypes.Account, "flaky");
         private bool _failed;
