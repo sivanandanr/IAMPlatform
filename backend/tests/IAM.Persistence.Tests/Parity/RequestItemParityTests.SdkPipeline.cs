@@ -248,6 +248,131 @@ public sealed partial class RequestItemParityTests
         }
     }
 
+    [Fact]
+    public async Task ALedgerRowForACreateThatWasNeverSentIsDamageNotACreatedAccount()
+    {
+        // DL-109: a well-formed row, with the right fingerprint, that no call to this directory wrote (here: the same create run on
+        // another directory that shares the ledger, as anyone who can write the ledger could forge it). The SDK replays it, but
+        // the create was never sent before, so the runner takes it as damage: nothing is taken as the item's account.
+        var (item, name, _, group) = await PlannedNewAccountAsync();
+        var (_, planned) = await PlannedAsync(item);
+        var ledger = new InMemoryOperationLedger();
+        var elsewhere = SharedLedgerMock(group, ledger);
+        (await new ConnectorTarget(elsewhere).RunAsync(StepOf(planned.Single(s => s.Step == 1)), Ct)).Status.ShouldBe(StepStatus.Done);
+        var mock = SharedLedgerMock(group, ledger);
+
+        (await RunAsync(item, new ConnectorTarget(mock))).ShouldBeTrue();
+
+        var (failed, steps) = await PlannedAsync(item);
+        failed.ShouldSatisfyAllConditions(i => i.State.ShouldBe(ProvisioningState.Failed), i => i.Problem.ShouldBe(ProvisioningRunner.LedgerDamaged));
+        steps.Single(s => s.Step == 1).ResultCode.ShouldBe(ProvisioningRunner.LedgerDamaged);
+        steps.ShouldNotContain(s => s.Step == 2 && s.State != ProvisioningState.Planned, "nothing after the create ran");
+        (await mock.ReadAsync(new ObjectRef(ObjectTypes.Account, $"CN={name},{AccountContainer}"), Ct)).ShouldBeNull("nothing was written here");
+        (await FinalAuditAsync(item)).ShouldSatisfyAllConditions(p => p["step"].ShouldBe("1"), p => p["code"].ShouldBe(ProvisioningRunner.LedgerDamaged));
+    }
+
+    [Fact]
+    public async Task AReplayOfAnAddThatWasNeverSentIsDamage()
+    {
+        // DL-109: on an existing account, the add's first attempt is answered from a ledger: no call ever sent it, so the row is
+        // not this item's change. The item fails for a person and nothing is undone.
+        var item = await PlannedExistingAsync();
+        var probe = new StepProbeTarget(onRun: _ => Task.FromResult(new StepResult(StepStatus.Done, ProvisioningPlanner.Applied) { Replayed = true }));
+        (await RunAsync(item, probe, new MovingClock(DateTimeOffset.UtcNow))).ShouldBeTrue();
+
+        probe.Reads.ShouldBe(0);
+        probe.Removes.ShouldBe(0);
+        var (failed, steps) = await PlannedAsync(item);
+        failed.ShouldSatisfyAllConditions(i => i.State.ShouldBe(ProvisioningState.Failed), i => i.Problem.ShouldBe(ProvisioningRunner.LedgerDamaged));
+        steps.Single(s => s.Action == ProvisioningPlanner.EntitlementAdd).ResultCode.ShouldBe(ProvisioningRunner.LedgerDamaged);
+    }
+
+    [Theory]
+    [InlineData(StepStatus.Retry)]
+    [InlineData(StepStatus.Unknown)]
+    public async Task AReplayOfTheAddThatWaitedLastTimeIsTaken(StepStatus first)
+    {
+        // DL-109: the add waited (failed for now, or its outcome unknown); the next run's attempt is answered from the ledger.
+        // That step was sent before, so the replay is its own earlier change and the item succeeds.
+        var item = await PlannedExistingAsync();
+        var clock = new MovingClock(DateTimeOffset.UtcNow);
+        var calls = 0;
+        var probe = new StepProbeTarget(
+            onRun: _ => Task.FromResult(++calls == 1
+                ? new StepResult(first, ResultCodes.Throttled)
+                : new StepResult(StepStatus.Done, ProvisioningPlanner.Applied) { Replayed = true }),
+            onRead: _ => Task.FromResult<bool?>(calls == 1 ? null : true));
+        (await RunAsync(item, probe, clock)).ShouldBeTrue();
+        (await PlannedAsync(item)).Item.State.ShouldBe(ProvisioningState.Planned, "the add waits");
+
+        clock.Advance(TimeSpan.FromHours(1));
+        (await RunAsync(item, probe, clock)).ShouldBeTrue();
+        (await PlannedAsync(item)).Item.State.ShouldBe(ProvisioningState.Succeeded);
+    }
+
+    [Fact]
+    public async Task AReplayOfALaterStepThatWaitedLastTimeIsTaken()
+    {
+        // DL-109: on a new account the enable (step 3, not one the ledger settles) broke off and a read couldn't confirm it, so it
+        // waited. The next run reaches it first, and its answer from the ledger is its own earlier change: the item succeeds.
+        var (item, _, _, _) = await PlannedNewAccountAsync();
+        var clock = new MovingClock(DateTimeOffset.UtcNow);
+        var enables = 0;
+        var probe = new StepProbeTarget(
+            onRun: step => Task.FromResult(step.Action != ProvisioningPlanner.AccountEnable
+                ? new StepResult(StepStatus.Done, ProvisioningPlanner.Applied)
+                : ++enables == 1
+                    ? new StepResult(StepStatus.Unknown, ResultCodes.TimedOut)
+                    : new StepResult(StepStatus.Done, ProvisioningPlanner.Applied) { Replayed = true }),
+            onRead: step => Task.FromResult<bool?>(step.Action == ProvisioningPlanner.AccountEnable && enables == 1 ? false : true));
+        (await RunAsync(item, probe, clock)).ShouldBeTrue();
+        (await PlannedAsync(item)).Item.State.ShouldBe(ProvisioningState.Planned, "the enable waits");
+
+        clock.Advance(TimeSpan.FromHours(1));
+        (await RunAsync(item, probe, clock)).ShouldBeTrue();
+        (await PlannedAsync(item)).Item.State.ShouldBe(ProvisioningState.Succeeded);
+    }
+
+    [Fact]
+    public async Task AReplayOfAStepAfterTheOneThatWaitedIsDamage()
+    {
+        // DL-109: on a new account the create waited; the next run's create succeeds, and the add after it, never sent before, is
+        // answered from a ledger. Only the first step a later run reaches may be its own earlier change: this is damage.
+        var (item, _, _, _) = await PlannedNewAccountAsync();
+        var clock = new MovingClock(DateTimeOffset.UtcNow);
+        var creates = 0;
+        var probe = new StepProbeTarget(onRun: step => Task.FromResult(step.Action switch
+        {
+            ProvisioningPlanner.AccountCreate => ++creates == 1
+                ? new StepResult(StepStatus.Retry, ResultCodes.Throttled)
+                : new StepResult(StepStatus.Done, ProvisioningPlanner.Applied),
+            ProvisioningPlanner.EntitlementAdd => new StepResult(StepStatus.Done, ProvisioningPlanner.Applied) { Replayed = true },
+            _ => new StepResult(StepStatus.Done, ProvisioningPlanner.Applied),
+        }));
+        (await RunAsync(item, probe, clock)).ShouldBeTrue();
+        (await PlannedAsync(item)).Item.State.ShouldBe(ProvisioningState.Planned, "the create waits");
+
+        clock.Advance(TimeSpan.FromHours(1));
+        (await RunAsync(item, probe, clock)).ShouldBeTrue();
+        var (failed, steps) = await PlannedAsync(item);
+        failed.ShouldSatisfyAllConditions(i => i.State.ShouldBe(ProvisioningState.Failed), i => i.Problem.ShouldBe(ProvisioningRunner.LedgerDamaged));
+        steps.Single(s => s.Step == 2).ResultCode.ShouldBe(ProvisioningRunner.LedgerDamaged);
+    }
+
+    /// <summary>A mock directory over a ledger it shares with others (DL-109).</summary>
+    private static MockActiveDirectoryConnector SharedLedgerMock(string group, IOperationLedger ledger)
+    {
+        var mock = new MockActiveDirectoryConnector(ConnectorSettings.Default, ledger, "DC=corp,DC=test");
+        mock.AddContainer("Users");
+        mock.AddGroup(group["CN=".Length..group.IndexOf(',', StringComparison.Ordinal)], mock.AddContainer("Groups"));
+        return mock;
+    }
+
+    /// <summary>A stored step as the runner hands it to a target.</summary>
+    private static TargetStep StepOf(ProvisioningOperation o) => new(
+        o.Id, o.Action, o.TargetType, o.TargetId, o.RelatedType, o.RelatedId,
+        System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string?>>(o.Attributes) ?? []);
+
     /// <summary>A mock directory over the durable ledger, whose stored record of one operation is damaged (DL-108).</summary>
     private static MockActiveDirectoryConnector DurableMock(string group, Guid damaged, out ServiceProvider services)
     {

@@ -50,9 +50,20 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
         }
 
         // The damage code is this target's alone (DL-108): a connector that reports it itself is a connector fault, never damage.
+        // With a success it contradicts itself, so whether the target changed is unknown (DL-109), as the SDK takes a success
+        // that claims its speed limit.
         if (result.Code == StepCodes.LedgerDamaged)
         {
-            result = result with { Code = ResultCodes.ConnectorError };
+            result = result.Status is OperationStatus.Applied or OperationStatus.AlreadyInState
+                ? result with { Status = OperationStatus.Failed, Code = ResultCodes.InvalidResponse }
+                : result with { Code = ResultCodes.ConnectorError };
+        }
+
+        // "Already as asked" always says so in its code (DL-109): the runner's guard that a create never takes over an object
+        // that was there matches the code, so no connector code may hide it.
+        if (result.Status == OperationStatus.AlreadyInState)
+        {
+            result = result with { Code = nameof(OperationStatus.AlreadyInState) };
         }
 
         return new StepResult(
@@ -67,7 +78,11 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
                 OperationStatus.Failed => StepStatus.Unknown,
                 _ => StepStatus.Rejected,
             },
-            result.Code ?? result.Status.ToString());
+            result.Code ?? result.Status.ToString())
+        {
+            // Only the SDK's word (DL-109): a connector not on it can't say it answered from a ledger.
+            Replayed = _sdk && result.Replayed,
+        };
     }
 
     /// <summary>
