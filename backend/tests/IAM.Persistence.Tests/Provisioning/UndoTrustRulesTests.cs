@@ -120,7 +120,6 @@ public sealed class UndoTrustRulesTests
         public override long GetTimestamp() => 0;
     }
 
-    /// <summary>A connector whose every write fails with one code.</summary>
     /// <summary>A durable ledger store holding one stored status for every operation.</summary>
     private sealed class StoredLedger(string status) : IProvisioningLedger
     {
@@ -130,8 +129,8 @@ public sealed class UndoTrustRulesTests
         public Task RecordAsync(OperationLedgerRecord record, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
-    /// <summary>A connector not on the SDK whose write throws an InvalidDataException, as a garbled answer would.</summary>
-    private sealed class GarblingConnector : IConnector
+    /// <summary>A connector not on the SDK whose write throws: by default an InvalidDataException, as a garbled answer would.</summary>
+    private sealed class GarblingConnector(Func<Exception>? fault = null) : IConnector
     {
         public ConnectorCapabilities Capabilities => throw new NotSupportedException();
 
@@ -140,13 +139,14 @@ public sealed class UndoTrustRulesTests
         public Task<ObjectSnapshot?> ReadAsync(ObjectRef target, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<OperationResult> ExecuteAsync(ConnectorOperation operation, CancellationToken cancellationToken) =>
-            throw new InvalidDataException("The answer couldn't be decoded.");
+            throw fault?.Invoke() ?? new InvalidDataException("The answer couldn't be decoded.");
 
         public Task<VerificationResult> VerifyAsync(ConnectorOperation operation, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<ObjectPage> ListAsync(string objectType, string? continuation, int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
+    /// <summary>A connector whose every write fails with one code.</summary>
     private sealed class FailingConnector(string code) : IConnector
     {
         public ConnectorCapabilities Capabilities => throw new NotSupportedException();
@@ -203,12 +203,52 @@ public sealed class UndoTrustRulesTests
         await Should.ThrowAsync<InvalidDataException>(() => new ConnectorTarget(new GarblingConnector()).RunAsync(step, CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData(OperationStatus.Failed, StepStatus.Unknown)]
+    [InlineData(OperationStatus.Rejected, StepStatus.Rejected)]
+    public async Task AConnectorThatReportsTheDamageCodeItselfIsAConnectorFault(OperationStatus status, StepStatus expected)
+    {
+        // DL-108: the damage code is the connector target's alone. A connector that reports it (a proxy passing a remote
+        // agent's code on, say) is a connector fault: a failure stays an unknown outcome that is tried again, never damage.
+        var step = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, "CN=ben,OU=Users,DC=corp,DC=test", null, null, new Dictionary<string, string?>());
+        (await new ConnectorTarget(new ReportingConnector(status, StepCodes.LedgerDamaged)).RunAsync(step, CancellationToken.None))
+            .ShouldBe(new StepResult(expected, ResultCodes.ConnectorError));
+    }
+
+    [Fact]
+    public async Task OnlyTheSdkCanSayItsLedgerIsDamaged()
+    {
+        // DL-108: a connector not on the SDK that throws the SDK's damage exception is a call that broke off (the runner's
+        // CallFailed), never damage: only the SDK's own refusal stops the item for a person.
+        var step = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, "CN=ben,OU=Users,DC=corp,DC=test", null, null, new Dictionary<string, string?>());
+        var target = new ConnectorTarget(new GarblingConnector(() => new LedgerRecordDamagedException("Not the SDK's.")));
+        await Should.ThrowAsync<LedgerRecordDamagedException>(() => target.RunAsync(step, CancellationToken.None));
+    }
+
+    /// <summary>A connector not on the SDK whose every write ends with one status and code.</summary>
+    private sealed class ReportingConnector(OperationStatus status, string code) : IConnector
+    {
+        public ConnectorCapabilities Capabilities => throw new NotSupportedException();
+
+        public Task<ConnectorHealth> CheckHealthAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<ObjectSnapshot?> ReadAsync(ObjectRef target, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<OperationResult> ExecuteAsync(ConnectorOperation operation, CancellationToken cancellationToken) =>
+            Task.FromResult(OperationResult.Of(operation, status, code));
+
+        public Task<VerificationResult> VerifyAsync(ConnectorOperation operation, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<ObjectPage> ListAsync(string objectType, string? continuation, int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
     [Fact]
     public void EveryConnectorShippedRunsTheSdkPipeline()
     {
         // DL-106: no production connector implements IConnector.ExecuteAsync again, so its RateLimited is the SDK's own word.
-        // Every IAM assembly beside the tests (DL-107), so a connector added later is checked too; the three known ones must be
-        // among them.
+        // Every IAM assembly in the test output (DL-107): the ones this test project references, so a connector project must be
+        // referenced here to be checked (DL-108); the three known ones must be among them. A type that can't be loaded fails
+        // the test by name rather than being skipped.
         var assemblies = Directory.GetFiles(AppContext.BaseDirectory, "IAM.*.dll")
             .Where(f => !Path.GetFileName(f).Contains(".Tests", StringComparison.Ordinal))
             .Select(f => System.Reflection.Assembly.LoadFrom(f))
@@ -217,11 +257,25 @@ public sealed class UndoTrustRulesTests
         assemblies.ShouldContain(typeof(MockActiveDirectoryConnector).Assembly);
         assemblies.ShouldContain(typeof(ConnectorTarget).Assembly);
         var shipped = assemblies
-            .SelectMany(a => a.GetTypes())
+            .SelectMany(TypesOf)
             .Where(t => !t.IsAbstract && typeof(IConnector).IsAssignableFrom(t))
             .ToList();
         shipped.ShouldNotBeEmpty();
         shipped.ShouldAllBe(t => ConnectorTarget.RunsSdkPipeline(t));
+    }
+
+    private static Type[] TypesOf(System.Reflection.Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (System.Reflection.ReflectionTypeLoadException e)
+        {
+            throw new ShouldAssertException(
+                $"{assembly.GetName().Name} has types that can't be loaded, so its connectors can't be checked: "
+                + string.Join("; ", e.LoaderExceptions.Select(x => x?.Message)));
+        }
     }
 
     [Fact]

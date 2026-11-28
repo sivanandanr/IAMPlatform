@@ -155,9 +155,10 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
         {
             // Whatever the ledger (DL-107): only a finished outcome of this very operation is ever recorded, so anything else is
             // damage, never a result to replay. A replayed failure, or the SDK's own speed limit, would say a change that may
-            // have been made never was.
+            // have been made never was. Nor is a not-found code ever recorded, or a fingerprint not of the SDK's form (DL-108).
             if (prior.OperationId != operation.OperationId || prior.Result is null || prior.Result.OperationId != operation.OperationId
-                || prior.Result.Status == OperationStatus.Failed || !Enum.IsDefined(prior.Result.Status) || prior.Result.Code == ResultCodes.RateLimited)
+                || prior.Result.Status == OperationStatus.Failed || !Enum.IsDefined(prior.Result.Status) || prior.Result.Code == ResultCodes.RateLimited
+                || (prior.Result.Code is { } priorCode && TimingCodes.Contains(priorCode)) || !IsFingerprint(prior.Fingerprint))
             {
                 throw new LedgerRecordDamagedException("The operation ledger returned a record the SDK never records.");
             }
@@ -327,6 +328,10 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
         });
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
+
+    /// <summary>Whether a stored fingerprint has the form <see cref="Fingerprint"/> writes: 64 lower-case hex digits (DL-108).</summary>
+    private static bool IsFingerprint(string? value) =>
+        value is { Length: 64 } && value.All(c => char.IsAsciiDigit(c) || c is >= 'a' and <= 'f');
 
     private async Task<ObjectSnapshot?> ReadCheckedAsync(ObjectRef target, CancellationToken cancellationToken) =>
         await ReadCoreAsync(target, cancellationToken).ConfigureAwait(false) is { } snapshot ? Sanitize(snapshot) : null;
