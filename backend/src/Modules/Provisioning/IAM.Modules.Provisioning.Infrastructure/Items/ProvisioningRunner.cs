@@ -388,7 +388,8 @@ public sealed partial class ProvisioningRunner(
             : await RunStepAsync(run, step, cancellationToken).ConfigureAwait(false);
 
         // A damaged record of the step (DL-107): no retry or read settles what it did, so a person must look. What earlier steps
-        // did is undone as for a rejected step; this step's own change, if made, is left for that person.
+        // did is undone as for a rejected step; this step's own change, if made, is left for that person, except on an account
+        // this item created, whose undo removes everything on it (DL-108).
         if (Damaged(result))
         {
             operation.Fail(LedgerDamaged, Now());
@@ -528,6 +529,9 @@ public sealed partial class ProvisioningRunner(
         var item = run.Item;
         var undo = ProvisioningPlanner.Undo(item.Id, run.Plan);
         var started = item.UndoReason is not null || run.Operations.Any(o => o.Step > ProvisioningPlanner.MaxPlanSteps);
+
+        // An undo resumed in a later run still names the plan step that failed, so its final audit says which (DL-108).
+        operation ??= run.Plan.FirstOrDefault(o => o.State == ProvisioningState.Failed);
 
         // A create, or an add on an account this item didn't create, whose outcome is unknown (DL-101): nobody can tell what it
         // changed or whether the access was there before, so nothing is called and a person reconciles it. An add on an account

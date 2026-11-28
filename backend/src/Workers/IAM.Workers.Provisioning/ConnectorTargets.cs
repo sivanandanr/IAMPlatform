@@ -41,11 +41,18 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
         {
             result = await connector.ExecuteAsync(ToOperation(operation), cancellationToken).ConfigureAwait(false);
         }
-        catch (LedgerRecordDamagedException)
+        catch (LedgerRecordDamagedException) when (_sdk)
         {
             // The connector's record of this operation can't be trusted (DL-107): only this, never any other fault, is told
-            // apart, and the runner stops the item for a person. Anything else thrown is a call that broke off.
+            // apart, and the runner stops the item for a person. Only the SDK's own refusal counts (DL-108): from a connector not
+            // on the SDK the exception is a call that broke off, like anything else thrown.
             return new StepResult(StepStatus.Unknown, StepCodes.LedgerDamaged);
+        }
+
+        // The damage code is this target's alone (DL-108): a connector that reports it itself is a connector fault, never damage.
+        if (result.Code == StepCodes.LedgerDamaged)
+        {
+            result = result with { Code = ResultCodes.ConnectorError };
         }
 
         return new StepResult(

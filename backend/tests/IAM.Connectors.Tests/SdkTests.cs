@@ -224,26 +224,51 @@ public sealed class SdkTests
     [InlineData(3)]
     [InlineData(4)]
     [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(7)]
+    [InlineData(8)]
+    [InlineData(9)]
+    [InlineData(10)]
     public async Task ALedgerRecordTheSdkNeverWritesIsDamageWhateverTheLedger(int lie)
     {
         // DL-107: the SDK checks what any ledger hands back, not only ours. A replayed failure, the SDK's own speed limit, a
         // status it doesn't know, or a record of another operation would hide whether the change was made: it is thrown, never
-        // replayed, and the connector is never called.
+        // replayed, and the connector is never called. DL-108: so is a missing result, a not-found code (never recorded), and a
+        // fingerprint not of the SDK's form. Every lie but the fingerprint's own carries a well-formed one.
         var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountDisable, FlakyConnector.Account, null, new Dictionary<string, string?>(), null);
         var id = operation.OperationId;
         var other = Guid.CreateVersion7();
+        var print = new string('a', 64);
         var entry = lie switch
         {
-            0 => new LedgerEntry(id, "x", new OperationResult(id, OperationStatus.Failed, ResultCodes.RateLimited)),
-            1 => new LedgerEntry(id, "x", new OperationResult(id, OperationStatus.Failed, ResultCodes.ConnectorError)),
-            2 => new LedgerEntry(id, "x", new OperationResult(id, OperationStatus.Applied, ResultCodes.RateLimited)),
-            3 => new LedgerEntry(id, "x", new OperationResult(id, (OperationStatus)99, null)),
-            4 => new LedgerEntry(other, "x", new OperationResult(id, OperationStatus.Applied, null)),
-            _ => new LedgerEntry(id, "x", new OperationResult(other, OperationStatus.Applied, null)),
+            0 => new LedgerEntry(id, print, new OperationResult(id, OperationStatus.Failed, ResultCodes.RateLimited)),
+            1 => new LedgerEntry(id, print, new OperationResult(id, OperationStatus.Failed, ResultCodes.ConnectorError)),
+            2 => new LedgerEntry(id, print, new OperationResult(id, OperationStatus.Applied, ResultCodes.RateLimited)),
+            3 => new LedgerEntry(id, print, new OperationResult(id, (OperationStatus)99, null)),
+            4 => new LedgerEntry(other, print, new OperationResult(id, OperationStatus.Applied, null)),
+            5 => new LedgerEntry(id, print, new OperationResult(other, OperationStatus.Applied, null)),
+            6 => new LedgerEntry(id, print, null!),
+            7 => new LedgerEntry(id, print, new OperationResult(id, OperationStatus.Rejected, ResultCodes.TargetNotFound)),
+            8 => new LedgerEntry(id, print, new OperationResult(id, OperationStatus.Rejected, ResultCodes.RelatedNotFound)),
+            9 => new LedgerEntry(id, string.Empty, new OperationResult(id, OperationStatus.Applied, null)),
+            _ => new LedgerEntry(id, new string('A', 64), new OperationResult(id, OperationStatus.Applied, null)),
         };
         var connector = new FlakyConnector(returns: true, status: OperationStatus.Applied, ledger: new LyingLedger(entry));
         await Should.ThrowAsync<LedgerRecordDamagedException>(() => connector.ExecuteAsync(operation, TestContext.Current.CancellationToken));
         (await connector.ReadAsync(FlakyConnector.Account, TestContext.Current.CancellationToken))!.Enabled.ShouldBe(true, "the connector was never called");
+    }
+
+    [Fact]
+    public async Task AWellFormedRecordOfAnotherChangeIsStillAReusedIdNotDamage()
+    {
+        // DL-108: the form check is not a fingerprint compare: a well-formed record of a different change under the same id is
+        // the caller's reuse of the id (rejected), as before.
+        var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountDisable, FlakyConnector.Account, null, new Dictionary<string, string?>(), null);
+        var id = operation.OperationId;
+        var connector = new FlakyConnector(returns: true, status: OperationStatus.Applied,
+            ledger: new LyingLedger(new LedgerEntry(id, new string('a', 64), new OperationResult(id, OperationStatus.Applied, null))));
+        (await connector.ExecuteAsync(operation, TestContext.Current.CancellationToken))
+            .ShouldBe(new OperationResult(id, OperationStatus.Rejected, ResultCodes.OperationIdReused));
     }
 
     [Fact]

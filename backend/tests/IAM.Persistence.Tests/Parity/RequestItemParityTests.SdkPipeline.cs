@@ -15,10 +15,10 @@ using Shouldly;
 namespace IAM.Persistence.Tests.Parity;
 
 /// <summary>
-/// Stage 9 slices 11 and 12 (DL-106, DL-107), the re-reviews' findings: a damaged stored record of a step, from the durable
-/// ledger through the SDK and the connector target, stops the item for a person, never retried or settled by a read; under a
-/// clock that doesn't move, a lock taken by another run still stops this run before its next call and before its undo removes
-/// anything; and the upgrade stops when a failed operation is stored.
+/// Stage 9 slices 11 to 13 (DL-106 to DL-108), the re-reviews' findings: a damaged stored record of a step, from the durable
+/// ledger through the SDK and the connector target, stops the item for a person, never retried or settled by a read; on a new
+/// account, what the item did is undone first; under a clock that doesn't move, a lock taken by another run still stops this
+/// run before its next call and before its undo removes anything; and the upgrade stops when a failed operation is stored.
 /// </summary>
 public sealed partial class RequestItemParityTests
 {
@@ -50,16 +50,91 @@ public sealed partial class RequestItemParityTests
                 e => e.ShouldNotContain(a => a.Action == ProvisioningAuditActions.StepRetry, "never retried"));
     }
 
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task ADamagedRecordOfALaterStepOnANewAccountUndoesTheAccountThroughTheWholeChain(int damaged)
+    {
+        // DL-108: the create ran; the stored record of the add (step 2) or the enable (step 3) is damaged. Everything on the
+        // account is this item's, so the undo removes the membership and disables the account, and the item fails for a person.
+        var (item, name, _, group) = await PlannedNewAccountAsync();
+        var (_, planned) = await PlannedAsync(item);
+        var mock = DurableMock(group, planned.Single(s => s.Step == damaged).Id, out var services);
+        await using var __ = services;
+
+        (await RunAsync(item, new ConnectorTarget(mock))).ShouldBeTrue();
+
+        var (failed, steps) = await PlannedAsync(item);
+        failed.ShouldSatisfyAllConditions(i => i.State.ShouldBe(ProvisioningState.Failed), i => i.Problem.ShouldBe(ProvisioningRunner.LedgerDamaged));
+        steps.Single(s => s.Step == damaged).ShouldSatisfyAllConditions(
+            s => s.State.ShouldBe(ProvisioningState.Failed),
+            s => s.ResultCode.ShouldBe(ProvisioningRunner.LedgerDamaged));
+        steps.Where(s => s.Step > ProvisioningPlanner.MaxPlanSteps).Select(s => (s.Action, s.State))
+            .ShouldBe([(ProvisioningPlanner.EntitlementRemove, ProvisioningState.Succeeded), (ProvisioningPlanner.AccountDisable, ProvisioningState.Succeeded)]);
+        var account = (await mock.ReadAsync(new ObjectRef(ObjectTypes.Account, $"CN={name},{AccountContainer}"), Ct)).ShouldNotBeNull("the create ran");
+        account.Enabled.ShouldBe(false);
+        account.Links.ShouldNotContain(l => string.Equals(l.Id, group, StringComparison.OrdinalIgnoreCase));
+        (await FinalAuditAsync(item)).ShouldSatisfyAllConditions(
+            p => p["step"].ShouldBe(damaged.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            p => p["code"].ShouldBe(ProvisioningRunner.LedgerDamaged));
+    }
+
+    [Fact]
+    public async Task AnUndoAfterDamageThatHasToWaitStillNamesTheDamagedStepWhenItEnds()
+    {
+        // DL-108: the enable's record is damaged and the undo's removal breaks off, so the undo waits for a later run. That run
+        // finishes it; the item fails LedgerDamaged and its final audit still names the damaged step.
+        var (item, name, _, group) = await PlannedNewAccountAsync();
+        var (_, planned) = await PlannedAsync(item);
+        var mock = DurableMock(group, planned.Single(s => s.Step == 3).Id, out var services);
+        await using var __ = services;
+        var clock = new MovingClock(DateTimeOffset.UtcNow);
+        var broke = false;
+        var breaking = new HookedTarget(new ConnectorTarget(mock), step =>
+        {
+            if (step.Action == ProvisioningPlanner.EntitlementRemove && !broke)
+            {
+                broke = true;
+                throw new TimeoutException("The call broke off.");
+            }
+
+            return Task.CompletedTask;
+        });
+
+        (await RunAsync(item, breaking, clock)).ShouldBeTrue();
+        (await PlannedAsync(item)).Item.ShouldSatisfyAllConditions(
+            i => i.State.ShouldBe(ProvisioningState.Planned, "the undo waits"),
+            i => i.UndoReason.ShouldBe(ProvisioningRunner.LedgerDamaged));
+
+        clock.Advance(TimeSpan.FromHours(1));
+        (await RunAsync(item, breaking, clock)).ShouldBeTrue();
+        (await PlannedAsync(item)).Item.ShouldSatisfyAllConditions(
+            i => i.State.ShouldBe(ProvisioningState.Failed), i => i.Problem.ShouldBe(ProvisioningRunner.LedgerDamaged));
+        var account = (await mock.ReadAsync(new ObjectRef(ObjectTypes.Account, $"CN={name},{AccountContainer}"), Ct)).ShouldNotBeNull();
+        account.Enabled.ShouldBe(false);
+        account.Links.ShouldNotContain(l => string.Equals(l.Id, group, StringComparison.OrdinalIgnoreCase));
+        (await FinalAuditAsync(item)).ShouldSatisfyAllConditions(
+            p => p["step"].ShouldBe("3", "the resumed undo names the damaged step"),
+            p => p["code"].ShouldBe(ProvisioningRunner.LedgerDamaged));
+    }
+
     [Fact]
     public async Task ADamagedRecordOfAnAddIsNeverSettledByAReadOrRetried()
     {
         // The target says the add's stored record is damaged: no read settles it and it is not tried again. It is the only step
-        // on an existing account, so nothing is undone and a person reconciles it.
+        // on an existing account, so nothing is undone and a person reconciles it. The grant lock is released (DL-108).
         var item = await PlannedExistingAsync();
+        var (planned, _) = await PlannedAsync(item);
+        var clock = new MovingClock(DateTimeOffset.UtcNow);
         var probe = new StepProbeTarget(onRun: step => Task.FromResult(step.Action == ProvisioningPlanner.EntitlementAdd
             ? new StepResult(StepStatus.Unknown, StepCodes.LedgerDamaged)
             : new StepResult(StepStatus.Done, ProvisioningPlanner.Applied)));
-        (await RunAsync(item, probe)).ShouldBeTrue();
+        (await RunAsync(item, probe, clock)).ShouldBeTrue();
+        await using (var context = ProvisioningContext())
+        {
+            var row = await context.GrantLocks.AsNoTracking().SingleAsync(l => l.AccountId == planned.AccountId && l.EntitlementId == planned.EntitlementId, Ct);
+            row.UntilUtc.ShouldBeLessThan(clock.GetUtcNow(), "the lock was released");
+        }
 
         probe.Reads.ShouldBe(0, "no read settles a damaged record");
         probe.Removes.ShouldBe(0, "the damaged step itself is never undone");
@@ -173,6 +248,27 @@ public sealed partial class RequestItemParityTests
         }
     }
 
+    /// <summary>A mock directory over the durable ledger, whose stored record of one operation is damaged (DL-108).</summary>
+    private static MockActiveDirectoryConnector DurableMock(string group, Guid damaged, out ServiceProvider services)
+    {
+        services = new ServiceCollection().AddSingleton<IProvisioningLedger>(new SelectiveLedger(damaged)).BuildServiceProvider();
+        var mock = new MockActiveDirectoryConnector(
+            ConnectorSettings.Default, new DurableOperationLedger(services.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System), "DC=corp,DC=test");
+        mock.AddContainer("Users");
+        mock.AddGroup(group["CN=".Length..group.IndexOf(',', StringComparison.Ordinal)], mock.AddContainer("Groups"));
+        return mock;
+    }
+
+    /// <summary>The payload of the item's one Failed audit record; no step was retried with the damage code.</summary>
+    private async Task<IReadOnlyDictionary<string, string?>> FinalAuditAsync(Guid item)
+    {
+        await using var audit = TestSupport.CreateAudit(db.Provider, db.AuditAppConnectionString);
+        var trail = await new AuditTrail(audit).ForTargetAsync(ProvisioningAuditActions.Target, item.ToString(), 100, Ct);
+        trail.ShouldNotContain(a => a.Action == ProvisioningAuditActions.StepRetry && a.Payload.ContainsKey("code") && a.Payload["code"] == ProvisioningRunner.LedgerDamaged,
+            "a damaged step is never retried");
+        return trail.Single(a => a.Action == ProvisioningAuditActions.Failed).Payload;
+    }
+
     /// <summary>The check that refuses a failed ledger row, by its own error: not any database error (DL-107).</summary>
     private void ShouldBeLedgerValuesCheck(Exception exception)
     {
@@ -197,6 +293,23 @@ public sealed partial class RequestItemParityTests
 
         public Task RecordAsync(OperationLedgerRecord record, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Nothing is recorded after a damaged record.");
+    }
+
+    /// <summary>A durable ledger store that keeps what is recorded, but holds a stored failure for one operation (DL-108).</summary>
+    private sealed class SelectiveLedger(Guid damaged) : IProvisioningLedger
+    {
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, OperationLedgerRecord> _records = new();
+
+        public Task<OperationLedgerRecord?> FindAsync(Guid operationId, CancellationToken cancellationToken) =>
+            Task.FromResult(operationId == damaged
+                ? OperationLedgerRecord.Create(operationId, new string('c', 64), nameof(OperationStatus.Failed), ResultCodes.RateLimited, DateTimeOffset.UtcNow)
+                : _records.GetValueOrDefault(operationId));
+
+        public Task RecordAsync(OperationLedgerRecord record, CancellationToken cancellationToken)
+        {
+            _records.TryAdd(record.OperationId, record);
+            return Task.CompletedTask;
+        }
     }
 
     /// <summary>A target whose writes and reads are answered by callbacks (by default: applied, and matching); counts them.</summary>
