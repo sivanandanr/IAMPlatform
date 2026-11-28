@@ -76,6 +76,12 @@ public enum OperationStatus
 /// <summary>The outcome of one operation: a status and a short code, never message text from the target system.</summary>
 public sealed record OperationResult(Guid OperationId, OperationStatus Status, string? Code)
 {
+    /// <summary>
+    /// Whether the SDK answered from its ledger, without calling the connector (DL-109). Set only by the SDK's replay; never
+    /// stored, and cleared on any answer a connector gives.
+    /// </summary>
+    public bool Replayed { get; init; }
+
     public static OperationResult Of(ConnectorOperation operation, OperationStatus status, string? code = null)
     {
         ArgumentNullException.ThrowIfNull(operation);

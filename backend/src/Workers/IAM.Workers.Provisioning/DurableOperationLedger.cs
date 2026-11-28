@@ -12,6 +12,9 @@ namespace IAM.Workers.Provisioning;
 /// </summary>
 public sealed class DurableOperationLedger(IServiceScopeFactory scopes, TimeProvider clock) : IOperationLedger
 {
+    /// <summary>The status a stored record the SDK doesn't know is handed over as: no member of <see cref="OperationStatus"/>.</summary>
+    public const OperationStatus UnknownStatus = 0;
+
     public async Task<LedgerEntry?> FindAsync(Guid operationId, CancellationToken cancellationToken)
     {
         using var scope = scopes.CreateScope();
@@ -21,15 +24,12 @@ public sealed class DurableOperationLedger(IServiceScopeFactory scopes, TimeProv
             return null;
         }
 
-        // A stored status the SDK doesn't know is damage: refuse it rather than guess what happened. So is a failure: the SDK never
-        // records one (DL-105), and a replayed failure would say a write that may have landed was never made. Thrown as the SDK's
-        // own damage, so the runner stops the item for a person (DL-107).
-        if (!Enum.TryParse<OperationStatus>(record.Status, ignoreCase: false, out var status) || !Enum.IsDefined(status) || status.ToString() != record.Status
-            || status == OperationStatus.Failed)
-        {
-            throw new LedgerRecordDamagedException("A ledger record has a status the SDK never records.");
-        }
-
+        // A stored status the SDK doesn't know is handed over as a status no member has, never guessed and never "not there"
+        // (which would run the operation again): the SDK's replay check refuses it as damage, as it refuses a stored failure
+        // (DL-105, DL-107). Only the SDK judges a record (DL-109).
+        var status = Enum.TryParse<OperationStatus>(record.Status, ignoreCase: false, out var parsed) && Enum.IsDefined(parsed) && parsed.ToString() == record.Status
+            ? parsed
+            : UnknownStatus;
         return new LedgerEntry(record.OperationId, record.Fingerprint, new OperationResult(record.OperationId, status, record.Code));
     }
 

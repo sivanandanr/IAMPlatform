@@ -76,8 +76,8 @@ public abstract class ConnectorContractTests
         (await connector.ExecuteAsync(first, Ct)).Status.ShouldBe(OperationStatus.Applied);
         (await connector.ExecuteAsync(Op(ActionCatalog.AccountUpdate, account, attributes: new Dictionary<string, string?> { [attribute] = "Second" }), Ct)).Status.ShouldBe(OperationStatus.Applied);
 
-        // The first operation sent again: the same answer, and the later change stands.
-        (await connector.ExecuteAsync(first, Ct)).ShouldBe(new OperationResult(first.OperationId, OperationStatus.Applied, null));
+        // The first operation sent again: the same answer, marked as the ledger's (DL-109), and the later change stands.
+        (await connector.ExecuteAsync(first, Ct)).ShouldBe(new OperationResult(first.OperationId, OperationStatus.Applied, null) { Replayed = true });
         (await connector.ReadAsync(account, Ct)).ShouldNotBeNull().Attributes[attribute].ShouldBe("Second");
     }
 

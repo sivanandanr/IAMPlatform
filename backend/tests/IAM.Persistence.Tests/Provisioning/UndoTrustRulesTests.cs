@@ -179,13 +179,15 @@ public sealed class UndoTrustRulesTests
     [InlineData("Bogus")]
     public async Task TheDurableLedgerRefusesARecordTheSdkNeverWritesAndTheTargetNamesIt(string stored)
     {
-        // DL-106, DL-107: a stored failure (or a status the SDK doesn't know) is refused on read as the SDK's own damage, and the
-        // connector target turns that, and only that, into LedgerDamaged. The database check makes such a row impossible, so
-        // the store is a stub here; the whole chain against a real database is in the parity tests.
+        // DL-106, DL-107: a stored failure (or a status the SDK doesn't know) is damage, and the connector target turns that,
+        // and only that, into LedgerDamaged. DL-109: the ledger hands the record over (a status it doesn't know as one no member
+        // has, never as "not there") and only the SDK judges it. The database check makes such a row impossible, so the store is
+        // a stub here; the whole chain against a real database is in the parity tests.
         var services = new ServiceCollection().AddSingleton<IProvisioningLedger>(new StoredLedger(stored)).BuildServiceProvider();
         await using var _ = services;
         var ledger = new DurableOperationLedger(services.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
-        await Should.ThrowAsync<LedgerRecordDamagedException>(() => ledger.FindAsync(Guid.CreateVersion7(), CancellationToken.None));
+        (await ledger.FindAsync(Guid.CreateVersion7(), CancellationToken.None))!.Result.Status
+            .ShouldBe(stored == "Failed" ? OperationStatus.Failed : DurableOperationLedger.UnknownStatus);
 
         var mock = new MockActiveDirectoryConnector(ConnectorSettings.Default, ledger, "DC=corp,DC=test");
         var users = mock.AddContainer("Users");
@@ -204,29 +206,79 @@ public sealed class UndoTrustRulesTests
     }
 
     [Theory]
-    [InlineData(OperationStatus.Failed, StepStatus.Unknown)]
-    [InlineData(OperationStatus.Rejected, StepStatus.Rejected)]
-    public async Task AConnectorThatReportsTheDamageCodeItselfIsAConnectorFault(OperationStatus status, StepStatus expected)
+    [InlineData(OperationStatus.Failed, StepStatus.Unknown, ResultCodes.ConnectorError)]
+    [InlineData(OperationStatus.Rejected, StepStatus.Rejected, ResultCodes.ConnectorError)]
+    [InlineData(OperationStatus.Applied, StepStatus.Unknown, ResultCodes.InvalidResponse)]
+    [InlineData(OperationStatus.AlreadyInState, StepStatus.Unknown, ResultCodes.InvalidResponse)]
+    public async Task AConnectorThatReportsTheDamageCodeItselfIsAConnectorFault(OperationStatus status, StepStatus expected, string code)
     {
         // DL-108: the damage code is the connector target's alone. A connector that reports it (a proxy passing a remote
         // agent's code on, say) is a connector fault: a failure stays an unknown outcome that is tried again, never damage.
+        // DL-109: a success that carries it contradicts itself, so whether the target changed is unknown, never done.
         var step = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, "CN=ben,OU=Users,DC=corp,DC=test", null, null, new Dictionary<string, string?>());
         (await new ConnectorTarget(new ReportingConnector(status, StepCodes.LedgerDamaged)).RunAsync(step, CancellationToken.None))
-            .ShouldBe(new StepResult(expected, ResultCodes.ConnectorError));
+            .ShouldBe(new StepResult(expected, code));
     }
 
     [Fact]
     public async Task OnlyTheSdkCanSayItsLedgerIsDamaged()
     {
         // DL-108: a connector not on the SDK that throws the SDK's damage exception is a call that broke off (the runner's
-        // CallFailed), never damage: only the SDK's own refusal stops the item for a person.
+        // CallFailed), never damage: only the SDK's own refusal stops the item for a person. DL-109: only the SDK creates the
+        // exception, so this one is a real refusal, passed on by a connector that isn't the one that made it.
         var step = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, "CN=ben,OU=Users,DC=corp,DC=test", null, null, new Dictionary<string, string?>());
-        var target = new ConnectorTarget(new GarblingConnector(() => new LedgerRecordDamagedException("Not the SDK's.")));
+        var damage = await GenuineDamageAsync();
+        var target = new ConnectorTarget(new GarblingConnector(() => damage));
         await Should.ThrowAsync<LedgerRecordDamagedException>(() => target.RunAsync(step, CancellationToken.None));
     }
 
+    [Fact]
+    public async Task AnAlreadyInStateAnswerAlwaysSaysSoWhateverTheConnectorsCode()
+    {
+        // DL-109: the runner's guard that a create never takes over an object that was there matches the code, so a connector not
+        // on the SDK can't hide "already there" behind a code of its own.
+        var step = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, "CN=ben,OU=Users,DC=corp,DC=test", null, null, new Dictionary<string, string?>());
+        (await new ConnectorTarget(new ReportingConnector(OperationStatus.AlreadyInState, "Matched")).RunAsync(step, CancellationToken.None))
+            .ShouldBe(new StepResult(StepStatus.Done, "AlreadyInState"));
+    }
+
+    [Fact]
+    public async Task OnlyTheSdkCanSayItAnsweredFromItsLedger()
+    {
+        // DL-109: a connector not on the SDK can't mark its answer as a replay; the SDK's own replay is passed on.
+        var step = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, "CN=ben,OU=Users,DC=corp,DC=test", null, null, new Dictionary<string, string?>());
+        (await new ConnectorTarget(new ReportingConnector(OperationStatus.Applied, "Applied", replayed: true)).RunAsync(step, CancellationToken.None)).Replayed.ShouldBeFalse();
+
+        var mock = new MockActiveDirectoryConnector(ConnectorSettings.Default, new InMemoryOperationLedger(), "DC=corp,DC=test");
+        var users = mock.AddContainer("Users");
+        var create = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, $"CN=ben,{users.Id}", ObjectTypes.Container, users.Id,
+            new Dictionary<string, string?> { ["sAMAccountName"] = "ben" });
+        var target = new ConnectorTarget(mock);
+        (await target.RunAsync(create, CancellationToken.None)).Replayed.ShouldBeFalse();
+        (await target.RunAsync(create, CancellationToken.None)).ShouldBe(new StepResult(StepStatus.Done, "Applied") { Replayed = true });
+    }
+
+    /// <summary>A real refusal of the SDK's replay check: a connector on the SDK whose ledger hands back a stored failure.</summary>
+    private static async Task<LedgerRecordDamagedException> GenuineDamageAsync()
+    {
+        var mock = new MockActiveDirectoryConnector(ConnectorSettings.Default, new FailedLedger(), "DC=corp,DC=test");
+        var users = mock.AddContainer("Users");
+        var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountCreate, new ObjectRef(ObjectTypes.Account, $"CN=ben,{users.Id}"),
+            users, new Dictionary<string, string?> { ["sAMAccountName"] = "ben" }, null);
+        return await Should.ThrowAsync<LedgerRecordDamagedException>(() => mock.ExecuteAsync(operation, CancellationToken.None));
+    }
+
+    /// <summary>A ledger whose every read hands back a stored failure, which the SDK never records.</summary>
+    private sealed class FailedLedger : IOperationLedger
+    {
+        public Task<LedgerEntry?> FindAsync(Guid operationId, CancellationToken cancellationToken) =>
+            Task.FromResult<LedgerEntry?>(new LedgerEntry(operationId, new string('a', 64), new OperationResult(operationId, OperationStatus.Failed, ResultCodes.ConnectorError)));
+
+        public Task RecordAsync(LedgerEntry entry, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
     /// <summary>A connector not on the SDK whose every write ends with one status and code.</summary>
-    private sealed class ReportingConnector(OperationStatus status, string code) : IConnector
+    private sealed class ReportingConnector(OperationStatus status, string code, bool replayed = false) : IConnector
     {
         public ConnectorCapabilities Capabilities => throw new NotSupportedException();
 
@@ -235,7 +287,7 @@ public sealed class UndoTrustRulesTests
         public Task<ObjectSnapshot?> ReadAsync(ObjectRef target, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<OperationResult> ExecuteAsync(ConnectorOperation operation, CancellationToken cancellationToken) =>
-            Task.FromResult(OperationResult.Of(operation, status, code));
+            Task.FromResult(OperationResult.Of(operation, status, code) with { Replayed = replayed });
 
         public Task<VerificationResult> VerifyAsync(ConnectorOperation operation, CancellationToken cancellationToken) => throw new NotSupportedException();
 
@@ -246,8 +298,8 @@ public sealed class UndoTrustRulesTests
     public void EveryConnectorShippedRunsTheSdkPipeline()
     {
         // DL-106: no production connector implements IConnector.ExecuteAsync again, so its RateLimited is the SDK's own word.
-        // Every IAM assembly in the test output (DL-107): the ones this test project references, so a connector project must be
-        // referenced here to be checked (DL-108); the three known ones must be among them. A type that can't be loaded fails
+        // Every non-test IAM assembly in the test output (DL-107): those this test project references, directly or not, so a
+        // connector project must reach the output to be checked (DL-108, DL-109); the three known ones must be among them. A type that can't be loaded fails
         // the test by name rather than being skipped.
         var assemblies = Directory.GetFiles(AppContext.BaseDirectory, "IAM.*.dll")
             .Where(f => !Path.GetFileName(f).Contains(".Tests", StringComparison.Ordinal))

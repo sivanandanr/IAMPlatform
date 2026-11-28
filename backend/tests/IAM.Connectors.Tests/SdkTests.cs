@@ -229,12 +229,14 @@ public sealed class SdkTests
     [InlineData(8)]
     [InlineData(9)]
     [InlineData(10)]
+    [InlineData(11)]
     public async Task ALedgerRecordTheSdkNeverWritesIsDamageWhateverTheLedger(int lie)
     {
         // DL-107: the SDK checks what any ledger hands back, not only ours. A replayed failure, the SDK's own speed limit, a
         // status it doesn't know, or a record of another operation would hide whether the change was made: it is thrown, never
         // replayed, and the connector is never called. DL-108: so is a missing result, a not-found code (never recorded), and a
-        // fingerprint not of the SDK's form. Every lie but the fingerprint's own carries a well-formed one.
+        // fingerprint not of the SDK's form. Every lie but the fingerprint's own carries a well-formed one; the first breaks two
+        // rules at once, each of the next two only one of them. DL-109: lower-case letters that aren't hex aren't a fingerprint.
         var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountDisable, FlakyConnector.Account, null, new Dictionary<string, string?>(), null);
         var id = operation.OperationId;
         var other = Guid.CreateVersion7();
@@ -251,11 +253,78 @@ public sealed class SdkTests
             7 => new LedgerEntry(id, print, new OperationResult(id, OperationStatus.Rejected, ResultCodes.TargetNotFound)),
             8 => new LedgerEntry(id, print, new OperationResult(id, OperationStatus.Rejected, ResultCodes.RelatedNotFound)),
             9 => new LedgerEntry(id, string.Empty, new OperationResult(id, OperationStatus.Applied, null)),
-            _ => new LedgerEntry(id, new string('A', 64), new OperationResult(id, OperationStatus.Applied, null)),
+            10 => new LedgerEntry(id, new string('A', 64), new OperationResult(id, OperationStatus.Applied, null)),
+            _ => new LedgerEntry(id, new string('g', 64), new OperationResult(id, OperationStatus.Applied, null)),
         };
         var connector = new FlakyConnector(returns: true, status: OperationStatus.Applied, ledger: new LyingLedger(entry));
         await Should.ThrowAsync<LedgerRecordDamagedException>(() => connector.ExecuteAsync(operation, TestContext.Current.CancellationToken));
-        (await connector.ReadAsync(FlakyConnector.Account, TestContext.Current.CancellationToken))!.Enabled.ShouldBe(true, "the connector was never called");
+        connector.Calls.ShouldBe(0, "the connector was never called");
+    }
+
+    [Fact]
+    public async Task OnlyTheSdkSaysAnAnswerIsAReplay()
+    {
+        // DL-109: an answer from the ledger is marked as such, the connector's own answer never is, and a connector can't mark
+        // its answer itself: the runner takes a replay only for a step that may have run before.
+        var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountDisable, FlakyConnector.Account, null, new Dictionary<string, string?>(), null);
+        var connector = new FlakyConnector(answer: o => OperationResult.Of(o, OperationStatus.Applied) with { Replayed = true });
+        (await connector.ExecuteAsync(operation, TestContext.Current.CancellationToken)).Replayed.ShouldBeFalse();
+        var replay = await connector.ExecuteAsync(operation, TestContext.Current.CancellationToken);
+        replay.ShouldBe(OperationResult.Of(operation, OperationStatus.Applied) with { Replayed = true });
+        connector.Calls.ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task AConnectorAnswerThatIsNotForThisOperationIsAnInvalidResponse(int answer)
+    {
+        // DL-109: what a connector answers is checked before it is remembered. None at all, one for another operation, or a status
+        // the SDK doesn't know came after the connector ran: a failure that may have written, never recorded.
+        var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountDisable, FlakyConnector.Account, null, new Dictionary<string, string?>(), null);
+        var ledger = new InMemoryOperationLedger();
+        var connector = new FlakyConnector(ledger: ledger, answer: o => answer switch
+        {
+            0 => null!,
+            1 => new OperationResult(Guid.CreateVersion7(), OperationStatus.Applied, null),
+            _ => OperationResult.Of(o, (OperationStatus)99),
+        });
+        (await connector.ExecuteAsync(operation, TestContext.Current.CancellationToken))
+            .ShouldBe(OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.InvalidResponse));
+        ledger.Count.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task DamageThrownByAnythingButTheReplayCheckIsAConnectorFault(int source)
+    {
+        // DL-109: only the SDK's replay check lets the damage exception out. Thrown by the connector's own checks, by a ledger,
+        // or by its write after the caller gave up, it is a failure (an unknown outcome), never damage and never remembered.
+        var operation = new ConnectorOperation(Guid.CreateVersion7(), ActionCatalog.AccountDisable, FlakyConnector.Account, null, new Dictionary<string, string?>(), null);
+        using var cancel = new CancellationTokenSource();
+        var damage = new LedgerRecordDamagedException("Not the replay check's.");
+        var connector = source switch
+        {
+            0 => new FlakyConnector(idFault: damage),
+            1 => new FlakyConnector(ledger: new ThrowingLedger(damage)),
+            _ => new FlakyConnector(answer: _ =>
+            {
+                cancel.Cancel();
+                throw damage;
+            }),
+        };
+        (await connector.ExecuteAsync(operation, cancel.Token)).ShouldBe(OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.ConnectorError));
+    }
+
+    /// <summary>A ledger whose every read throws one exception.</summary>
+    private sealed class ThrowingLedger(Exception fault) : IOperationLedger
+    {
+        public Task<LedgerEntry?> FindAsync(Guid operationId, CancellationToken cancellationToken) => throw fault;
+
+        public Task RecordAsync(LedgerEntry entry, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     [Fact]
@@ -323,9 +392,16 @@ public sealed class SdkTests
     /// Fails once with a code (thrown, or returned with a status), then fine. With <c>readFails</c>, its reads throw the code
     /// instead.
     /// </summary>
-    private sealed class FlakyConnector(string code = ResultCodes.Throttled, bool returns = false, OperationStatus status = OperationStatus.Failed, bool readFails = false, IOperationLedger? ledger = null)
+    private sealed class FlakyConnector(
+        string code = ResultCodes.Throttled, bool returns = false, OperationStatus status = OperationStatus.Failed, bool readFails = false, IOperationLedger? ledger = null,
+        Func<ConnectorOperation, OperationResult>? answer = null, Exception? idFault = null)
         : ConnectorBase(ConnectorSettings.Default, ledger ?? new InMemoryOperationLedger())
     {
+        /// <summary>How many writes reached the connector.</summary>
+        public int Calls { get; private set; }
+
+        protected override bool IsValidId(ObjectRef reference) => idFault is null ? true : throw idFault;
+
         public static readonly ObjectRef Account = new(ObjectTypes.Account, "flaky");
         private bool _failed;
         private bool _enabled = true;
@@ -343,6 +419,12 @@ public sealed class SdkTests
 
         protected override Task<OperationResult> ApplyAsync(ConnectorOperation operation, ObjectSnapshot? current, CancellationToken cancellationToken)
         {
+            Calls++;
+            if (answer is not null)
+            {
+                return Task.FromResult(answer(operation));
+            }
+
             if (!_failed)
             {
                 _failed = true;

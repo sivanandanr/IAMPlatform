@@ -31,7 +31,14 @@ public enum StepStatus
 }
 
 /// <summary>A step's outcome: a status and the target's short code, never message text.</summary>
-public sealed record StepResult(StepStatus Status, string? Code);
+public sealed record StepResult(StepStatus Status, string? Code)
+{
+    /// <summary>
+    /// Whether the target answered from its own record of an earlier attempt, without changing anything now (DL-109). The runner
+    /// takes such an answer only for a step that may have run before.
+    /// </summary>
+    public bool Replayed { get; init; }
+}
 
 /// <summary>Step codes a target gives that the runner acts on itself.</summary>
 public static class StepCodes

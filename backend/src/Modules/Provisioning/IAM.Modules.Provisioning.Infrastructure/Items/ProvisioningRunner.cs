@@ -373,6 +373,11 @@ public sealed partial class ProvisioningRunner(
         var step = Step(operation);
         var creates = operation.Action == ProvisioningPlanner.AccountCreate;
         var interrupted = operation.State == ProvisioningState.Running;
+
+        // The step that put the item back last time is the first one a later run reaches: steps run in order, and a run ends at
+        // the first that waits (DL-109).
+        var retried = run.Item.Attempts > 0 && !run.PlanStepRan;
+        run.PlanStepRan = true;
         operation.Start();
 
         // A step its runner was in the middle of may already be done: the target is read before it runs again. Not for a
@@ -386,6 +391,14 @@ public sealed partial class ProvisioningRunner(
         var result = interrupted && !ledgered && await VerifyAsync(run, step, cancellationToken).ConfigureAwait(false) == true
             ? new StepResult(StepStatus.Done, "AlreadyInState")
             : await RunStepAsync(run, step, cancellationToken).ConfigureAwait(false);
+
+        // A ledger row answers only for a step that may have run before (DL-109): one a runner stopped in the middle of, one
+        // whose outcome was unknown, or the one that waited last time. For any other step nothing was ever sent, so a recorded
+        // outcome is a row nobody's call wrote: damage, never a change this item made (a create would take over what is there).
+        if (result.Replayed && !interrupted && !operation.Unsettled && !retried)
+        {
+            result = new StepResult(StepStatus.Unknown, LedgerDamaged);
+        }
 
         // A damaged record of the step (DL-107): no retry or read settles what it did, so a person must look. What earlier steps
         // did is undone as for a rejected step; this step's own change, if made, is left for that person, except on an account
@@ -443,6 +456,9 @@ public sealed partial class ProvisioningRunner(
     private sealed record Run(ProvisioningItem Item, IProvisioningTarget Target, List<ProvisioningOperation> Plan, List<ProvisioningOperation> Operations)
     {
         public Guid Token { get; } = Guid.CreateVersion7();
+
+        /// <summary>Whether this run has reached a plan step yet (DL-109).</summary>
+        public bool PlanStepRan { get; set; }
 
         public GrantLock? Lock { get; set; }
     }

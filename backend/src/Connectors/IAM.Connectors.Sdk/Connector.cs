@@ -42,9 +42,17 @@ public interface IOperationLedger
 /// <summary>
 /// A ledger record the SDK can't trust (DL-107): a stored failure, a code only the SDK gives before a write, a status it never
 /// records, or a result for another operation. Whether the operation's change was made is unknown, so a person must look; it
-/// is thrown, never reported as a result, so no caller can take it for an ordinary failure.
+/// is thrown, never reported as a result, so no caller can take it for an ordinary failure. Only the SDK creates it (DL-109), and
+/// only its replay check lets it out of <see cref="ConnectorBase.ExecuteAsync"/>: from a connector's own code or a ledger it is a
+/// connector fault.
 /// </summary>
-public sealed class LedgerRecordDamagedException(string message) : Exception(message);
+public sealed class LedgerRecordDamagedException : Exception
+{
+    internal LedgerRecordDamagedException(string message)
+        : base(message)
+    {
+    }
+}
 
 /// <summary>An in-memory ledger: for tests and mocks only, lost on restart (DL-080). A real connector keeps one that lasts.</summary>
 public sealed class InMemoryOperationLedger : IOperationLedger
@@ -139,6 +147,21 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
     public async Task<OperationResult> ExecuteAsync(ConnectorOperation operation, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
+        LedgerRecordDamagedException? refusal = null;
+        try
+        {
+            return await ExecuteCheckedAsync(operation, e => refusal = e, cancellationToken).ConfigureAwait(false);
+        }
+        catch (LedgerRecordDamagedException ex) when (!ReferenceEquals(ex, refusal))
+        {
+            // Not the replay check's own refusal (DL-109): one a connector's code or a ledger threw is a connector fault. Its
+            // change may have been made, so it is a failure (an unknown outcome), never damage and never remembered.
+            return OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.ConnectorError);
+        }
+    }
+
+    private async Task<OperationResult> ExecuteCheckedAsync(ConnectorOperation operation, Action<LedgerRecordDamagedException> refuse, CancellationToken cancellationToken)
+    {
         if (Check(operation) is { } refused)
         {
             return refused;
@@ -160,11 +183,15 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
                 || prior.Result.Status == OperationStatus.Failed || !Enum.IsDefined(prior.Result.Status) || prior.Result.Code == ResultCodes.RateLimited
                 || (prior.Result.Code is { } priorCode && TimingCodes.Contains(priorCode)) || !IsFingerprint(prior.Fingerprint))
             {
-                throw new LedgerRecordDamagedException("The operation ledger returned a record the SDK never records.");
+                var damaged = new LedgerRecordDamagedException("The operation ledger returned a record the SDK never records.");
+                refuse(damaged);
+                throw damaged;
             }
 
+            // Marked as a replay (DL-109): only the SDK says so, and the caller can tell an answer the connector gave now from
+            // one a ledger row gave. A row is not proof the change was made: whoever can write the ledger can write one.
             return string.Equals(prior.Fingerprint, fingerprint, StringComparison.Ordinal)
-                ? prior.Result
+                ? prior.Result with { Replayed = true }
                 : OperationResult.Of(operation, OperationStatus.Rejected, ResultCodes.OperationIdReused);
         }
 
@@ -189,6 +216,15 @@ public abstract class ConnectorBase(ConnectorSettings settings, IOperationLedger
             // A connector's own fault: reported, never thrown, and retried like any failure.
             result = OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.ConnectorError);
         }
+
+        // What the connector answers is checked like any ingress (DL-109): an answer for another operation, a status the SDK
+        // doesn't know, or none at all came after the connector ran, so it may have written; never remembered, never a replay.
+        if (result is null || result.OperationId != operation.OperationId || !Enum.IsDefined(result.Status))
+        {
+            result = OperationResult.Of(operation, OperationStatus.Failed, ResultCodes.InvalidResponse);
+        }
+
+        result = result with { Replayed = false };
 
         if (result.Code == ResultCodes.RateLimited)
         {
