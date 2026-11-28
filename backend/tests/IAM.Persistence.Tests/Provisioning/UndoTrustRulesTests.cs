@@ -4,6 +4,7 @@ using IAM.Modules.Account.Domain.Accounts;
 using IAM.Modules.Provisioning.Application.Items;
 using IAM.Modules.Provisioning.Domain.Items;
 using IAM.Workers.Provisioning;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 
 namespace IAM.Persistence.Tests.Provisioning;
@@ -120,6 +121,32 @@ public sealed class UndoTrustRulesTests
     }
 
     /// <summary>A connector whose every write fails with one code.</summary>
+    /// <summary>A durable ledger store holding one stored status for every operation.</summary>
+    private sealed class StoredLedger(string status) : IProvisioningLedger
+    {
+        public Task<OperationLedgerRecord?> FindAsync(Guid operationId, CancellationToken cancellationToken) =>
+            Task.FromResult<OperationLedgerRecord?>(OperationLedgerRecord.Create(operationId, new string('c', 64), status, ResultCodes.RateLimited, DateTimeOffset.UtcNow));
+
+        public Task RecordAsync(OperationLedgerRecord record, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    /// <summary>A connector not on the SDK whose write throws an InvalidDataException, as a garbled answer would.</summary>
+    private sealed class GarblingConnector : IConnector
+    {
+        public ConnectorCapabilities Capabilities => throw new NotSupportedException();
+
+        public Task<ConnectorHealth> CheckHealthAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<ObjectSnapshot?> ReadAsync(ObjectRef target, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<OperationResult> ExecuteAsync(ConnectorOperation operation, CancellationToken cancellationToken) =>
+            throw new InvalidDataException("The answer couldn't be decoded.");
+
+        public Task<VerificationResult> VerifyAsync(ConnectorOperation operation, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<ObjectPage> ListAsync(string objectType, string? continuation, int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
     private sealed class FailingConnector(string code) : IConnector
     {
         public ConnectorCapabilities Capabilities => throw new NotSupportedException();
@@ -146,11 +173,50 @@ public sealed class UndoTrustRulesTests
         (await new ConnectorTarget(new ReimplementingConnector()).RunAsync(step, CancellationToken.None)).Status.ShouldBe(StepStatus.Unknown);
     }
 
+    [Theory]
+    [InlineData("Failed")]
+    [InlineData("applied")]
+    [InlineData("Bogus")]
+    public async Task TheDurableLedgerRefusesARecordTheSdkNeverWritesAndTheTargetNamesIt(string stored)
+    {
+        // DL-106, DL-107: a stored failure (or a status the SDK doesn't know) is refused on read as the SDK's own damage, and the
+        // connector target turns that, and only that, into LedgerDamaged. The database check makes such a row impossible, so
+        // the store is a stub here; the whole chain against a real database is in the parity tests.
+        var services = new ServiceCollection().AddSingleton<IProvisioningLedger>(new StoredLedger(stored)).BuildServiceProvider();
+        await using var _ = services;
+        var ledger = new DurableOperationLedger(services.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
+        await Should.ThrowAsync<LedgerRecordDamagedException>(() => ledger.FindAsync(Guid.CreateVersion7(), CancellationToken.None));
+
+        var mock = new MockActiveDirectoryConnector(ConnectorSettings.Default, ledger, "DC=corp,DC=test");
+        var users = mock.AddContainer("Users");
+        var step = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, $"CN=ben,{users.Id}", ObjectTypes.Container, users.Id,
+            new Dictionary<string, string?> { ["sAMAccountName"] = "ben" });
+        (await new ConnectorTarget(mock).RunAsync(step, CancellationToken.None)).ShouldBe(new StepResult(StepStatus.Unknown, StepCodes.LedgerDamaged));
+        (await mock.ReadAsync(new ObjectRef(ObjectTypes.Account, $"CN=ben,{users.Id}"), CancellationToken.None)).ShouldBeNull("nothing was written");
+    }
+
+    [Fact]
+    public async Task AnyOtherFaultOfTheConnectorIsNotTakenForDamage()
+    {
+        // DL-107: an InvalidDataException (a garbled answer, say) is a call that broke off, never a damaged ledger record.
+        var step = new TargetStep(Guid.CreateVersion7(), ActionCatalog.AccountCreate, ObjectTypes.Account, "CN=ben,OU=Users,DC=corp,DC=test", null, null, new Dictionary<string, string?>());
+        await Should.ThrowAsync<InvalidDataException>(() => new ConnectorTarget(new GarblingConnector()).RunAsync(step, CancellationToken.None));
+    }
+
     [Fact]
     public void EveryConnectorShippedRunsTheSdkPipeline()
     {
         // DL-106: no production connector implements IConnector.ExecuteAsync again, so its RateLimited is the SDK's own word.
-        var shipped = new[] { typeof(ConnectorBase).Assembly, typeof(MockActiveDirectoryConnector).Assembly, typeof(ConnectorTarget).Assembly }
+        // Every IAM assembly beside the tests (DL-107), so a connector added later is checked too; the three known ones must be
+        // among them.
+        var assemblies = Directory.GetFiles(AppContext.BaseDirectory, "IAM.*.dll")
+            .Where(f => !Path.GetFileName(f).Contains(".Tests", StringComparison.Ordinal))
+            .Select(f => System.Reflection.Assembly.LoadFrom(f))
+            .ToList();
+        assemblies.ShouldContain(typeof(ConnectorBase).Assembly);
+        assemblies.ShouldContain(typeof(MockActiveDirectoryConnector).Assembly);
+        assemblies.ShouldContain(typeof(ConnectorTarget).Assembly);
+        var shipped = assemblies
             .SelectMany(a => a.GetTypes())
             .Where(t => !t.IsAbstract && typeof(IConnector).IsAssignableFrom(t))
             .ToList();

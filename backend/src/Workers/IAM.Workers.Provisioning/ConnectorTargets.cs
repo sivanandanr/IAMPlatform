@@ -36,7 +36,18 @@ public sealed class ConnectorTarget(IConnector connector) : IProvisioningTarget
 
     public async Task<StepResult> RunAsync(TargetStep operation, CancellationToken cancellationToken)
     {
-        var result = await connector.ExecuteAsync(ToOperation(operation), cancellationToken).ConfigureAwait(false);
+        OperationResult result;
+        try
+        {
+            result = await connector.ExecuteAsync(ToOperation(operation), cancellationToken).ConfigureAwait(false);
+        }
+        catch (LedgerRecordDamagedException)
+        {
+            // The connector's record of this operation can't be trusted (DL-107): only this, never any other fault, is told
+            // apart, and the runner stops the item for a person. Anything else thrown is a call that broke off.
+            return new StepResult(StepStatus.Unknown, StepCodes.LedgerDamaged);
+        }
+
         return new StepResult(
             result.Status switch
             {
